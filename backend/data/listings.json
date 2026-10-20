@@ -1,0 +1,596 @@
+[
+  {
+    "id": "kzn-101",
+    "district": "Ново-Савиновский",
+    "address": "ул. Чистопольская, 64",
+    "rooms": 2,
+    "area": 51.2,
+    "kitchen": 10.5,
+    "floor": 7,
+    "floors": 12,
+    "year": 2008,
+    "condition": "косметика",
+    "price": 9000000,
+    "initial_price": 9350000,
+    "days_on_market": 94,
+    "price_history": [
+      {
+        "date": "2026-07-18",
+        "price": 9350000
+      },
+      {
+        "date": "2026-08-30",
+        "price": 9190000
+      },
+      {
+        "date": "2026-09-27",
+        "price": 9000000
+      }
+    ],
+    "school": {
+      "name": "Гимназия № 52",
+      "minutes": 6
+    },
+    "metro_minutes": 12,
+    "defects": [
+      "окна 2008 года, продувает в спальне",
+      "старая сантехника в ванной"
+    ],
+    "highlights": [
+      "раздельные комнаты",
+      "застеклённая лоджия",
+      "двор без машин"
+    ],
+    "seller": {
+      "name": "Рустем Ильдарович",
+      "role": "собственник",
+      "min_price": 8650000,
+      "motivation": "семья уже купила дом в пригороде, нужна продажа до конца ноября",
+      "style": "спокойный, но держится за цену, ценит быстрый выход на сделку"
+    }
+  },
+  {
+    "id": "kzn-102",
+    "district": "Приволжский",
+    "address": "ул. Рихарда Зорге, 75",
+    "rooms": 2,
+    "area": 55.8,
+    "kitchen": 9.0,
+    "floor": 4,
+    "floors": 10,
+    "year": 2003,
+    "condition": "косметика",
+    "price": 8300000,
+    "initial_price": 8300000,
+    "days_on_market": 9,
+    "price_history": [
+      {
+        "date": "2026-10-11",
+        "price": 8300000
+      }
+    ],
+    "school": {
+      "name": "Школа № 139",
+      "minutes": 8
+    },
+    "metro_minutes": 9,
+    "defects": [],
+    "highlights": [
+      "цена ниже рынка",
+      "быстрый выход на сделку"
+    ],
+    "seller": {
+      "name": "Олег (по доверенности)",
+      "role": "представитель",
+      "min_price": 8100000,
+      "motivation": "торопит с задатком",
+      "style": "напористый"
+    }
+  },
+  {
+    "id": "kzn-103",
+    "district": "Советский",
+    "address": "ул. Гвардейская, 33",
+    "rooms": 2,
+    "area": 52.4,
+    "kitchen": 8.7,
+    "floor": 5,
+    "floors": 9,
+    "year": 1998,
+    "condition": "евроремонт",
+    "price": 8890000,
+    "initial_price": 8990000,
+    "days_on_market": 41,
+    "price_history": [
+      {
+        "date": "2026-09-09",
+        "price": 8990000
+      },
+      {
+        "date": "2026-10-05",
+        "price": 8890000
+      }
+    ],
+    "school": {
+      "name": "Лицей № 131",
+      "minutes": 4
+    },
+    "metro_minutes": 15,
+    "defects": [
+      "кухня 8,7 м²"
+    ],
+    "highlights": [
+      "ремонт 2024 года",
+      "остаётся встроенная кухня"
+    ],
+    "seller": {
+      "name": "Алина Маратовна",
+      "role": "собственник",
+      "min_price": 8700000,
+      "motivation": "покупает квартиру большей площади",
+      "style": "дружелюбная, торгуется понемногу"
+    }
+  },
+  {
+    "id": "kzn-104",
+    "district": "Ново-Савиновский",
+    "address": "пр. Ямашева, 97",
+    "rooms": 2,
+    "area": 49.6,
+    "kitchen": 9.8,
+    "floor": 1,
+    "floors": 10,
+    "year": 2006,
+    "condition": "косметика",
+    "price": 8450000,
+    "initial_price": 8700000,
+    "days_on_market": 133,
+    "price_history": [
+      {
+        "date": "2026-06-09",
+        "price": 8700000
+      },
+      {
+        "date": "2026-08-14",
+        "price": 8450000
+      }
+    ],
+    "school": {
+      "name": "Школа № 171",
+      "minutes": 7
+    },
+    "metro_minutes": 18,
+    "defects": [
+      "первый этаж",
+      "окна во двор с парковкой"
+    ],
+    "highlights": [
+      "палисадник под окнами"
+    ],
+    "seller": {
+      "name": "Наиль Фаридович",
+      "role": "собственник",
+      "min_price": 8050000,
+      "motivation": "продаёт наследство",
+      "style": "уступчивый"
+    }
+  },
+  {
+    "id": "kzn-105",
+    "district": "Приволжский",
+    "address": "ул. Габишева, 21",
+    "rooms": 2,
+    "area": 54.0,
+    "kitchen": 10.2,
+    "floor": 9,
+    "floors": 16,
+    "year": 2012,
+    "condition": "евроремонт",
+    "price": 9250000,
+    "initial_price": 9250000,
+    "days_on_market": 17,
+    "price_history": [
+      {
+        "date": "2026-10-03",
+        "price": 9250000
+      }
+    ],
+    "school": {
+      "name": "Школа № 165",
+      "minutes": 5
+    },
+    "metro_minutes": 10,
+    "defects": [
+      "окна выходят на ТЦ, вечером шумно"
+    ],
+    "highlights": [
+      "кухня 11 м²",
+      "вид на парк"
+    ],
+    "seller": {
+      "name": "Екатерина Сергеевна",
+      "role": "риелтор продавца",
+      "min_price": 9050000,
+      "motivation": "без срочности",
+      "style": "твёрдая, ссылается на свежий ремонт"
+    }
+  },
+  {
+    "id": "kzn-106",
+    "district": "Советский",
+    "address": "ул. Патриса Лумумбы, 47",
+    "rooms": 2,
+    "area": 50.1,
+    "kitchen": 8.2,
+    "floor": 3,
+    "floors": 9,
+    "year": 1989,
+    "condition": "требует ремонта",
+    "price": 7650000,
+    "initial_price": 7900000,
+    "days_on_market": 77,
+    "price_history": [
+      {
+        "date": "2026-08-04",
+        "price": 7900000
+      },
+      {
+        "date": "2026-09-20",
+        "price": 7650000
+      }
+    ],
+    "school": {
+      "name": "Школа № 98",
+      "minutes": 9
+    },
+    "metro_minutes": 20,
+    "defects": [
+      "требует полного ремонта",
+      "дом 1989 года"
+    ],
+    "highlights": [
+      "цена позволяет заложить ремонт"
+    ],
+    "seller": {
+      "name": "Валентина Петровна",
+      "role": "собственник",
+      "min_price": 7300000,
+      "motivation": "переезжает к детям",
+      "style": "эмоциональная, но готова уступить за быструю сделку"
+    }
+  },
+  {
+    "id": "kzn-107",
+    "district": "Ново-Савиновский",
+    "address": "ул. Сибгата Хакима, 40",
+    "rooms": 2,
+    "area": 53.7,
+    "kitchen": 10.0,
+    "floor": 12,
+    "floors": 14,
+    "year": 2015,
+    "condition": "косметика",
+    "price": 9150000,
+    "initial_price": 9300000,
+    "days_on_market": 58,
+    "price_history": [
+      {
+        "date": "2026-08-23",
+        "price": 9300000
+      },
+      {
+        "date": "2026-10-01",
+        "price": 9150000
+      }
+    ],
+    "school": {
+      "name": "Школа № 175",
+      "minutes": 11
+    },
+    "metro_minutes": 14,
+    "defects": [
+      "перепланировка кухни-гостиной"
+    ],
+    "highlights": [
+      "вид на Казанку",
+      "дом 2015 года"
+    ],
+    "seller": {
+      "name": "Тимур Айдарович",
+      "role": "собственник",
+      "min_price": 8850000,
+      "motivation": "переезд в другой город",
+      "style": "деловой"
+    }
+  },
+  {
+    "id": "kzn-108",
+    "district": "Московский",
+    "address": "ул. Гагарина, 117",
+    "rooms": 2,
+    "area": 54.3,
+    "kitchen": 9.1,
+    "floor": 6,
+    "floors": 10,
+    "year": 2010,
+    "condition": "косметика",
+    "price": 8190000,
+    "initial_price": 8190000,
+    "days_on_market": 21,
+    "price_history": [
+      {
+        "date": "2026-09-29",
+        "price": 8190000
+      }
+    ],
+    "school": {
+      "name": "Школа № 47",
+      "minutes": 12
+    },
+    "metro_minutes": 7,
+    "defects": [
+      "шумная улица",
+      "окна на трамвайные пути"
+    ],
+    "highlights": [
+      "рядом метро"
+    ],
+    "seller": {
+      "name": "Ильнур Рашидович",
+      "role": "собственник",
+      "min_price": 7950000,
+      "motivation": "улучшает жильё",
+      "style": "спокойный"
+    }
+  },
+  {
+    "id": "kzn-109",
+    "district": "Вахитовский",
+    "address": "ул. Островского, 12",
+    "rooms": 2,
+    "area": 44.8,
+    "kitchen": 7.0,
+    "floor": 3,
+    "floors": 5,
+    "year": 1962,
+    "condition": "косметика",
+    "price": 8990000,
+    "initial_price": 8990000,
+    "days_on_market": 23,
+    "price_history": [
+      {
+        "date": "2026-09-27",
+        "price": 8990000
+      }
+    ],
+    "school": {
+      "name": "Гимназия № 2",
+      "minutes": 5
+    },
+    "metro_minutes": 6,
+    "defects": [
+      "дом 1962 года",
+      "кухня 7 м²",
+      "нет лифта"
+    ],
+    "highlights": [
+      "центр города"
+    ],
+    "seller": {
+      "name": "Марина Олеговна",
+      "role": "собственник",
+      "min_price": 8800000,
+      "motivation": "без срочности",
+      "style": "твёрдая"
+    }
+  },
+  {
+    "id": "kzn-110",
+    "district": "Кировский",
+    "address": "ул. Батыршина, 31",
+    "rooms": 2,
+    "area": 55.0,
+    "kitchen": 9.5,
+    "floor": 4,
+    "floors": 9,
+    "year": 2004,
+    "condition": "косметика",
+    "price": 7250000,
+    "initial_price": 7400000,
+    "days_on_market": 49,
+    "price_history": [
+      {
+        "date": "2026-09-01",
+        "price": 7400000
+      },
+      {
+        "date": "2026-10-02",
+        "price": 7250000
+      }
+    ],
+    "school": {
+      "name": "Школа № 80",
+      "minutes": 13
+    },
+    "metro_minutes": 25,
+    "defects": [
+      "далеко от метро"
+    ],
+    "highlights": [
+      "большая площадь за свои деньги"
+    ],
+    "seller": {
+      "name": "Айгуль Ринатовна",
+      "role": "собственник",
+      "min_price": 7000000,
+      "motivation": "переезд",
+      "style": "уступчивая"
+    }
+  },
+  {
+    "id": "kzn-111",
+    "district": "Ново-Савиновский",
+    "address": "ул. Амирхана, 18",
+    "rooms": 1,
+    "area": 38.4,
+    "kitchen": 9.0,
+    "floor": 8,
+    "floors": 16,
+    "year": 2014,
+    "condition": "евроремонт",
+    "price": 6750000,
+    "initial_price": 6750000,
+    "days_on_market": 12,
+    "price_history": [
+      {
+        "date": "2026-10-08",
+        "price": 6750000
+      }
+    ],
+    "school": {
+      "name": "Школа № 171",
+      "minutes": 8
+    },
+    "metro_minutes": 11,
+    "defects": [],
+    "highlights": [
+      "свежий ремонт"
+    ],
+    "seller": {
+      "name": "Дмитрий",
+      "role": "собственник",
+      "min_price": 6600000,
+      "motivation": "без срочности",
+      "style": "деловой"
+    }
+  },
+  {
+    "id": "kzn-112",
+    "district": "Советский",
+    "address": "ул. Николая Ершова, 55",
+    "rooms": 3,
+    "area": 72.5,
+    "kitchen": 11.0,
+    "floor": 5,
+    "floors": 10,
+    "year": 2007,
+    "condition": "косметика",
+    "price": 11400000,
+    "initial_price": 11700000,
+    "days_on_market": 70,
+    "price_history": [
+      {
+        "date": "2026-08-11",
+        "price": 11700000
+      },
+      {
+        "date": "2026-09-30",
+        "price": 11400000
+      }
+    ],
+    "school": {
+      "name": "Школа № 18",
+      "minutes": 7
+    },
+    "metro_minutes": 16,
+    "defects": [],
+    "highlights": [
+      "три комнаты"
+    ],
+    "seller": {
+      "name": "Руслан",
+      "role": "собственник",
+      "min_price": 11000000,
+      "motivation": "переезд",
+      "style": "спокойный"
+    }
+  },
+  {
+    "id": "kzn-113",
+    "district": "Приволжский",
+    "address": "пр. Победы, 139",
+    "rooms": 2,
+    "area": 52.9,
+    "kitchen": 9.4,
+    "floor": 10,
+    "floors": 10,
+    "year": 2009,
+    "condition": "косметика",
+    "price": 8590000,
+    "initial_price": 8790000,
+    "days_on_market": 88,
+    "price_history": [
+      {
+        "date": "2026-07-24",
+        "price": 8790000
+      },
+      {
+        "date": "2026-09-12",
+        "price": 8590000
+      }
+    ],
+    "school": {
+      "name": "Школа № 166",
+      "minutes": 6
+    },
+    "metro_minutes": 13,
+    "defects": [
+      "последний этаж",
+      "следы протечки на потолке в коридоре"
+    ],
+    "highlights": [
+      "тихий двор"
+    ],
+    "seller": {
+      "name": "Гульнара Ахатовна",
+      "role": "собственник",
+      "min_price": 8250000,
+      "motivation": "продаёт, чтобы закрыть ипотеку на новостройку",
+      "style": "уступчивая"
+    }
+  },
+  {
+    "id": "kzn-114",
+    "district": "Авиастроительный",
+    "address": "ул. Ленинградская, 52",
+    "rooms": 2,
+    "area": 47.3,
+    "kitchen": 6.5,
+    "floor": 2,
+    "floors": 5,
+    "year": 1971,
+    "condition": "требует ремонта",
+    "price": 5600000,
+    "initial_price": 5800000,
+    "days_on_market": 110,
+    "price_history": [
+      {
+        "date": "2026-07-02",
+        "price": 5800000
+      },
+      {
+        "date": "2026-09-01",
+        "price": 5600000
+      }
+    ],
+    "school": {
+      "name": "Школа № 60",
+      "minutes": 10
+    },
+    "metro_minutes": 30,
+    "defects": [
+      "хрущёвка",
+      "требует ремонта"
+    ],
+    "highlights": [
+      "самая низкая цена"
+    ],
+    "seller": {
+      "name": "Сергей",
+      "role": "собственник",
+      "min_price": 5300000,
+      "motivation": "продаёт наследство",
+      "style": "уступчивый"
+    }
+  }
+]
