@@ -13,3 +13,9 @@ __pycache__/
 .vscode/
 .idea/
 .DS_Store
+
+# снимки объявлений площадок (локальный кеш, не публикуем)
+backend/data/cache/
+
+# локальные модели (Whisper и т.п.)
+models/

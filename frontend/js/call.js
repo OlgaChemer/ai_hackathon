@@ -1,6 +1,6 @@
 // Экран звонка: счётчик цены, «линейка» коридора и расшифровка разговора.
 import { el, html, rub } from "./format.js";
-import { mic } from "./voice.js";
+import { bindMic, mic, recorder } from "./voice.js";
 
 const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
@@ -10,6 +10,12 @@ export function createCall(payload) {
     fair: payload.fair,
     authority: payload.authority,
     arguments: payload.arguments || [],
+    questions: payload.questions || [],
+    sellerName: payload.seller_name || "Продавец",
+    sellerRole: payload.seller_role || payload.listing.seller_role || "",
+    phase: null,
+    learned: null,
+    viewing: null,
     base: payload.listing.price,
     ask: payload.listing.price,
     offer: null,
@@ -42,7 +48,9 @@ function lineMarkup(line) {
 
 export function renderCall(c, onSellerSubmit) {
   const s = scale(c);
-  const seller = c.listing.seller_name || "Продавец";
+  const seller = c.sellerName;
+  const phases = [["clarify", "Уточнение"], ["bargain", "Торг"], ["viewing", "Просмотр"]];
+  const order = phases.map((p) => p[0]);
   const statusText = c.ended
     ? c.status === "agreed" ? "Звонок завершён · договорились" : "Звонок завершён · ждём вашего решения"
     : c.started ? "Идёт звонок · запись" : "Готов позвонить";
@@ -51,10 +59,17 @@ export function renderCall(c, onSellerSubmit) {
     <div class="call-head">
       <div class="call-who">
         <span class="avatar" aria-hidden="true">${seller.trim()[0]}</span>
-        <div><strong>${seller}</strong><span>${c.listing.seller_role} · ${c.listing.address}</span></div>
+        <div><strong>${seller}</strong><span>${c.sellerRole} · ${c.listing.address}</span></div>
       </div>
       <div class="call-status ${c.ended ? "is-ended" : ""}"><span class="rec"></span><span data-status>${statusText}</span></div>
     </div>
+    <div class="call-meta">
+      <ol class="phases" data-phases>
+        ${html.raw(phases.map(([k, t]) => html`<li data-phase="${k}" class="${phaseClass(c, k, order)}">${t}</li>`).join(""))}
+      </ol>
+      <span class="sim-note">${c.mode === "human" ? "Продавец — вы: отвечайте текстом или голосом" : "Симуляция: продавца играет ИИ, настоящему продавцу прототип не звонит"}</span>
+    </div>
+    ${html.raw(c.questions.length ? html`<p class="call-questions">Агент уточнит: ${c.questions.map((q) => q.label).join(", ")}</p>` : "")}
     <div class="counter">
       <div class="label">Лучшая цена продавца сейчас</div>
       <div class="row">
@@ -76,6 +91,7 @@ export function renderCall(c, onSellerSubmit) {
       ${html.raw(c.started ? "" : html`<p class="typing">Расшифровка появится, как только агент наберёт номер.</p>`)}
     </div>
     <div data-seller-slot></div>
+    <div data-learned>${html.raw(learnedMarkup(c))}</div>
     <details class="args"><summary>Аргументы агента (${c.arguments.length})</summary><ul>${html.raw(c.arguments.map((a) => html`<li>${a}</li>`).join(""))}</ul></details>
   </section>`);
   c.root = root;
@@ -83,6 +99,38 @@ export function renderCall(c, onSellerSubmit) {
   if (c.awaitingSeller) showSellerInput(c, onSellerSubmit);
   else if (c.typing) setTyping(c, c.typing);
   return root;
+}
+
+function phaseClass(c, k, order) {
+  if (!c.phase) return "";
+  const i = order.indexOf(k), cur = order.indexOf(c.phase);
+  return i < cur || (c.ended && i <= cur) ? "is-done" : i === cur ? "is-on" : "";
+}
+
+function learnedMarkup(c) {
+  if (!c.ended || (!c.viewing && !c.learned)) return "";
+  const facts = Object.entries(c.learned || {});
+  return html`<div class="learned-box">
+    <h3>Что агент узнал</h3>
+    ${html.raw(facts.length ? html`<dl>${html.raw(facts.map(([k, v]) => html`<dt>${k}</dt><dd>${v}</dd>`).join(""))}</dl>` : html`<p class="hint">Продавец не ответил на вопросы — уточню позже.</p>`)}
+    ${html.raw(c.viewing ? html`<p class="viewing-slot">Просмотр: <b>${c.viewing}</b></p>` : "")}
+  </div>`;
+}
+
+export function setPhase(c, phase) {
+  c.phase = phase;
+  const list = q(c, "[data-phases]");
+  if (!list) return;
+  const order = ["clarify", "bargain", "viewing"];
+  list.querySelectorAll("li").forEach((li) => (li.className = phaseClass(c, li.dataset.phase, order)));
+}
+
+export function showLearned(c, learned, viewing) {
+  c.learned = learned;
+  c.viewing = viewing;
+  const slot = q(c, "[data-learned]");
+  if (slot) slot.innerHTML = learnedMarkup(c);
+  setPhase(c, c.phase);
 }
 
 function q(c, sel) {
@@ -165,7 +213,7 @@ export function showSellerInput(c, onSubmit) {
   slot.innerHTML = "";
   const form = el(html`
     <form class="seller-input">
-      ${html.raw(mic.supported ? html`<button type="button" class="mic" title="Ответить голосом" aria-label="Ответить голосом"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z" fill="currentColor"/></svg></button>` : "")}
+      ${html.raw(mic.supported || recorder.supported ? html`<button type="button" class="mic" title="Ответить голосом" aria-label="Ответить голосом"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z" fill="currentColor"/></svg></button>` : "")}
       <input type="text" placeholder="Вы — продавец. Ответьте агенту, например: «8 900 000, ниже не могу»" aria-label="Ответ продавца" autocomplete="off">
       <button type="submit" class="btn btn-primary btn-small">Ответить</button>
     </form>`);
@@ -179,13 +227,15 @@ export function showSellerInput(c, onSubmit) {
     onSubmit(text);
   });
   const micBtn = form.querySelector(".mic");
-  micBtn?.addEventListener("click", async () => {
-    micBtn.classList.add("is-on");
-    const session = mic.listen((text) => { input.value = text; });
-    const finalText = await session.result;
-    micBtn.classList.remove("is-on");
-    if (finalText.trim()) form.requestSubmit();
-  });
+  if (micBtn) {
+    bindMic(micBtn, input, {
+      onFinal: () => form.requestSubmit(),
+      onError: (message) => {
+        form.querySelector(".mic-error")?.remove();
+        form.append(el(html`<p class="mic-error">${message}</p>`));
+      },
+    });
+  }
   slot.append(form);
   input.focus();
 }

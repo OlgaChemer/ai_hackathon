@@ -49,27 +49,196 @@ export const voice = {
 };
 
 const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+// Понятные причины ошибок Web Speech API.
+const MIC_ERRORS = {
+  "not-allowed": "Браузер не дал доступ к микрофону. Разрешите микрофон для этой страницы (значок слева в адресной строке) и попробуйте снова.",
+  "service-not-allowed": "Браузер запретил распознавание речи на этой странице. Разрешите микрофон в настройках сайта.",
+  "audio-capture": "Микрофон не найден или занят другой программой.",
+  "network": "Браузер не смог связаться с сервисом распознавания речи (Chrome отправляет звук на серверы Google). Проверьте интернет/VPN или откройте страницу в Microsoft Edge.",
+  "no-speech": "Не услышал речь. Нажмите на микрофон и начните говорить сразу.",
+  "language-not-supported": "Браузер не поддерживает распознавание русской речи.",
+};
+
 export const mic = {
   supported: Boolean(Recognition),
-  // Слушает одну фразу; onText получает промежуточный и финальный текст.
-  listen(onText) {
-    if (!Recognition) return null;
+  /**
+   * Слушает одну фразу.
+   * onText(text, isFinal) — промежуточный и финальный текст; onStart() — микрофон включился.
+   * result -> {text, error}: error — понятное сообщение или null.
+   */
+  listen(onText, onStart = () => {}) {
+    if (!Recognition) {
+      return { stop() {}, result: Promise.resolve({ text: "", error: "Этот браузер не умеет распознавать речь. Откройте страницу в Chrome или Edge." }) };
+    }
     const r = new Recognition();
     r.lang = "ru-RU";
     r.interimResults = true;
     r.continuous = false;
+    r.maxAlternatives = 1;
     let finalText = "";
+    let lastInterim = "";
+    let error = null;
+    let started = false;
+    let heard = false;
+    // сторож: Chrome иногда молча висит, если сервис распознавания недоступен
+    const watchdog = setTimeout(() => {
+      if (!started) {
+        error = "Микрофон не включился за 4 секунды: браузер не может связаться с сервисом распознавания речи. "
+          + "Проверьте разрешение микрофона и интернет/VPN или откройте страницу в Microsoft Edge.";
+        r.abort();
+      }
+    }, 4000);
+    const cap = setTimeout(() => {
+      if (!heard) error = "Сервис распознавания речи не ответил за 12 секунд. Проверьте интернет/VPN или откройте страницу в Microsoft Edge.";
+      r.stop();
+    }, 12000);
     const result = new Promise((resolve) => {
+      r.onaudiostart = () => { started = true; onStart(); };
       r.onresult = (e) => {
+        heard = true;
         let interim = "";
-        for (const res of e.results) (res.isFinal ? (finalText = res[0].transcript) : (interim += res[0].transcript));
-        onText(finalText || interim, Boolean(finalText));
+        for (const res of e.results) {
+          if (res.isFinal) finalText += res[0].transcript;
+          else interim += res[0].transcript;
+        }
+        lastInterim = interim;
+        onText((finalText + " " + interim).trim(), !interim);
       };
-      r.onend = () => resolve(finalText);
-      r.onerror = () => resolve(finalText);
+      r.onerror = (e) => {
+        if (e.error !== "aborted") error = MIC_ERRORS[e.error] || `Ошибка распознавания речи: ${e.error}`;
+        console.warn("SpeechRecognition error:", e.error, e.message);
+      };
+      // если финальный результат не пришёл — отдаём то, что успели услышать
+      r.onend = () => {
+        clearTimeout(watchdog);
+        clearTimeout(cap);
+        resolve({ text: (finalText || lastInterim).trim(), error: finalText || lastInterim ? null : error });
+      };
     });
     voice.stop();
-    r.start();
+    try {
+      r.start();
+    } catch (e) {
+      return { stop() {}, result: Promise.resolve({ text: "", error: `Микрофон не запустился: ${e.message}` }) };
+    }
     return { stop: () => r.stop(), result };
   },
 };
+
+// ------------------------------------------------------------------ распознавание на сервере (Whisper)
+
+const REC_ERRORS = {
+  NotAllowedError: "Браузер не дал доступ к микрофону. Разрешите микрофон для этой страницы (значок слева в адресной строке).",
+  NotFoundError: "Микрофон не найден.",
+  NotReadableError: "Микрофон занят другой программой.",
+};
+
+export const recorder = {
+  // включается, если сервер сообщил, что Whisper установлен (см. app.js)
+  available: false,
+  supported: Boolean(navigator.mediaDevices?.getUserMedia && window.MediaRecorder),
+
+  /**
+   * Записывает одну фразу и распознаёт её на сервере.
+   * Останавливается сам после 1,3 с тишины (или по stop()); максимум 20 с.
+   * onState("listening" | "processing").
+   */
+  listen(onState = () => {}) {
+    let stopFn = () => {};
+    const result = (async () => {
+      let stream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+      } catch (e) {
+        return { text: "", error: REC_ERRORS[e.name] || `Микрофон не включился: ${e.message}` };
+      }
+      voice.stop();
+      const mime = ["audio/webm;codecs=opus", "audio/ogg;codecs=opus", "audio/webm"].find((m) => MediaRecorder.isTypeSupported(m)) || "";
+      const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+      const chunks = [];
+      rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+
+      // детектор тишины
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 1024;
+      ctx.createMediaStreamSource(stream).connect(analyser);
+      const buf = new Float32Array(analyser.fftSize);
+      let heard = false;
+      let silentSince = performance.now();
+      const t0 = performance.now();
+
+      const stopped = new Promise((resolve) => { rec.onstop = resolve; });
+      const finish = () => { if (rec.state !== "inactive") rec.stop(); };
+      stopFn = finish;
+      const timer = setInterval(() => {
+        analyser.getFloatTimeDomainData(buf);
+        const rms = Math.sqrt(buf.reduce((a, v) => a + v * v, 0) / buf.length);
+        const now = performance.now();
+        if (rms > 0.006) { heard = true; silentSince = now; }
+        if ((heard && now - silentSince > 1500) || now - t0 > 20000 || (!heard && now - t0 > 8000)) finish();
+      }, 100);
+
+      rec.start(250);
+      onState("listening");
+      await stopped;
+      clearInterval(timer);
+      stream.getTracks().forEach((t) => t.stop());
+      ctx.close();
+      // даже если детектор громкости не сработал (тихий микрофон), отдаём запись Whisper — у него свой детектор речи
+      if (performance.now() - t0 < 400) return { text: "", error: "Запись слишком короткая — нажмите и говорите." };
+
+      onState("processing");
+      const blob = new Blob(chunks, { type: rec.mimeType || "audio/webm" });
+      try {
+        const res = await fetch("/api/stt", { method: "POST", headers: { "Content-Type": blob.type }, body: blob });
+        const data = await res.json();
+        if (!res.ok) return { text: "", error: data.detail || `Сервер не распознал запись (${res.status})` };
+        return { text: (data.text || "").trim(), error: data.text ? null : "Не разобрал слова — попробуйте ещё раз." };
+      } catch (e) {
+        return { text: "", error: `Не удалось отправить запись: ${e.message}` };
+      }
+    })();
+    return { stop: () => stopFn(), result };
+  },
+};
+
+/**
+ * Подключает кнопку микрофона к полю ввода. Нажал — слушаем (кнопка красная),
+ * нажал ещё раз — стоп. Если на сервере есть Whisper — пишем звук и распознаём там,
+ * иначе — распознаванием браузера.
+ * onFinal(text) — распознанная фраза; onError(message) — понятная причина сбоя.
+ */
+export function bindMic(button, input, { onFinal, onError }) {
+  let session = null;
+  button.addEventListener("click", async () => {
+    if (session) { session.stop(); return; }
+    const placeholder = input.placeholder;
+    button.classList.add("is-on");
+    button.setAttribute("aria-pressed", "true");
+    if (recorder.available && recorder.supported) {
+      input.placeholder = "Включаю микрофон…";
+      session = recorder.listen((state) => {
+        if (state === "listening") input.placeholder = "Слушаю… говорите — остановлюсь, когда замолчите";
+        if (state === "processing") {
+          input.placeholder = "Распознаю…";
+          button.classList.remove("is-on");
+        }
+      });
+    } else {
+      input.placeholder = "Включаю микрофон…";
+      session = mic.listen(
+        (text) => { input.value = text; },
+        () => { input.placeholder = "Слушаю… говорите, нажмите ещё раз, чтобы закончить"; },
+      );
+    }
+    const { text, error } = await session.result;
+    session = null;
+    button.classList.remove("is-on");
+    button.setAttribute("aria-pressed", "false");
+    input.placeholder = placeholder;
+    if (text) { input.value = text; onFinal(text); }
+    else if (error) onError(error);
+  });
+}

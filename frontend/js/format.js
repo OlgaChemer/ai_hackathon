@@ -3,7 +3,6 @@
 export const rub = (v) => (v == null ? "—" : `${Math.round(v).toLocaleString("ru-RU")} ₽`);
 export const mln = (v) => `${(v / 1e6).toLocaleString("ru-RU", { maximumFractionDigits: 2 })} млн ₽`;
 export const pct = (v, digits = 1) => `${(v * 100).toLocaleString("ru-RU", { maximumFractionDigits: digits })}%`;
-export const signedRub = (v) => (v > 0 ? `−${rub(v)}` : rub(Math.abs(v)));
 
 export function plural(n, one, few, many) {
   const m = Math.abs(n) % 100;
@@ -12,7 +11,7 @@ export function plural(n, one, few, many) {
   return d === 1 ? one : d >= 2 && d <= 4 ? few : many;
 }
 
-export function esc(s) {
+function esc(s) {
   return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 

@@ -31,10 +31,19 @@
 
   <main id="view-deal" class="workspace">
     <aside class="chat" aria-label="Диалог с агентом">
+      <div class="chat-head">
+        <span>Диалог с агентом</span>
+        <button class="link-btn" id="resetBtn" hidden>Новый запрос</button>
+      </div>
       <div class="chat-log" id="chatLog" aria-live="polite"></div>
       <form class="composer" id="composer">
-        <textarea id="query" rows="2" placeholder="Например: ищу 2-комнатную до 9 млн рядом со школой" aria-label="Запрос агенту"></textarea>
-        <button type="submit" class="btn btn-primary" id="sendBtn">Поручить агенту</button>
+        <textarea id="query" rows="2" placeholder="Например: ищу 2-комнатную в Казани до 9 млн рядом со школой" aria-label="Сообщение агенту"></textarea>
+        <div class="composer-row">
+          <button type="button" class="mic" id="micBtn" title="Сказать голосом" aria-label="Сказать голосом" hidden>
+            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z" fill="currentColor"/></svg>
+          </button>
+          <button type="submit" class="btn btn-primary" id="sendBtn">Поручить агенту</button>
+        </div>
       </form>
     </aside>
 
@@ -46,7 +55,7 @@
 
   <main id="view-economics" class="economics" hidden></main>
 
-  <footer class="footnote">Прототип для хакатона. Объявления, сделки и проверки — синтетические данные; ставки и тарифы — допущения.</footer>
+  <footer class="footnote">Прототип для хакатона. Объявления — с Циана (без телефонов продавцов); звонок продавцу — симуляция; ставки, доходности и тарифы — допущения.</footer>
 
   <script type="module" src="js/app.js"></script>
 </body>

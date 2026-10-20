@@ -14,14 +14,20 @@ from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import economics
+from . import economics, sources
 from .agent import orchestrator as O
 from .config import ROOT, settings
 from .llm import get_llm
+from . import stt
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
 app = FastAPI(title="Агент жизненных событий — Домклик")
+
+
+@app.on_event("startup")
+async def _startup():
+    stt.preload_in_background()
 
 
 class StartRequest(BaseModel):
@@ -38,6 +44,17 @@ class SellerReply(BaseModel):
     text: str = Field(min_length=1, max_length=500)
 
 
+class ClientMessage(BaseModel):
+    text: str = Field(min_length=1, max_length=1000)
+    liked: list[str] = []
+    disliked: list[str] = []
+
+
+class ProductRequest(BaseModel):
+    product: str
+    amount: int = Field(ge=0)
+
+
 @app.get("/api/health")
 async def health():
     llm = get_llm()
@@ -47,7 +64,28 @@ async def health():
         "model": llm.model,
         "configured": settings.llm_provider,
         "reason": getattr(llm, "reason", None),
+        "cities": sources.SUPPORTED_CITIES,
+        "stt": stt.status(),
     }
+
+
+MAX_AUDIO = 5 * 1024 * 1024  # ~ минута речи в webm/opus
+
+
+@app.post("/api/stt")
+async def speech_to_text(request: Request):
+    """Распознать фразу: тело запроса — аудио (webm/ogg/wav) из MediaRecorder."""
+    if not stt.installed():
+        raise HTTPException(503, "Серверное распознавание не установлено (pip install faster-whisper)")
+    audio = await request.body()
+    if not audio:
+        raise HTTPException(400, "Пустая запись")
+    if len(audio) > MAX_AUDIO:
+        raise HTTPException(413, "Слишком длинная запись")
+    try:
+        return await stt.transcribe(audio)
+    except Exception as exc:
+        raise HTTPException(500, f"Не удалось распознать: {exc}") from exc
 
 
 @app.post("/api/session")
@@ -107,19 +145,41 @@ async def seller(sid: str, req: SellerReply):
     return {"ok": True}
 
 
+@app.post("/api/session/{sid}/message")
+async def message(sid: str, req: ClientMessage):
+    """Текст или голос клиента: ответ на вопрос, пожелание к подборке, заметка."""
+    kind = await _session(sid).receive_text(req.text.strip(), {"liked": req.liked, "disliked": req.disliked})
+    return {"ok": True, "handled_as": kind}
+
+
+@app.post("/api/session/{sid}/product")
+async def open_product(sid: str, req: ProductRequest):
+    """Открыть продукт из финансового плана (демо: без реального открытия)."""
+    await _session(sid).open_product(req.product, req.amount)
+    return {"ok": True}
+
+
 @app.get("/api/economics")
 async def get_economics(request: Request):
     """Юнит-экономика и сценарии ROI. Любое поле Inputs можно передать в query."""
     params = {}
     types = {f.name: f.type for f in fields(economics.Inputs)}
     for key, value in request.query_params.items():
-        if key in types:
-            try:
-                params[key] = float(value) if types[key] in (float, "float") else int(float(value))
-            except ValueError:
-                raise HTTPException(422, f"Неверное значение {key}")
+        if key not in types:
+            continue
+        kind = str(types[key])
+        try:
+            if kind == "bool":
+                params[key] = value.lower() in {"1", "true", "yes", "on"}
+            elif kind == "float":
+                params[key] = float(value)
+            else:
+                params[key] = int(float(value))
+        except ValueError:
+            raise HTTPException(422, f"Неверное значение {key}")
     inputs = economics.Inputs(**params)
-    return {"unit": economics.unit(inputs), "scenarios": economics.scenarios()}
+    base = economics.Inputs(fin_enabled=inputs.fin_enabled)
+    return {"unit": economics.unit(inputs), "scenarios": economics.scenarios(base)}
 
 
 app.mount("/", StaticFiles(directory=ROOT / "frontend", html=True), name="frontend")

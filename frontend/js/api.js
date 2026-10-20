@@ -20,6 +20,8 @@ export const api = {
   confirm: (sid, kind, approved, data = {}) =>
     request(`/api/session/${sid}/confirm`, { method: "POST", body: { kind, approved, data } }),
   seller: (sid, text) => request(`/api/session/${sid}/seller`, { method: "POST", body: { text } }),
+  message: (sid, text, marks = {}) => request(`/api/session/${sid}/message`, { method: "POST", body: { text, ...marks } }),
+  product: (sid, product, amount) => request(`/api/session/${sid}/product`, { method: "POST", body: { product, amount } }),
   economics: (params) => request(`/api/economics?${new URLSearchParams(params)}`),
   stream: (sid) => new EventSource(`/api/session/${sid}/stream`),
 };

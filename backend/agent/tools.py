@@ -5,32 +5,38 @@
 """
 from __future__ import annotations
 
+import math
 import re
 import statistics
 from datetime import date, timedelta
 
-from . import data as D
+from ..sources import description_flags, normalize_city
 
-# ---------------------------------------------------------------- профиль
+# ---------------------------------------------------------------- профиль запроса
 
-DEFAULT_PROFILE = {
-    "city": "Казань",
-    "rooms": 2,
-    "budget_max": 9_000_000,
+REQUIRED = {"city": "город", "budget_max": "бюджет", "rooms": "число комнат"}
+
+EMPTY_PROFILE = {
+    "city": None,
+    "rooms": None,
+    "budget_max": None,
+    "budget_unknown": False,
+    "payment": None,          # cash | mortgage_ready | mortgage_saving
+    "okrug": None,
     "districts": [],
-    "near_school": True,
+    "near_school": False,
     "not_first_floor": False,
-    "savings": 2_150_000,
-    "monthly_income": 230_000,
-    "monthly_saving": 45_000,
-    "approved_mortgage": 7_200_000,
+    "kitchen_min": None,
+    "area_min": None,
+    "metro_max_minutes": None,
+    "wishes": [],
 }
 
 
 def parse_money(text: str) -> int | None:
     """'9 млн' -> 9000000, '8,7 млн' -> 8700000, '8 700 000' -> 8700000, '8700 тыс' -> 8700000."""
-    t = text.lower().replace(" ", " ")
-    m = re.search(r"(\d+(?:[.,]\d+)?)\s*(?:млн|миллион)", t)
+    t = text.lower().replace(" ", " ")
+    m = re.search(r"(\d+(?:[.,]\d+)?)\s*(?:млн|миллион|лям)", t)
     if m:
         value = float(m.group(1).replace(",", "."))
         tail = re.search(r"(?:млн|миллион\w*)\s*(\d{1,3})\s*(?:тыс|тысяч)", t[m.start():])
@@ -45,43 +51,166 @@ def parse_money(text: str) -> int | None:
     return None
 
 
+# Округа Москвы и как их называют люди
+OKRUG_ALIASES = [
+    (r"юго-?запад|\bюзао\b", "ЮЗАО"), (r"юго-?восток|\bювао\b", "ЮВАО"), (r"северо-?запад|\bсзао\b", "СЗАО"),
+    (r"северо-?восток|\bсвао\b", "СВАО"), (r"\bцентр\w*|\bцао\b", "ЦАО"), (r"\bсевер\w*|\bсао\b", "САО"),
+    (r"\bвосток\w*|\bвао\b", "ВАО"), (r"\bюг\b|\bюге\b|\bюаo\b|\bюао\b", "ЮАО"), (r"\bзапад\w*|\bзао\b", "ЗАО"),
+]
+BUDGET_UNKNOWN = r"не знаю|не уверен|сколько (?:я )?могу|сколько потян|посчита|по доход|по ипотек|в ипотеку|на ипотек|бюджет.{0,20}не|без бюджета"
+
+
+def payment_from_text(text: str | None) -> str | None:
+    t = (text or "").lower().replace("ё", "е")
+    if re.search(r"наличн|без ипотек|вся сумма|деньги есть|всю сумму|за свои", t):
+        return "cash"
+    if re.search(r"коплю|накопить|копим|не хватает на взнос|нет (?:первого )?взноса|без взноса", t):
+        return "mortgage_saving"
+    if re.search(r"ипотек", t):
+        return "mortgage_ready"
+    return None
+
+
+def okrug_from_text(text: str | None) -> str | None:
+    t = (text or "").lower().replace("ё", "е")
+    return next((name for pattern, name in OKRUG_ALIASES if re.search(pattern, t)), None)
+
+
 def parse_request_rules(query: str) -> dict:
     """Запасной разбор запроса без LLM."""
-    q = query.lower()
-    profile = dict(DEFAULT_PROFILE)
-    rooms = re.search(r"(\d)\s*-?\s*(?:к|комн)", q)
+    q = query.lower().replace("ё", "е")
+    p = dict(EMPTY_PROFILE, districts=[], wishes=[])
+    rooms = re.search(r"(\d)\s*-?\s*(?:х\s*)?(?:к\b|комн|комнат)", q)
     if rooms:
-        profile["rooms"] = int(rooms.group(1))
-    elif "одн" in q or "однушк" in q:
-        profile["rooms"] = 1
-    elif "двушк" in q or "двух" in q:
-        profile["rooms"] = 2
-    elif "трёш" in q or "треш" in q or "трех" in q or "трёх" in q:
-        profile["rooms"] = 3
-    money = parse_money(q)
-    if money:
-        profile["budget_max"] = money
-    profile["near_school"] = "школ" in q or profile["near_school"]
-    profile["not_first_floor"] = "не первый" in q
-    profile["districts"] = [d for d in D.DISTRICT_PPM2 if d.lower()[:6] in q]
-    return profile
-
-
-def merge_profile(raw: dict) -> dict:
-    """Нормализует ответ LLM: неизвестные поля отбрасываются, пропуски — по умолчанию."""
-    p = dict(DEFAULT_PROFILE)
-    for key in DEFAULT_PROFILE:
-        if key in raw and raw[key] not in (None, ""):
-            p[key] = raw[key]
-    p["rooms"] = int(p["rooms"])
-    p["budget_max"] = int(p["budget_max"])
-    p["districts"] = [d for d in (p.get("districts") or []) if d in D.DISTRICT_PPM2]
+        p["rooms"] = int(rooms.group(1))
+    elif "студи" in q:
+        p["rooms"] = 0
+    elif "однушк" in q or "однокомн" in q:
+        p["rooms"] = 1
+    elif "двушк" in q or "двухкомн" in q:
+        p["rooms"] = 2
+    elif "трешк" in q or "трехкомн" in q:
+        p["rooms"] = 3
+    p["budget_max"] = parse_money(q)
+    p["budget_unknown"] = p["budget_max"] is None and bool(re.search(BUDGET_UNKNOWN, q))
+    p["payment"] = payment_from_text(q)
+    p["city"] = normalize_city(q)
+    if p["city"] == "Москва":
+        p["okrug"] = okrug_from_text(q)
+    p["near_school"] = "школ" in q or "ребен" in q or "дет" in q
+    p["not_first_floor"] = "не перв" in q
+    kitchen = re.search(r"кухн\w*\s*(?:от|не меньше)?\s*(\d{1,2})", q)
+    if kitchen:
+        p["kitchen_min"] = float(kitchen.group(1))
+    area = re.search(r"(?:площад\w*|квартир\w*)\D{0,12}(?:от|не меньше)\s*(\d{2,3})\s*(?:м|кв)", q)
+    if area and int(area.group(1)) >= 20:
+        p["area_min"] = float(area.group(1))
+    metro = re.search(r"метро\D{0,15}(\d{1,2})\s*мин", q)
+    if metro:
+        p["metro_max_minutes"] = int(metro.group(1))
     return p
+
+
+def merge_profile(raw: dict, base: dict | None = None) -> dict:
+    """Нормализует ответ LLM поверх базового профиля: пустые поля не затирают известные."""
+    p = dict(base or EMPTY_PROFILE)
+    for key in EMPTY_PROFILE:
+        v = raw.get(key)
+        if v in (None, "", [], False):  # «нет» в уточнении не отменяет сказанное раньше
+            continue
+        if key == "wishes" and p.get("wishes"):
+            v = list(dict.fromkeys([*p["wishes"], *v]))
+        p[key] = v
+    p["city"] = normalize_city(p["city"]) or p["city"]
+    for key, cast in (("rooms", int), ("budget_max", int), ("kitchen_min", float), ("area_min", float), ("metro_max_minutes", int)):
+        try:
+            p[key] = cast(p[key]) if p[key] is not None else None
+        except (TypeError, ValueError):
+            p[key] = None
+    if p["budget_max"] is not None and p["budget_max"] < 100_000:  # «9» -> 9 млн
+        p["budget_max"] = int(p["budget_max"] * 1_000_000)
+    p["districts"] = list(p.get("districts") or [])
+    if p.get("okrug"):  # «юго-запад» -> ЮЗАО; не Москва — округов нет
+        p["okrug"] = okrug_from_text(p["okrug"]) or (p["okrug"] if p["okrug"] in ("ЦАО", "САО", "СВАО", "ВАО", "ЮВАО", "ЮАО", "ЮЗАО", "ЗАО", "СЗАО") else None)
+    if p.get("city") != "Москва":
+        p["okrug"] = None
+    if p.get("payment") not in (None, "cash", "mortgage_ready", "mortgage_saving"):
+        p["payment"] = None
+    if p.get("budget_max"):
+        p["budget_unknown"] = False
+    p["wishes"] = [str(w) for w in (p.get("wishes") or [])][:6]
+    return p
+
+
+def missing_required(p: dict) -> list[str]:
+    return [k for k in REQUIRED if p.get(k) in (None, "")]
+
+
+def clarify_question(missing: list[str]) -> str:
+    parts = {
+        "city": "в каком городе ищем",
+        "budget_max": "какой максимальный бюджет",
+        "rooms": "сколько нужно комнат",
+    }
+    asks = [parts[m] for m in missing]
+    text = ", ".join(asks[:-1]) + (" и " if len(asks) > 1 else "") + asks[-1]
+    return f"Чтобы начать поиск, уточните, пожалуйста: {text}?"
+
+
+def mln(v: float) -> str:
+    return f"{v / 1e6:.1f}".replace(".0", "").replace(".", ",") + " млн ₽"
+
+
+def rooms_text(rooms: int | None) -> str:
+    return "студия" if rooms == 0 else f"{rooms}-комнатные"
+
+
+def wants_whole_city(text: str) -> bool:
+    return bool(re.search(r"всей москв|всему город|весь город|любой округ|по всей|по всему|без округа", (text or "").lower()))
+
+
+def wants_budget_help(text: str) -> bool:
+    return bool(re.search(BUDGET_UNKNOWN, (text or "").lower().replace("ё", "е")))
+
+
+def budget_question(p: dict, market: dict | None) -> str:
+    rooms = "студии" if p["rooms"] == 0 else f"{p['rooms']}-комнатные"
+    where = p["city"] + (f", {p['okrug']}" if p.get("okrug") else "")
+    if not market:
+        return "Какой максимальный бюджет? Если не знаете — посчитаю по вашим доходам, сколько вам доступно с ипотекой."
+    return (f"Для ориентира: {rooms} на вторичке ({where}) по свежим объявлениям Циана стоят обычно "
+            f"от {mln(market['p25'])} до {mln(market['p75'])}, в середине — около {mln(market['median'])} "
+            f"(~{fmt(round(market['ppm2'], -3))} за м²). Какой у вас бюджет? Если не знаете — посчитаю по доходам, "
+            "сколько вам доступно с ипотекой.")
+
+
+def budget_chips(market: dict | None) -> list[str]:
+    if not market:
+        return []
+    return [f"До {mln(round(v, -5))}" for v in (market["p25"], market["median"], market["p75"])]
+
+
+def profile_summary(p: dict) -> str:
+    rooms = "студию" if p["rooms"] == 0 else f"{p['rooms']}-комнатную квартиру"
+    where = f"г. {p['city']}" + (f", {p['okrug']}" if p.get("okrug") else "")
+    extra = []
+    if p["near_school"]:
+        extra.append("рядом со школой")
+    if p["not_first_floor"]:
+        extra.append("не на первом этаже")
+    if p["kitchen_min"]:
+        extra.append(f"кухня от {p['kitchen_min']:g} м²")
+    if p["area_min"]:
+        extra.append(f"площадь от {p['area_min']:g} м²")
+    if p["metro_max_minutes"]:
+        extra.append(f"до метро до {p['metro_max_minutes']} мин")
+    tail = (", " + ", ".join(extra)) if extra else ""
+    return f"Ищу {rooms} в {where} до {fmt(p['budget_max'])}{tail}."
 
 
 # ---------------------------------------------------------------- ипотека
 
-DEMO_RATE = 0.169  # допущение для демо; в проде — ставка из предодобрения Сбера
+DEMO_RATE = 0.169  # допущение; в проде — ставка из предодобрения Сбера
 
 
 def annuity(principal: float, annual_rate: float, years: int) -> float:
@@ -100,249 +229,302 @@ def deal_costs(price: int, loan: int) -> dict:
     }
 
 
-def mortgage_scenarios(profile: dict) -> dict:
-    price = profile["budget_max"]
-    savings = profile["savings"]
+def mortgage_scenarios(price: int, monthly_income: int | None = None, down_available: int | None = None) -> dict:
     costs = sum(deal_costs(price, int(price * 0.8)).values())
-    variants = [
-        ("Взнос 20%, 30 лет", 0.20, 30),
-        ("Взнос 20%, 20 лет", 0.20, 20),
-        ("Взнос 30%, 25 лет", 0.30, 25),
-    ]
+    variants = [("Взнос 20%, 30 лет", 0.20, 30), ("Взнос 20%, 20 лет", 0.20, 20), ("Взнос 30%, 25 лет", 0.30, 25)]
     rows = []
     for title, dp_share, years in variants:
         down = int(price * dp_share)
         loan = price - down
         pay = annuity(loan, DEMO_RATE, years)
-        need = down + costs
-        gap = max(0, need - savings)
-        months = -(-gap // profile["monthly_saving"]) if gap else 0
-        rows.append(
-            {
-                "title": title,
-                "down_payment": down,
-                "loan": loan,
-                "years": years,
-                "monthly": int(round(pay, -2)),
-                "overpay": int(round(pay * years * 12 - loan, -3)),
-                "income_needed": int(round(pay * 2, -3)),
-                "fits_income": pay * 2 <= profile["monthly_income"],
-                "cash_needed": need,
-                "savings_gap": gap,
-                "months_to_save": months,
-            }
-        )
-    best = next((r for r in rows if r["savings_gap"] == 0 and r["fits_income"]), rows[0])
-    per_100k = annuity(100_000, DEMO_RATE, best["years"])
+        rows.append({
+            "title": title, "down_payment": down, "loan": loan, "years": years,
+            "monthly": int(round(pay, -2)),
+            "overpay": int(round(pay * years * 12 - loan, -3)),
+            "income_needed": int(round(pay * 2, -3)),
+            "fits_income": None if monthly_income is None else pay * 2 <= monthly_income,
+            "cash_needed": down + costs,
+            "savings_gap": 0 if down_available is None else max(0, down + costs - down_available),
+        })
+    best = next((r for r in rows if r["fits_income"] is not False), rows[0])
     return {
         "rate": DEMO_RATE,
-        "approved": profile["approved_mortgage"],
         "deal_costs": costs,
         "scenarios": rows,
         "recommended": best["title"],
-        "per_100k_discount": int(round(per_100k)),
+        "approved": int(price * 0.8),
+        "per_100k_discount": int(round(annuity(100_000, DEMO_RATE, best["years"]))),
     }
 
 
 # ---------------------------------------------------------------- справедливая цена
 
+BARGAIN_DISCOUNT = 0.97  # в объявлениях цена выше, чем в сделке: ~3% (по данным рынка о торге)
+
+
+def condition_factor(c: str | None) -> float:
+    return {
+        "дизайнерский": 1.08, "евроремонт": 1.06, "косметика": 1.0, "чистовая отделка": 0.98,
+        "предчистовая": 0.94, "без отделки": 0.9, "требует ремонта": 0.92,
+    }.get(c or "", 1.0)
+
+
+def year_factor(y: int | None) -> float:
+    if not y:
+        return 1.0
+    return 1.03 if y >= 2015 else 1.0 if y >= 2000 else 0.97 if y >= 1990 else 0.93
+
+
+def floor_factor(floor: int | None, floors: int | None) -> float:
+    if not floor:
+        return 1.0
+    if floor == 1:
+        return 0.95
+    if floors and floor == floors:
+        return 0.97
+    return 1.0
+
 
 def listing_factor(x: dict) -> float:
-    return D.condition_factor(x["condition"]) * D.year_factor(x["year"]) * D.floor_factor(
-        x["floor"], x["floors"]
-    )
+    return condition_factor(x.get("condition")) * year_factor(x.get("year")) * floor_factor(x.get("floor"), x.get("floors"))
 
 
-def fair_price(listing: dict) -> dict:
-    """Модель: медиана «приведённой» цены м² по сделкам-аналогам × поправки объекта."""
-    cutoff = D.TODAY - timedelta(days=180)
-    comps = [
-        d
-        for d in D.deals()
-        if d["district"] == listing["district"]
-        and d["rooms"] == listing["rooms"]
-        and date.fromisoformat(d["date"]) >= cutoff
-    ]
-    if len(comps) < 5:
-        comps = [d for d in D.deals() if d["district"] == listing["district"]]
-    std = []
-    for d in comps:
-        months = (D.TODAY - date.fromisoformat(d["date"])).days / 30
-        ppm2 = d["price"] / d["area"] / listing_factor(d) * (1 + D.MONTHLY_TREND * months)
-        std.append(ppm2)
+def fair_price(listing: dict, pool: list[dict]) -> dict:
+    """Медиана приведённой цены м² по аналогам из выдачи × поправки объекта × поправка на торг."""
+    same = [x for x in pool if x["id"] != listing["id"] and x["rooms"] == listing["rooms"]
+            and 0.7 <= x["area"] / listing["area"] <= 1.4]
+    near = []
+    if listing.get("lat"):
+        dist = {x["id"]: km(listing, x) for x in same if x.get("lat")}
+        near = sorted((x for x in same if x["id"] in dist and dist[x["id"]] <= 4), key=lambda x: dist[x["id"]])[:8]
+    district = [x for x in same if listing.get("district") and x.get("district") == listing["district"]]
+    if len(near) >= 4:
+        comps, basis = near, f"{len(near)} похожих квартир в радиусе {max(1, round(dist[near[-1]['id']]))} км"
+    elif len(district) >= 4:
+        comps, basis = district, f"{len(district)} аналогов в том же районе"
+    else:  # мало данных рядом — похожие по площади по городу
+        comps = sorted(same or [x for x in pool if x["id"] != listing["id"]], key=lambda x: abs(x["area"] - listing["area"]))[:12]
+        basis = f"{len(comps)} похожих по площади квартир по городу"
+    if not comps:
+        comps, basis = [listing], "аналогов нет — считаю по самому объекту"
+    std = sorted(x["price"] / x["area"] / listing_factor(x) for x in comps)
     base_ppm2 = statistics.median(std)
-    fair = int(round(base_ppm2 * listing_factor(listing) * listing["area"], -4))
-    low, high = int(round(fair * 0.975, -4)), int(round(fair * 1.025, -4))
-    target = int(round(fair * 0.985, -4))
-    overprice = (listing["price"] - fair) / fair
-    cheaper = sorted(
-        (d for d in comps if d["price"] / d["area"] < listing["price"] / listing["area"]),
-        key=lambda d: d["date"],
-        reverse=True,
-    )
+    k = listing_factor(listing) * listing["area"] * BARGAIN_DISCOUNT
+    fair = int(round(base_ppm2 * k, -4))
+    # коридор — межквартильный размах аналогов (не уже ±2,5%)
+    if len(std) >= 4:
+        q1, _, q3 = statistics.quantiles(std, n=4)
+    else:
+        q1 = q3 = base_ppm2
+    low = int(round(min(q1 * k, fair * 0.975), -4))
+    high = int(round(max(q3 * k, fair * 1.025), -4))
+    cheaper = [x for x in comps if x["price"] / x["area"] < listing["price"] / listing["area"]]
     return {
         "fair": fair,
         "low": low,
         "high": high,
-        "target": target,
-        "overprice_pct": round(overprice * 100, 1),
+        "target": int(round(min(fair * 0.985, listing["price"] * 0.975), -4)),
+        "overprice_pct": round((listing["price"] - fair) / fair * 100, 1),
         "ppm2": int(base_ppm2 * listing_factor(listing)),
         "comps_count": len(comps),
         "cheaper_comps": len(cheaper),
-        "comps": [
-            {k: d[k] for k in ("date", "area", "floor", "floors", "condition", "price")}
-            for d in cheaper[:3]
-        ],
-        "adjustments": [
-            {"name": "Состояние: " + listing["condition"], "factor": D.condition_factor(listing["condition"])},
-            {"name": f"Год дома: {listing['year']}", "factor": D.year_factor(listing["year"])},
-            {"name": f"Этаж {listing['floor']}/{listing['floors']}", "factor": D.floor_factor(listing["floor"], listing["floors"])},
-        ],
+        "basis": basis + ", поправка на торг −3%",
     }
+
+
+def km(a: dict, b: dict) -> float:
+    """Расстояние между объявлениями по координатам, км."""
+    lat1, lng1, lat2, lng2 = map(math.radians, (a["lat"], a["lng"], b["lat"], b["lng"]))
+    h = math.sin((lat2 - lat1) / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin((lng2 - lng1) / 2) ** 2
+    return 6371 * 2 * math.asin(math.sqrt(h))
 
 
 def bargaining_arguments(listing: dict, fp: dict) -> list[str]:
     args = []
-    if listing["days_on_market"] >= 45:
-        d = listing["days_on_market"]
-        args.append(f"квартира в продаже {d} {plural(d, 'день', 'дня', 'дней')} — дольше среднего по району (~45)")
-    drops = len(listing["price_history"]) - 1
-    if drops > 0:
-        args.append(
-            f"цену уже снижали {drops} {plural(drops, 'раз', 'раза', 'раз')}: с {fmt(listing['initial_price'])} до {fmt(listing['price'])}"
-        )
+    d = listing.get("days_on_market")
+    if d and d >= 45:
+        args.append(f"квартира в продаже {d} {plural(d, 'день', 'дня', 'дней')} — дольше обычного (~1,5 месяца)")
     if fp["overprice_pct"] > 0:
-        args.append(
-            f"по закрытым сделкам-аналогам справедливая цена ~{fmt(fp['fair'])} "
-            f"(объявление выше на {fp['overprice_pct']}%)"
-        )
-    if fp["cheaper_comps"]:
-        c = fp["cheaper_comps"]
-        args.append(f"{c} {plural(c, 'аналог', 'аналога', 'аналогов')} в районе {plural(c, 'продан', 'проданы', 'продано')} дешевле за м²")
-    for d in listing.get("defects", []):
-        args.append(f"недостаток: {d}")
-    args.append("покупатель с одобренной ипотекой Сбера, деньги через сервис безопасных расчётов, выход на сделку за 2 недели")
+        args.append(f"по аналогам справедливая цена ~{fmt(fp['fair'])} — объявление выше на {fp['overprice_pct']}%")
+    c = fp["cheaper_comps"]
+    if c:
+        args.append(f"{c} {plural(c, 'похожая квартира', 'похожие квартиры', 'похожих квартир')} в выдаче дешевле за м²")
+    if listing.get("floor") == 1:
+        args.append("первый этаж — такие квартиры обычно продаются дешевле")
+    if listing.get("condition") in ("требует ремонта", "без отделки"):
+        args.append(f"состояние: {listing['condition']} — покупателю нужны вложения в ремонт")
+    if listing.get("year") and listing["year"] < 1990:
+        args.append(f"дом {listing['year']} года")
+    args.append("покупатель с одобренной ипотекой Сбера, деньги через сервис безопасных расчётов, выход на сделку за 2–3 недели")
     return args
 
 
-# ---------------------------------------------------------------- поиск
+# ---------------------------------------------------------------- отбор и ранжирование
 
 
-def score_listing(x: dict, profile: dict, fp: dict) -> float:
+def passes_hard_filters(x: dict, p: dict) -> bool:
+    if p.get("rooms") is not None and x["rooms"] != p["rooms"]:
+        return False
+    if x["price"] > p["budget_max"] * 1.05:  # чуть дороже бюджета оставляем: можно сторговать
+        return False
+    if p.get("not_first_floor") and x.get("floor") == 1:
+        return False
+    return True
+
+
+def score_listing(x: dict, p: dict, fp: dict) -> float:
     value = max(-0.1, min(0.1, (fp["fair"] - x["price"]) / fp["fair"]))
     s = 30 * (0.5 + value / 0.2)
-    s += min(10, x["days_on_market"] / 12) + 3 * (len(x["price_history"]) - 1)
-    if profile.get("near_school"):
-        m = x["school"]["minutes"]
-        s += 15 if m <= 7 else 8 if m <= 10 else 0
-    s += {"евроремонт": 10, "косметика": 6}.get(x["condition"], 0)
-    mm = x["metro_minutes"]
-    s += 8 if mm <= 10 else 5 if mm <= 15 else 2
-    if x["floor"] == 1 or x["floor"] == x["floors"]:
-        s -= 10 if profile.get("not_first_floor") and x["floor"] == 1 else 6
-    if x["year"] < 1990:
+    if p.get("districts") and x.get("district") and any(d.lower()[:5] in x["district"].lower() for d in p["districts"]):
+        s += 10  # район, который назвал клиент
+    s += min(8, (x.get("days_on_market") or 0) / 15)
+    if p.get("near_school") and re.search(r"школ", x.get("description") or "", re.I):
+        s += 8
+    s += {"дизайнерский": 10, "евроремонт": 10, "косметика": 6, "чистовая отделка": 5}.get(x.get("condition") or "", 3)
+    m = x.get("metro") or {}
+    minutes = m.get("minutes")
+    if minutes is not None:
+        walk = minutes if m.get("mode") == "пешком" else minutes * 2
+        s += 8 if walk <= 10 else 5 if walk <= 20 else 2
+    floor, floors = x.get("floor"), x.get("floors")
+    if floor == 1 or (floors and floor == floors):
         s -= 6
-    if x.get("kitchen", 9) < 8:
+    if x.get("year") and x["year"] < 1990:
+        s -= 6
+    kitchen = x.get("kitchen")
+    if kitchen is not None and kitchen < 8:
         s -= 4
-    s += max(0, min(5, (x["area"] - 45) / 2))
-    if x["price"] > profile["budget_max"]:
+    if p.get("kitchen_min") and kitchen is not None and kitchen < p["kitchen_min"]:
         s -= 8
-    return round(max(0, min(100, s)), 1)
+    if p.get("area_min") and x["area"] < p["area_min"]:
+        s -= 8
+    if p.get("metro_max_minutes") and minutes is not None and minutes > p["metro_max_minutes"]:
+        s -= 6
+    s += max(0, min(5, (x["area"] - 40) / 3))
+    if x["price"] > p["budget_max"]:
+        s -= 8
+    if x.get("is_apartments"):
+        s -= 10
+    return round(s, 1)
 
 
-def search(profile: dict) -> dict:
-    total = len(D.listings())
-    pool = [x for x in D.listings() if x["rooms"] == profile["rooms"]]
-    if profile.get("districts"):
-        pool = [x for x in pool if x["district"] in profile["districts"]]
-    # объекты чуть дороже бюджета оставляем: их можно сторговать
-    pool = [x for x in pool if x["price"] <= profile["budget_max"] * 1.03]
-    if profile.get("not_first_floor"):
-        pool = [x for x in pool if x["floor"] != 1]
-    ranked = []
-    for x in pool:
-        fp = fair_price(x)
-        ranked.append({"listing": public_listing(x), "fair": fp, "score": score_listing(x, profile, fp)})
-    ranked.sort(key=lambda r: r["score"], reverse=True)
-    return {"total": total, "matched": len(pool), "shortlist": ranked[:6]}
+# ---------------------------------------------------------------- чего не хватает в объявлении
+
+MISSING_QUESTIONS = {
+    "condition": ("состояние и ремонт", "в каком состоянии квартира, какой ремонт"),
+    "year": ("год постройки", "какого года дом"),
+    "kitchen": ("площадь кухни", "какая площадь кухни"),
+    "floors": ("этажность дома", "сколько этажей в доме"),
+}
+ALWAYS_ASK = [("owners", "собственники", "сколько собственников и как давно квартира в собственности")]
 
 
-def public_listing(x: dict) -> dict:
-    """Объявление без скрытых данных продавца (минимальная цена и т.п.)."""
-    pub = {k: v for k, v in x.items() if k != "seller"}
-    pub["seller_name"] = x["seller"]["name"]
-    pub["seller_role"] = x["seller"]["role"]
-    return pub
+def missing_info(listing: dict, limit: int = 3) -> list[dict]:
+    out = [{"key": k, "label": lab, "question": q} for k, (lab, q) in MISSING_QUESTIONS.items() if listing.get(k) is None]
+    out += [{"key": k, "label": lab, "question": q} for k, lab, q in ALWAYS_ASK]
+    return out[:limit]
 
 
-# ---------------------------------------------------------------- юридическая проверка
+# ---------------------------------------------------------------- проверка рисков
 
 
-def legal_check(listing_id: str) -> dict:
-    r = D.egrn().get(listing_id, {})
+def legal_check(listing: dict) -> dict:
+    """Что можно сказать по данным объявления. Выписки ЕГРН/ФССП в прототипе не запрашиваем."""
     checks = []
 
     def add(source, title, status, note):
         checks.append({"source": source, "title": title, "status": status, "note": note})
 
-    since = date.fromisoformat(r.get("owned_since", "2000-01-01"))
-    years = (D.TODAY - since).days / 365
-    add("ЕГРН", "Собственники", "ok" if r.get("owners", 1) <= 2 else "info",
-        f"{r.get('owners', 1)} собств., владение с {since.strftime('%d.%m.%Y')}")
-    if years < 3:
-        add("ЕГРН", "Срок владения", "warn", f"меньше 3 лет ({years:.1f} г.) — повышенный риск оспаривания")
-    enc = r.get("encumbrance", "нет")
-    add("ЕГРН", "Обременения", "info" if enc != "нет" else "ok", enc)
-    add("ФССП", "Аресты и долги",
-        "block" if r.get("arrest") else "ok",
-        f"арест, долг {fmt(r.get('fssp_debt', 0))}" if r.get("arrest") else "не найдено")
-    add("ЕФРСБ", "Банкротство продавца", "block" if r.get("bankruptcy") else "ok",
-        "в процедуре банкротства" if r.get("bankruptcy") else "не найдено")
-    add("Нотариат", "Доверенность", "block" if r.get("power_of_attorney") else "ok",
-        "продажа по доверенности при коротком владении" if r.get("power_of_attorney") else "продаёт собственник")
-    if r.get("minors"):
-        add("ЕГРН", "Доли несовершеннолетних", "warn", "нужно разрешение опеки и нотариальная сделка")
-    if r.get("inheritance"):
-        add("ЕГРН", "Наследство", "warn", "получено по наследству < 3 лет назад — рекомендуем титульное страхование")
-    redev = r.get("redevelopment", "нет")
-    add("БТИ", "Перепланировка", "warn" if redev != "нет" else "ok", redev)
-
-    statuses = {c["status"] for c in checks}
-    status = "block" if "block" in statuses else "warn" if "warn" in statuses else "ok"
-    return {"listing_id": listing_id, "status": status, "checks": checks}
+    rr = listing.get("rosreestr_checked")
+    add(listing.get("source_name", "Площадка"), "Проверка площадкой",
+        "ok" if rr else "info", "собственник проверен в Росреестре" if rr else "площадка собственника не проверяла")
+    if listing.get("is_apartments"):
+        add("Объявление", "Апартаменты", "warn", "не жильё: нельзя прописаться, ипотека сложнее")
+    if listing.get("is_auction"):
+        add("Объявление", "Продажа с торгов", "warn", "особый порядок сделки — нужен юрист")
+    for note in description_flags(listing.get("description")):
+        add("Описание", "Обратить внимание", "warn", note)
+    add("ЕГРН, ФССП, ЕФРСБ", "Выписки по объекту и продавцу", "pending",
+        "запросим после выбора объекта (в прототипе не подключено)")
+    status = "warn" if any(c["status"] == "warn" for c in checks) else "ok"
+    return {"listing_id": listing["id"], "status": status, "checks": checks}
 
 
-# ---------------------------------------------------------------- план сделки
+# ---------------------------------------------------------------- просмотр и сделка
+
+WEEKDAYS = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]
+MONTHS = ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"]
 
 
-def deal_plan(listing: dict, final_price: int, profile: dict) -> dict:
-    down = int(profile["budget_max"] * 0.2)
-    loan = max(0, final_price - down)
+def human_date(d: date) -> str:
+    return f"{WEEKDAYS[d.weekday()]}, {d.day} {MONTHS[d.month - 1]}"
+
+
+def client_slots(today: date | None = None) -> list[str]:
+    """Удобное клиенту время: ближайший будний вечер и ближайшая суббота."""
+    today = today or date.today()
+    weekday = next(today + timedelta(days=i) for i in range(1, 8) if (today + timedelta(days=i)).weekday() < 5)
+    saturday = next(today + timedelta(days=i) for i in range(1, 8) if (today + timedelta(days=i)).weekday() == 5)
+    return [f"{human_date(weekday)}, 18:30", f"{human_date(saturday)}, 11:00"]
+
+
+def viewing_checklist(listing: dict) -> list[str]:
+    items = [
+        "Сверить паспорт продавца с выпиской ЕГРН",
+        "Проверить окна, батареи и стояки",
+        "Посмотреть потолки и стены на следы протечек",
+        "Сверить планировку с техпланом",
+        "Узнать, кто прописан и когда выпишутся",
+    ]
+    if listing.get("condition") in (None, "требует ремонта", "без отделки"):
+        items.insert(1, "Оценить объём ремонта — от него зависит итоговая цена")
+    if listing.get("floor") == 1:
+        items.insert(1, "Первый этаж: проверить сырость и запах из подвала")
+    for note in description_flags(listing.get("description")):
+        items.append(note)
+    return items
+
+
+def deal_plan(listing: dict, final_price: int, down_payment: int | None, today: date | None = None) -> dict:
+    """down_payment=None — покупка без ипотеки."""
+    today = today or date.today()
+    if down_payment is None:
+        steps = [
+            (0, "Цена согласована", "Итог звонка и запись разговора — в журнале сделки"),
+            (2, "Выписки ЕГРН и проверка продавца", "Собственники, обременения, долги, банкротство"),
+            (3, "Титульное страхование", "По желанию — защита от оспаривания сделки"),
+            (5, "Подписание договора", "Электронная подпись, договор купли-продажи в Домклик"),
+            (5, "Безопасные расчёты", "Деньги уходят продавцу только после регистрации"),
+            (9, "Электронная регистрация", "Росреестр без визитов в МФЦ"),
+        ]
+        return {
+            "cash": True, "loan": 0, "down_payment": final_price, "years": 0, "monthly": 0, "monthly_saved": 0,
+            "costs": {"Сервис безопасных расчётов": 6_900, "Электронная регистрация": 2_000},
+            "timeline": [{"date": (today + timedelta(days=d)).isoformat(), "title": t, "note": n} for d, t, n in steps],
+        }
+    loan = max(0, final_price - down_payment)
     years = 30
     pay = annuity(loan, DEMO_RATE, years)
-    pay_before = annuity(max(0, listing["price"] - down), DEMO_RATE, years)
-    costs = deal_costs(final_price, loan)
-    start = D.TODAY
+    pay_before = annuity(max(0, listing["price"] - down_payment), DEMO_RATE, years)
     steps = [
         (0, "Цена согласована", "Итог звонка и запись разговора — в журнале сделки"),
-        (1, "Заявка на ипотеку по объекту", f"Кредит {fmt(loan)} на {years} лет, предодобрение уже есть"),
-        (2, "Оценка залога", "Аккредитованная оценочная компания, онлайн-заказ"),
-        (3, "Страхование", "Имущество, жизнь, титул — СберСтрахование"),
-        (5, "Подписание договора", "Электронная подпись, договор купли-продажи в Домклик"),
-        (5, "Безопасные расчёты", "Деньги резервируются и уходят продавцу только после регистрации"),
-        (9, "Электронная регистрация", "Росреестр без визитов в МФЦ"),
-        (10, "Ключи и переезд", "Агент предложит переезд и ремонт — следующее «жизненное событие»"),
+        (1, "Заявка на ипотеку по объекту", f"Кредит {fmt(loan)} на {years} лет"),
+        (3, "Оценка залога", "Аккредитованная оценочная компания, онлайн-заказ"),
+        (4, "Выписки ЕГРН и проверка продавца", "Собственники, обременения, долги, банкротство"),
+        (6, "Страхование", "Имущество, жизнь, титул — СберСтрахование"),
+        (8, "Подписание договора", "Электронная подпись, договор купли-продажи в Домклик"),
+        (8, "Безопасные расчёты", "Деньги уходят продавцу только после регистрации"),
+        (12, "Электронная регистрация", "Росреестр без визитов в МФЦ"),
     ]
     return {
+        "cash": False,
         "loan": loan,
-        "down_payment": down,
+        "down_payment": down_payment,
         "years": years,
         "monthly": int(round(pay, -2)),
         "monthly_saved": int(round(pay_before - pay, -1)),
-        "costs": costs,
-        "timeline": [
-            {"date": (start + timedelta(days=d)).isoformat(), "title": t, "note": n} for d, t, n in steps
-        ],
+        "costs": deal_costs(final_price, loan),
+        "timeline": [{"date": (today + timedelta(days=d)).isoformat(), "title": t, "note": n} for d, t, n in steps],
     }
 
 
