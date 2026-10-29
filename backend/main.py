@@ -66,6 +66,7 @@ async def health():
         "reason": getattr(llm, "reason", None),
         "cities": sources.SUPPORTED_CITIES,
         "stt": stt.status(),
+        "places": sources.places.status(),
     }
 
 

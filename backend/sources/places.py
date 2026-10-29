@@ -185,6 +185,16 @@ async def nearby(lat: float | None, lng: float | None, kinds: list[str], budget_
     return {k: v for k, v in results if v}
 
 
+def status() -> dict:
+    """Что используется для карты: 2GIS, если он отвечает, иначе OpenStreetMap."""
+    return {
+        "provider": "2gis" if _2gis == "up" else "osm",
+        "2gis": _2gis,
+        "2gis_key": bool(TWOGIS_KEY),
+        "cache": str(CACHE),
+    }
+
+
 def map_link(lat: float | None, lng: float | None) -> str | None:
     """Ссылка на карту по координатам — без ключа и без встраивания виджета."""
     if lat is None or lng is None:

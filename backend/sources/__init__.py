@@ -5,7 +5,7 @@
 """
 from __future__ import annotations
 
-from . import cian
+from . import cian, places
 from .base import SourceUnavailable, description_flags, normalize_city
 
 __all__ = ["collect", "more", "comparables", "market", "normalize_city", "description_flags", "SourceUnavailable", "cian", "SUPPORTED_CITIES"]
