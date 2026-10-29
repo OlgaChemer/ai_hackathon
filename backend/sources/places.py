@@ -1,0 +1,157 @@
+"""Что рядом с домом: садики, школы, парки и метро по координатам объявления.
+
+Источник — OpenStreetMap через Nominatim: бесплатно, без ключа, работает из этой
+сети. Overpass (bulk-выгрузка POI) и 2GIS отсюда недоступны, Яндекс.Геокодер
+на присланном ключе отвечает 403 «Invalid api key» — ключ оставлен в .env
+как YANDEX_MAPS_API_KEY на будущее (JS-карта или платный Places API).
+
+Правила вежливости к Nominatim: не чаще одного запроса в секунду, свой
+User-Agent, результаты кешируются на диск по сетке ~110 м и живут месяц.
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import math
+import time
+from datetime import datetime, timedelta
+from pathlib import Path
+
+import httpx
+
+
+log = logging.getLogger(__name__)
+
+SOURCE = "osm"
+URL = "https://nominatim.openstreetmap.org/search"
+USER_AGENT = "domclick-agent-hackathon/0.1 (prototype; olgakamskaya@gmail.com)"
+CACHE = Path(__file__).resolve().parent.parent / "data" / "cache" / "places"
+TTL = timedelta(days=30)
+MIN_INTERVAL = 1.1          # секунд между запросами к Nominatim
+DEFAULT_RADIUS = 1500       # метров: дальше не считаем «рядом»
+
+# что ищем: ключ критерия -> поисковая фраза и радиус
+KINDS = {
+    "садик": ("детский сад", 1200),
+    "школа": ("школа", 1200),
+    "парк": ("парк", 1500),
+    "метро": ("метро", 2000),
+}
+
+_lock = asyncio.Lock()
+_last = 0.0
+
+
+def haversine(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    """Расстояние по прямой в метрах."""
+    r = 6_371_000
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp = p2 - p1
+    dl = math.radians(lng2 - lng1)
+    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * r * math.asin(math.sqrt(a))
+
+
+def walk_minutes(distance_m: float) -> int:
+    """Пешком ~4,8 км/ч: 80 м в минуту, минимум минута."""
+    return max(1, round(distance_m / 80))
+
+
+def _cache_path(lat: float, lng: float, kind: str) -> Path:
+    return CACHE / f"{lat:.3f}_{lng:.3f}_{kind}.json"
+
+
+def _read_cache(lat: float, lng: float, kind: str) -> list[dict] | None:
+    path = _cache_path(lat, lng, kind)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if datetime.now() - datetime.fromisoformat(data["fetched_at"]) > TTL:
+        return None
+    return data.get("pois")
+
+
+def _write_cache(lat: float, lng: float, kind: str, pois: list[dict]) -> None:
+    try:
+        CACHE.mkdir(parents=True, exist_ok=True)
+        _cache_path(lat, lng, kind).write_text(
+            json.dumps({"fetched_at": datetime.now().isoformat(timespec="seconds"), "pois": pois}, ensure_ascii=False),
+            encoding="utf-8")
+    except OSError as exc:
+        log.warning("не удалось сохранить кеш мест: %s", exc)
+
+
+async def _fetch(lat: float, lng: float, kind: str) -> list[dict]:
+    global _last
+    query, radius = KINDS[kind]
+    d = radius / 111_000  # ~градусы широты
+    dl = radius / (111_000 * max(0.2, math.cos(math.radians(lat))))
+    params = {
+        "q": query, "format": "json", "limit": 10, "bounded": 1, "addressdetails": 0,
+        "viewbox": f"{lng - dl},{lat + d},{lng + dl},{lat - d}",
+    }
+    async with _lock:
+        wait = MIN_INTERVAL - (time.monotonic() - _last)
+        if wait > 0:
+            await asyncio.sleep(wait)
+        _last = time.monotonic()
+        async with httpx.AsyncClient(timeout=20, headers={"User-Agent": USER_AGENT}) as http:
+            r = await http.get(URL, params=params)
+    if r.status_code != 200:
+        raise RuntimeError(f"nominatim {r.status_code}")
+    pois = []
+    for item in r.json():
+        try:
+            pois.append({"name": (item.get("display_name") or "").split(",")[0].strip(),
+                         "lat": float(item["lat"]), "lng": float(item["lon"])})
+        except (KeyError, TypeError, ValueError):
+            continue
+    return pois
+
+
+async def _pois(lat: float, lng: float, kind: str) -> list[dict]:
+    cached = _read_cache(lat, lng, kind)
+    if cached is not None:
+        return cached
+    pois = await _fetch(lat, lng, kind)
+    _write_cache(lat, lng, kind, pois)
+    return pois
+
+
+async def nearby(lat: float | None, lng: float | None, kinds: list[str], budget_s: float = 10.0) -> dict:
+    """Ближайший объект каждого вида: {"садик": {"name", "distance_m", "walk_min"}, ...}.
+
+    Укладывается в бюджет времени: что не успели — просто отсутствует в ответе,
+    и критерий по нему останется «нет данных», а не превратится в промах.
+    """
+    if lat is None or lng is None:
+        return {}
+    kinds = [k for k in kinds if k in KINDS]
+    if not kinds:
+        return {}
+
+    async def one(kind: str) -> tuple[str, dict | None]:
+        try:
+            pois = await _pois(lat, lng, kind)
+        except Exception as exc:  # сеть, лимит, 5xx — не ломаем показ
+            log.info("рядом(%s): %s", kind, exc)
+            return kind, None
+        best = None
+        for p in pois:
+            dist = haversine(lat, lng, p["lat"], p["lng"])
+            if dist <= KINDS[kind][1] and (best is None or dist < best["distance_m"]):
+                best = {"name": p["name"], "distance_m": round(dist), "walk_min": walk_minutes(dist),
+                        "lat": p["lat"], "lng": p["lng"]}
+        return kind, best
+
+    results = await asyncio.gather(*(one(k) for k in kinds))
+    return {k: v for k, v in results if v}
+
+
+def map_link(lat: float | None, lng: float | None) -> str | None:
+    """Ссылка на карту по координатам — без ключа и без встраивания виджета."""
+    if lat is None or lng is None:
+        return None
+    return f"https://yandex.ru/maps/?ll={lng:.6f},{lat:.6f}&z=16&pt={lng:.6f},{lat:.6f}"

@@ -208,6 +208,18 @@ function matchTag(m) {
   return `<span class="tag ${good ? "tag-green" : "tag-amber"}" title="Совпадение по вашим критериям">${label}</span>`;
 }
 
+function nearbyText(c) {
+  if (!c.nearby) return "";
+  return Object.entries(c.nearby)
+    .map(([kind, v]) => `${kind} ${v.distance_m} м (${v.walk_min} мин)`)
+    .join(" · ");
+}
+
+function mapLink(c) {
+  if (!c.map_url) return "";
+  return `<a class="map-link" href="${c.map_url}" target="_blank" rel="noopener noreferrer">на карте</a>`;
+}
+
 function matchNotes(m) {
   if (!m) return "";
   const parts = [];
@@ -237,6 +249,7 @@ function offerCard(c, vote) {
       ${html.raw(matchTag(c.match))}
       <p class="meta">${meta}</p>
       ${html.raw(params ? html`<p class="meta">${params}</p>` : "")}
+      ${html.raw(nearbyText(c) ? `<p class="meta nearby">Рядом: ${nearbyText(c)} ${mapLink(c)}</p>` : "")}
       ${html.raw(matchNotes(c.match))}
       ${html.raw(c.missing?.length ? html`<p class="missing">Нет в объявлении: ${c.missing.join(", ")} — уточню по телефону</p>` : "")}
     </div>

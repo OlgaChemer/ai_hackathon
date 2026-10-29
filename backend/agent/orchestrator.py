@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
 
 from .. import economics, sources
+from ..sources import places
 from ..llm import LLMClient, LLMError
 from . import criteria as C
 from . import finance as F
@@ -128,6 +130,64 @@ async def parse_request(s: Session, text: str, base: dict | None = None) -> dict
         profile = T.merge_profile(T.parse_request_rules(text), base)
         profile["parsed_by"] = "rules"
     return profile
+
+
+
+
+LOCATION_KIND_RE = re.compile(r"школ|садик|детск\w*\s*сад|метро|парк|поликлиник", re.I)
+LOCATION_NEAR_RE = re.compile(r"рядом|близко|недалеко|шагов|пешком|поблизости|вокруг", re.I)
+
+
+def is_location_question(text: str) -> bool:
+    """«А рядом есть садик?», «школа близко?» — вопрос про карту, а не про пожелания."""
+    text = text or ""
+    return bool(LOCATION_KIND_RE.search(text) and LOCATION_NEAR_RE.search(text))
+
+
+def location_answer(cards: list[dict]) -> str:
+    rows = []
+    for x in cards[:5]:
+        bits = [f"{kind} {v['distance_m']} м" for kind, v in (x.get("nearby") or {}).items()]
+        metro = x.get("metro") or {}
+        if metro.get("minutes"):
+            bits.append(f"метро {metro['minutes']} мин {metro.get('mode', '')}".strip())
+        if bits:
+            rows.append(f"{x.get('address') or 'адрес без названия'} — {', '.join(bits)}")
+    if not rows:
+        return ("По этим адресам карту ещё не смотрел. Скажите, что важно — школа, садик или метро, — "
+                "проверю по карте и покажу расстояния.")
+    return ("По карточкам в подборке: " + "; ".join(rows) + ". "
+            "Если нужно точнее по конкретной квартире — назовите адрес, проверю.")
+
+
+async def enrich_location(profile: dict, cards: list[dict], budget_s: float = 12.0) -> dict:
+    """Что рядом с домом по карте: садик, школа, парк — только то, что просил клиент.
+
+    Запросы к Nominatim идут по одному в секунду, поэтому бюджет ограничен:
+    что не успели — останется «нет данных», критерий не станет промахом.
+    """
+    kinds = [k for k in (profile.get("infra") or []) if k in places.KINDS and k != "метро"]
+    if not kinds:
+        return {}
+    got: dict = {}
+
+    async def one(x: dict) -> None:
+        nb = await places.nearby(x.get("lat"), x.get("lng"), kinds)
+        if nb:
+            x["nearby"] = nb
+            x["map_url"] = places.map_link(x.get("lat"), x.get("lng"))
+            got.update(nb)
+
+    tasks = [asyncio.create_task(one(x)) for x in cards if x.get("lat") and x.get("lng")]
+    if not tasks:
+        return {}
+    try:
+        await asyncio.wait_for(asyncio.gather(*tasks, return_exceptions=True), timeout=budget_s)
+    except asyncio.TimeoutError:
+        for t in tasks:
+            t.cancel()
+        log.info("локация: не успели посмотреть все адреса за %.0f c", budget_s)
+    return got
 
 
 def ranked(pool: list[dict], meta: dict[str, dict], prefs: P.Prefs) -> list[dict]:
@@ -424,8 +484,12 @@ async def pipeline(s: Session) -> None:
     shown: set[str] = set()
     page = 1
     districts = sorted({x["district"] for x in pool if x.get("district")})
+    last_batch: list[dict] = []
     for round_no in range(1, MAX_SELECTION_ROUNDS + 1):
         for note in s.notes:
+            if last_batch and is_location_question(note):
+                await s.say(location_answer(last_batch))
+                continue
             await P.apply_text(s.prefs, note, s.llm, districts)
         s.notes.clear()
         order = ranked(pool, meta, s.prefs)
@@ -447,7 +511,22 @@ async def pipeline(s: Session) -> None:
                 fresh = [x for x in order if x["id"] not in shown and x["id"] not in s.prefs.disliked and x["id"] not in s.prefs.liked
                  and x.get("district") not in s.prefs.districts_minus]
         batch = liked + fresh[:BATCH]
+        nearby = await enrich_location(profile, batch)
+        for x in batch:  # данные с карты появились — пересчитываем совпадение по ним
+            if x.get("nearby"):
+                meta[x["id"]]["match"] = C.check(profile, x)
+        if nearby and round_no == 1:
+            spans: dict[str, tuple[int, int]] = {}
+            for x in batch:
+                for kind, v in (x.get("nearby") or {}).items():
+                    d = v["distance_m"]
+                    lo, hi = spans.get(kind, (d, d))
+                    spans[kind] = (min(lo, d), max(hi, d))
+            parts = [f"{kind} {lo} м" if lo == hi else f"{kind} {lo}–{hi} м"
+                     for kind, (lo, hi) in spans.items()]
+            await s.say("Посмотрел по карте, что рядом: " + ", ".join(parts) + ".")
         shown |= {x["id"] for x in batch}
+        last_batch = batch
         await s.emit("result", step=4, kind="selection", data={
             "round": round_no, "cards": [card(x, meta) for x in batch], "liked": s.prefs.liked,
             "disliked": s.prefs.disliked, "learned": s.prefs.learned(), "remaining": len(fresh) - BATCH,
@@ -455,7 +534,7 @@ async def pipeline(s: Session) -> None:
         if round_no == 1:
             unclear = sorted({lab for x in batch for lab in C.unknown_labels(profile, x)})
             tail = (f" Где стоит пометка «нет данных» ({', '.join(unclear[:4])}) — "
-                    "в объявлении об этом не сказано, уточню у продавца по телефону." if unclear else "")
+                    "этого нет ни в объявлении, ни на карте, уточню у продавца по телефону." if unclear else "")
             await s.say("Вот лучшие варианты. Отметьте «Нравится» или «Не то» — я учту это и подберу ещё. "
                         "Пожелания можно написать или сказать голосом. Когда будете готовы — позвоню по отмеченным." + tail)
         r = await s.ask("selection", "Подборка", "Отметьте квартиры на экране подбора.")

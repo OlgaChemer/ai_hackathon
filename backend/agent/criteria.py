@@ -273,8 +273,32 @@ def _check_features(profile: dict, x: dict) -> bool | None:
     return True
 
 
-# Критерии, которые нельзя проверить по объявлению: они про сценарий и ранжирование.
-NOT_CHECKABLE = {"infra", "timeline"}
+# Критерии, которые нельзя проверить по объявлению: они про сценарий.
+NOT_CHECKABLE = {"timeline"}
+
+# Радиус «рядом» для инфраструктуры: ближе — да, дальше — нет.
+INFRA_RADIUS = {"школа": 1000, "садик": 1000, "парк": 1200}
+
+
+def _check_infra(profile: dict, x: dict) -> bool | None:
+    """Школа, садик, парк: считаем по карте до адреса объявления.
+
+    Данных с карты нет (не спрашивали или запрос не успел) — «неизвестно»,
+    а не промах: за это квартиру не наказываем.
+    """
+    wanted = [i for i in (profile.get("infra") or []) if i in INFRA_RADIUS]
+    if not wanted:
+        return None
+    nearby = x.get("nearby") or {}
+    verdicts = []
+    for kind in wanted:
+        found = nearby.get(kind)
+        if not found:
+            continue
+        verdicts.append(found.get("distance_m", 10**9) <= INFRA_RADIUS[kind])
+    if not verdicts:
+        return None
+    return all(verdicts)
 
 CHECKS = {
     "city": _check_city,
@@ -286,6 +310,7 @@ CHECKS = {
     "area": _check_area,
     "house": _check_house,
     "features": _check_features,
+    "infra": _check_infra,
 }
 
 LABEL = {
