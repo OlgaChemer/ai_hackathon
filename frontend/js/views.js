@@ -181,7 +181,7 @@ export function search(d) {
   <section class="panel">
     <h2 class="panel-title">Поиск и справедливая цена</h2>
     <div class="sources">${html.raw(d.report.map(sourceChip).join(""))}</div>
-    <p class="panel-lead">Под ваши параметры подходят ${d.matched} из ${d.total}. Справедливая цена — медиана цены м² ближайших похожих квартир (по координатам, площадь ±30%) с поправками на ремонт, год дома и этаж, минус 3% на торг. Коридор — разброс цен аналогов. Если объявление правее коридора — есть что сторговать.</p>
+    <p class="panel-lead">Прошли по вашим критериям (порог ${d.threshold ? Math.round(d.threshold * 100) : 70}%): ${d.matched} из ${d.total}. Справедливая цена — медиана цены м² ближайших похожих квартир (по координатам, площадь ±30%) с поправками на ремонт, год дома и этаж, минус 3% на торг. Коридор — разброс цен аналогов. Если объявление правее коридора — есть что сторговать.</p>
     ${html.raw(items.join(""))}
     <div class="legend"><span class="l-band">коридор справедливой цены</span><span class="l-tick">цена в объявлении</span></div>
   </section>`;
@@ -201,6 +201,18 @@ function metroText(m) {
   return `м. ${m.name || ""} ${m.minutes} мин ${m.mode}`.replace("  ", " ");
 }
 
+function matchTag(m) {
+  if (!m || m.pct === null || m.pct === undefined) return "";
+  const good = m.pct >= 0.7;
+  const label = `совпало ${m.ok} из ${m.checked} · ${Math.round(m.pct * 100)}%`;
+  return `<span class="tag ${good ? "tag-green" : "tag-amber"}" title="Совпадение по вашим критериям">${label}</span>`;
+}
+
+function matchMissed(m) {
+  if (!m || !m.failed || !m.failed.length) return "";
+  return `<p class="meta">Не совпало: ${m.failed.join(", ")}</p>`;
+}
+
 function offerCard(c, vote) {
   const rooms = c.rooms === 0 ? "Студия" : `${c.rooms}-комн.`;
   const floor = c.floor ? `${c.floor}${c.floors ? `/${c.floors}` : ""} эт.` : "";
@@ -215,8 +227,10 @@ function offerCard(c, vote) {
     <div class="offer-body">
       <div class="offer-price"><span class="num">${rub(c.price)}</span> ${html.raw(priceTag(c))}</div>
       <h3>${rooms}, ${c.area} м²${floor ? `, ${floor}` : ""}</h3>
+      ${html.raw(matchTag(c.match))}
       <p class="meta">${meta}</p>
       ${html.raw(params ? html`<p class="meta">${params}</p>` : "")}
+      ${html.raw(matchMissed(c.match))}
       ${html.raw(c.missing?.length ? html`<p class="missing">Нет в объявлении: ${c.missing.join(", ")} — уточню по телефону</p>` : "")}
     </div>
     <div class="offer-actions">

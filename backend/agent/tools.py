@@ -26,9 +26,21 @@ EMPTY_PROFILE = {
     "districts": [],
     "near_school": False,
     "not_first_floor": False,
+    "not_last_floor": False,
+    "floor_any": False,
     "kitchen_min": None,
     "area_min": None,
+    "area_any": False,
+    "material": [],           # кирпич | монолит | панель
+    "year_min": None,
+    "house_any": False,
     "metro_max_minutes": None,
+    "metro_any": False,
+    "condition": None,        # ready | cosmetic | repair | any
+    "infra": [],              # школа | садик | парк
+    "infra_any": False,
+    "timeline": None,         # month | quarter | exploring
+    "timeline_any": False,
     "wishes": [],
 }
 
@@ -76,10 +88,47 @@ def okrug_from_text(text: str | None) -> str | None:
     return next((name for pattern, name in OKRUG_ALIASES if re.search(pattern, t)), None)
 
 
+def condition_from_text(text: str | None) -> str | None:
+    """Состояние квартиры: заехать сразу | косметический | под ремонт | не важно."""
+    t = (text or "").lower().replace("ё", "е")
+    if re.search(r"не важ|любое состо|без разниц|не принципиаль", t):
+        return "any"
+    if re.search(r"заехать|готов\w* жить|сразу жить|хорош\w* ремонт|евроремонт|дизайнерск|чистов", t):
+        return "ready"
+    if re.search(r"косметич", t):
+        return "cosmetic"
+    if re.search(r"под ремонт|требует ремонта|без ремонта|без отделки|чернов|делать ремонт|ремонт своими", t):
+        return "repair"
+    return None
+
+
+def timeline_from_text(text: str | None) -> str | None:
+    """Срок покупки: month | quarter | exploring."""
+    t = (text or "").lower().replace("ё", "е")
+    if re.search(r"срочно|в течение месяца|через месяц|до месяца|прямо сейчас|уже нашли", t):
+        return "month"
+    if re.search(r"2-3 месяц|два-три месяц|полгода|квартал|к лету|к осени", t):
+        return "quarter"
+    if re.search(r"присматрива|не спеш|когда-нибудь|пока смотр", t):
+        return "exploring"
+    return None
+
+
+def material_from_text(text: str | None) -> list[str]:
+    t = (text or "").lower().replace("ё", "е")
+    found = [m for m in ("кирпич", "монолит", "панель", "блочн", "сталин") if m in t]
+    return found
+
+
+def year_min_from_text(text: str | None) -> int | None:
+    m = re.search(r"(?:не старше|после|новее|с)\s*(\d{4})", (text or "").lower())
+    return int(m.group(1)) if m and 1900 <= int(m.group(1)) <= 2030 else None
+
+
 def parse_request_rules(query: str) -> dict:
     """Запасной разбор запроса без LLM."""
     q = query.lower().replace("ё", "е")
-    p = dict(EMPTY_PROFILE, districts=[], wishes=[])
+    p = dict(EMPTY_PROFILE, districts=[], wishes=[], infra=[], material=[])
     rooms = re.search(r"(\d)\s*-?\s*(?:х\s*)?(?:к\b|комн|комнат)", q)
     if rooms:
         p["rooms"] = int(rooms.group(1))
@@ -99,6 +148,21 @@ def parse_request_rules(query: str) -> dict:
         p["okrug"] = okrug_from_text(q)
     p["near_school"] = "школ" in q or "ребен" in q or "дет" in q
     p["not_first_floor"] = "не перв" in q
+    p["not_last_floor"] = bool(re.search(r"не последн|кроме последн", q))
+    p["floor_any"] = bool(re.search(r"любой этаж|этаж не важ", q))
+    p["condition"] = condition_from_text(q)
+    p["metro_any"] = bool(re.search(r"метро не важ|без метро|метро не нужно", q))
+    p["area_any"] = bool(re.search(r"площад\w* не важ|метраж не важ", q))
+    p["house_any"] = bool(re.search(r"дом не важ|тип дома не важ", q))
+    p["timeline"] = timeline_from_text(q)
+    if "школ" in q:
+        p["infra"].append("школа")
+    if "садик" in q or "сад " in q:
+        p["infra"].append("садик")
+    if "парк" in q:
+        p["infra"].append("парк")
+    p["material"] = material_from_text(q)
+    p["year_min"] = year_min_from_text(q)
     kitchen = re.search(r"кухн\w*\s*(?:от|не меньше)?\s*(\d{1,2})", q)
     if kitchen:
         p["kitchen_min"] = float(kitchen.group(1))
@@ -113,10 +177,12 @@ def parse_request_rules(query: str) -> dict:
 
 def merge_profile(raw: dict, base: dict | None = None) -> dict:
     """Нормализует ответ LLM поверх базового профиля: пустые поля не затирают известные."""
-    p = dict(base or EMPTY_PROFILE)
+    p = dict(base if base is not None else EMPTY_PROFILE,
+             districts=[*(base or {}).get("districts", [])], wishes=[*(base or {}).get("wishes", [])],
+             infra=[*(base or {}).get("infra", [])], material=[*(base or {}).get("material", [])])
     for key in EMPTY_PROFILE:
         v = raw.get(key)
-        if v in (None, "", [], False):  # «нет» в уточнении не отменяет сказанное раньше
+        if v is None or v == "" or v == [] or v is False:  # «нет» в уточнении не отменяет сказанное раньше
             continue
         if key == "wishes" and p.get("wishes"):
             v = list(dict.fromkeys([*p["wishes"], *v]))
@@ -138,6 +204,16 @@ def merge_profile(raw: dict, base: dict | None = None) -> dict:
         p["payment"] = None
     if p.get("budget_max"):
         p["budget_unknown"] = False
+    if p.get("condition") not in (None, "ready", "cosmetic", "repair", "any"):
+        p["condition"] = condition_from_text(str(p["condition"]))
+    if p.get("timeline") not in (None, "month", "quarter", "exploring"):
+        p["timeline"] = timeline_from_text(str(p["timeline"]))
+    try:
+        p["year_min"] = int(p["year_min"]) if p.get("year_min") else None
+    except (TypeError, ValueError):
+        p["year_min"] = None
+    p["material"] = [str(m).lower() for m in (p.get("material") or [])][:3]
+    p["infra"] = [str(i).lower() for i in (p.get("infra") or [])][:4]
     p["wishes"] = [str(w) for w in (p.get("wishes") or [])][:6]
     return p
 
@@ -198,13 +274,27 @@ def profile_summary(p: dict) -> str:
         extra.append("рядом со школой")
     if p["not_first_floor"]:
         extra.append("не на первом этаже")
+    if p.get("not_last_floor"):
+        extra.append("не на последнем этаже")
+    if p.get("condition") and p["condition"] != "any":
+        extra.append({"ready": "с ремонтом, чтобы заехать сразу", "cosmetic": "косметический ремонт",
+                      "repair": "под ремонт"}.get(p["condition"], ""))
     if p["kitchen_min"]:
         extra.append(f"кухня от {p['kitchen_min']:g} м²")
     if p["area_min"]:
         extra.append(f"площадь от {p['area_min']:g} м²")
     if p["metro_max_minutes"]:
         extra.append(f"до метро до {p['metro_max_minutes']} мин")
-    tail = (", " + ", ".join(extra)) if extra else ""
+    if p.get("material"):
+        extra.append("дом: " + ", ".join(p["material"]))
+    if p.get("year_min"):
+        extra.append(f"дом не старше {p['year_min']}")
+    if p.get("infra"):
+        extra.append("рядом: " + ", ".join(p["infra"]))
+    if p.get("timeline"):
+        extra.append({"month": "срок — в течение месяца", "quarter": "срок — 2–3 месяца",
+                      "exploring": "пока присматривается"}.get(p["timeline"], ""))
+    tail = (", " + ", ".join(x for x in extra if x)) if extra else ""
     return f"Ищу {rooms} в {where} до {fmt(p['budget_max'])}{tail}."
 
 

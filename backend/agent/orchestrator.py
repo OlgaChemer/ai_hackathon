@@ -16,6 +16,7 @@ from typing import Any
 
 from .. import economics, sources
 from ..llm import LLMClient, LLMError
+from . import criteria as C
 from . import finance as F
 from . import negotiation as N
 from . import preferences as P
@@ -25,7 +26,7 @@ from . import tools as T
 log = logging.getLogger(__name__)
 
 STEPS = ["Запрос", "Финансы", "Поиск", "Подбор", "Проверка", "Звонок", "Просмотр", "Сделка", "Итог"]
-BATCH = 6
+BATCH = C.TOP          # клиенту показываем топ-10, а не 6
 MAX_SELECTION_ROUNDS = 6
 
 
@@ -130,15 +131,24 @@ async def parse_request(s: Session, text: str, base: dict | None = None) -> dict
 
 
 def ranked(pool: list[dict], meta: dict[str, dict], prefs: P.Prefs) -> list[dict]:
+    """Сначала доля совпавших критериев (клиент просил 70%+), внутри — цена и пожелания."""
     for x in pool:
         meta[x["id"]]["total"] = round(meta[x["id"]]["score"] + P.adjust(x, prefs), 1)
-    return sorted(pool, key=lambda x: meta[x["id"]]["total"], reverse=True)
+    return sorted(pool, key=lambda x: (-((meta[x["id"]].get("match") or {}).get("pct") or 0),
+                                       -meta[x["id"]]["total"]))
 
 
 def card(x: dict, meta: dict) -> dict:
     m = meta[x["id"]]
-    return {**x, "fair": m["fair"], "score": m["total"], "missing": [q["label"] for q in T.missing_info(x, 4)
-                                                                       if q["key"] != "owners"]}
+    return {**x, "fair": m["fair"], "score": m["total"], "match": match_payload(m.get("match")),
+            "missing": [q["label"] for q in T.missing_info(x, 4) if q["key"] != "owners"]}
+
+
+def match_payload(m: dict | None) -> dict | None:
+    """Процент совпадения для карточки: проваленные критерии — человеческими словами."""
+    if not m:
+        return None
+    return {**m, "failed": [C.LABEL.get(k, k) for k in m.get("failed", [])]}
 
 
 async def score_into(pool: list[dict], comps: list[dict], profile: dict, meta: dict) -> None:
@@ -218,6 +228,39 @@ async def pipeline(s: Session) -> None:
         await s.say("Без города, бюджета и числа комнат искать не получится. Напишите их — и начнём заново.")
         await s.emit("done", status="cancelled")
         return
+
+    # 1b. Пять обязательных критериев: добираем то, чего не назвал клиент
+    for _ in range(3):
+        miss = C.missing_core(profile)
+        if not miss:
+            break
+        chips = [c for k in miss for c in (C.CHIPS.get(k) or [])][:6]
+        r = await s.ask("clarify", "Критерии подбора", C.questions_text(profile, miss),
+                        chips=chips, progress=C.progress(profile))
+        profile = await parse_request(s, r["data"].get("text", ""), base=profile)
+    for key in C.missing_core(profile):  # не ответил — не блокируем поиск, фиксируем «не важно»
+        if key == "condition":
+            profile["condition"] = "any"
+        elif key == "metro_max_minutes":
+            profile["metro_any"] = True
+    if C.missing_core(profile):
+        await s.say("Без города, бюджета, комнат, состояния и метро подобрать не смогу — уточните их, пожалуйста.")
+        await s.emit("done", status="cancelled")
+        return
+
+    # 1c. Дополнительные критерии: спрашиваем до пяти, минимум три
+    for _ in range(3):
+        if C.extra_count(profile) >= C.EXTRA_MIN:
+            break
+        keys = C.missing_extra(profile)[:C.EXTRA_MAX]
+        if not keys:
+            break
+        chips = [c for k in keys for c in (C.CHIPS.get(k) or [])][:6]
+        r = await s.ask("clarify", "Дополнительные критерии", C.questions_text(profile, keys),
+                        chips=chips, progress=C.progress(profile))
+        profile = await parse_request(s, r["data"].get("text", ""), base=profile)
+    for key in C.missing_extra(profile)[:C.EXTRA_MAX]:  # «не важно» засчитываем как ответ
+        profile[f"{key}_any"] = True
     profile["summary"] = T.profile_summary(profile)
     s.profile = profile
     s.prefs = P.Prefs(area_min=profile.get("area_min"), kitchen_min=profile.get("kitchen_min"),
@@ -300,6 +343,14 @@ async def pipeline(s: Session) -> None:
         listings, report = await sources.collect(profile)
         pool = [x for x in listings if T.passes_hard_filters(x, profile)]
         if pool:
+            fits, sel = C.select(profile, pool, limit=BATCH)
+            if fits:
+                pool = fits
+                break
+            # до 50% не дотянуло ни одно — показываем ближайшие, но честно об этом говорим
+            pool = C.rank(profile, pool)[:BATCH]
+            sel = {"threshold": 0.5, "passed": len(pool), "total": len(pool),
+                   "relaxed": "ни одно объявление не совпало даже на 50% — показываю ближайшие"}
             break
         await s.emit("result", step=3, kind="search", data={"report": report, "total": len(listings), "matched": 0, "rows": []})
         if report and report[0]["status"] == "unavailable":
@@ -333,14 +384,21 @@ async def pipeline(s: Session) -> None:
     meta: dict[str, dict] = {}
     comps = list({x["id"]: x for x in [*sources.comparables(profile), *listings]}.values())
     await score_into(pool, comps, profile, meta)
+    for x in pool:
+        meta[x["id"]]["match"] = C.check(profile, x)
     order = ranked(pool, meta, s.prefs)
     rows = [{"id": x["id"], "address": x["address"], "district": x.get("district"), "area": x["area"],
-             "price": x["price"], **meta[x["id"]]["fair"]} for x in order[:8]]
-    await s.emit("result", step=3, kind="search", data={"report": report, "total": len(listings), "matched": len(pool), "rows": rows})
+             "price": x["price"], "match": match_payload(meta[x["id"]].get("match")),
+             **meta[x["id"]]["fair"]} for x in order[:8]]
+    await s.emit("result", step=3, kind="search",
+                 data={"report": report, "total": len(listings), "matched": len(pool), "rows": rows,
+                       "threshold": sel["threshold"], "relaxed": sel["relaxed"]})
     src = ", ".join(f"{r['source']} — {r['count']}" + (" (сохранённый срез)" if r["status"] == "snapshot" else "") for r in report)
     over = sum(1 for x in pool if meta[x["id"]]["fair"]["overprice_pct"] > 1)
-    await s.say(f"Нашёл объявлений: {src}. Под ваши параметры подходят {len(pool)}; "
-                f"{over} из них дороже справедливой цены — там есть что сторговать.")
+    await s.say(f"Нашёл объявлений: {src}. Проверил {sel['total']} по вашим критериям — "
+                f"совпало на {round(sel['threshold'] * 100)}% и больше: {len(pool)}; "
+                f"{over} из них дороже справедливой цены — там есть что сторговать."
+                + (f" {sel['relaxed']}." if sel["relaxed"] else ""))
     await s.step(3, "done")
 
     # 4. Подбор с обратной связью
@@ -359,12 +417,15 @@ async def pipeline(s: Session) -> None:
                  and x.get("district") not in s.prefs.districts_minus]
         if len(fresh) < BATCH and page < 3:
             page += 1
-            extra = [x for x in await sources.more(profile, page) if x["id"] not in by_id and T.passes_hard_filters(x, profile)]
+            extra = [x for x in await sources.more(profile, page)
+                     if x["id"] not in by_id and T.passes_hard_filters(x, profile) and C.matches(profile, x)]
             if extra:
                 pool += extra
                 comps += extra
                 by_id.update({x["id"]: x for x in extra})
                 await score_into(extra, comps, profile, meta)
+                for x in extra:
+                    meta[x["id"]]["match"] = C.check(profile, x)
                 order = ranked(pool, meta, s.prefs)
                 fresh = [x for x in order if x["id"] not in shown and x["id"] not in s.prefs.disliked and x["id"] not in s.prefs.liked
                  and x.get("district") not in s.prefs.districts_minus]
