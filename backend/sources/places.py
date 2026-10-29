@@ -14,11 +14,14 @@ import asyncio
 import json
 import logging
 import math
+import os
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
 import httpx
+
+from ..config import ROOT  # noqa: F401 — импорт загружает .env (ключ 2GIS)
 
 
 log = logging.getLogger(__name__)
@@ -27,6 +30,8 @@ SOURCE = "osm"
 URL = "https://nominatim.openstreetmap.org/search"
 USER_AGENT = "domclick-agent-hackathon/0.1 (prototype; olgakamskaya@gmail.com)"
 CACHE = Path(__file__).resolve().parent.parent / "data" / "cache" / "places"
+TWOGIS_KEY = os.getenv("TWOGIS_API_KEY", "").strip()
+TWOGIS_URL = "https://catalog.api.2gis.com/3.0/items"
 TTL = timedelta(days=30)
 MIN_INTERVAL = 1.1          # секунд между запросами к Nominatim
 DEFAULT_RADIUS = 1500       # метров: дальше не считаем «рядом»
@@ -41,6 +46,7 @@ KINDS = {
 
 _lock = asyncio.Lock()
 _last = 0.0
+_2gis = "unknown"  # unknown | up | down: 2GIS блокирует не-российские адреса
 
 
 def haversine(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
@@ -83,7 +89,26 @@ def _write_cache(lat: float, lng: float, kind: str, pois: list[dict]) -> None:
         log.warning("не удалось сохранить кеш мест: %s", exc)
 
 
-async def _fetch(lat: float, lng: float, kind: str) -> list[dict]:
+async def _fetch_2gis(lat: float, lng: float, kind: str) -> list[dict]:
+    """Каталог 2GIS: точнее по России, но работает только с российских адресов."""
+    query, radius = KINDS[kind]
+    params = {"q": query, "point": f"{lng},{lat}", "radius": radius, "key": TWOGIS_KEY,
+              "fields": "items.point,items.name", "page_size": 10, "sort": "distance"}
+    async with httpx.AsyncClient(timeout=6) as http:
+        r = await http.get(TWOGIS_URL, params=params)
+    if r.status_code != 200:
+        raise RuntimeError(f"2gis {r.status_code}")
+    items = ((r.json().get("result") or {}).get("items") or [])
+    pois = []
+    for it in items:
+        point = it.get("point") or {}
+        if point.get("lat") is None or point.get("lon") is None:
+            continue
+        pois.append({"name": it.get("name") or "", "lat": float(point["lat"]), "lng": float(point["lon"])})
+    return pois
+
+
+async def _fetch_osm(lat: float, lng: float, kind: str) -> list[dict]:
     global _last
     query, radius = KINDS[kind]
     d = radius / 111_000  # ~градусы широты
@@ -112,10 +137,20 @@ async def _fetch(lat: float, lng: float, kind: str) -> list[dict]:
 
 
 async def _pois(lat: float, lng: float, kind: str) -> list[dict]:
+    global _2gis
     cached = _read_cache(lat, lng, kind)
     if cached is not None:
         return cached
-    pois = await _fetch(lat, lng, kind)
+    pois = None
+    if TWOGIS_KEY and _2gis != "down":
+        try:
+            pois = await _fetch_2gis(lat, lng, kind)
+            _2gis = "up"
+        except Exception as exc:  # гео-блок, сеть, лимит — работаем дальше на OSM
+            _2gis = "down"
+            log.warning("2GIS недоступен (%s: %s) — считаю локацию по OpenStreetMap", type(exc).__name__, exc or "нет ответа")
+    if pois is None:
+        pois = await _fetch_osm(lat, lng, kind)
     _write_cache(lat, lng, kind, pois)
     return pois
 

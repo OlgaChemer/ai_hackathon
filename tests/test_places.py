@@ -28,8 +28,10 @@ class NearbyTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
         self._orig_cache = places.CACHE
-        self._orig_fetch = places._fetch
+        self._orig_fetch = places._fetch_osm
+        self._orig_key = places.TWOGIS_KEY
         places.CACHE = Path(self.tmp)
+        places.TWOGIS_KEY = ""              # тесты не ходят в 2GIS и не ждут таймаут
         self.calls = []
 
         async def fake_fetch(lat, lng, kind):
@@ -41,11 +43,12 @@ class NearbyTest(unittest.TestCase):
             }
             return data.get(kind, [])
 
-        places._fetch = fake_fetch
+        places._fetch_osm = fake_fetch
 
     def tearDown(self):
         places.CACHE = self._orig_cache
-        places._fetch = self._orig_fetch
+        places._fetch_osm = self._orig_fetch
+        places.TWOGIS_KEY = self._orig_key
         for f in os.listdir(self.tmp):
             os.unlink(Path(self.tmp) / f)
 
@@ -68,6 +71,37 @@ class NearbyTest(unittest.TestCase):
     def test_no_coords_returns_empty(self):
         import asyncio
         self.assertEqual(asyncio.run(places.nearby(None, None, ["школа"])), {})
+
+
+class TwoGisFallbackTest(unittest.TestCase):
+    """2GIS с зарубежного IP недоступен — молча уходим на OSM, а не ломаем подборку."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self._orig = (places.CACHE, places.TWOGIS_KEY, places._fetch_2gis, places._fetch_osm, places._2gis)
+        places.CACHE = Path(self.tmp)
+        places.TWOGIS_KEY = "test-key"
+
+        async def boom(lat, lng, kind):
+            raise TimeoutError("2gis timeout")
+
+        async def osm(lat, lng, kind):
+            return [{"name": "Школа из OSM", "lat": lat, "lng": lng}]
+
+        places._fetch_2gis = boom
+        places._fetch_osm = osm
+
+    def tearDown(self):
+        places.CACHE, places.TWOGIS_KEY, places._fetch_2gis, places._fetch_osm, places._2gis = self._orig
+        for f in os.listdir(self.tmp):
+            os.unlink(Path(self.tmp) / f)
+
+    def test_falls_back_to_osm_and_stops_trying(self):
+        import asyncio
+        res = asyncio.run(places.nearby(55.796, 49.106, ["школа"]))
+        self.assertIn("школа", res)
+        self.assertEqual(places._2gis, "down")
+        self.assertIn("OSM", res["школа"]["name"])
 
 
 class InfraCriterionTest(unittest.TestCase):
