@@ -160,7 +160,7 @@ def location_answer(cards: list[dict]) -> str:
             "Если нужно точнее по конкретной квартире — назовите адрес, проверю.")
 
 
-async def enrich_location(profile: dict, cards: list[dict], budget_s: float = 12.0) -> dict:
+async def enrich_location(profile: dict, cards: list[dict], budget_s: float = 25.0) -> dict:
     """Что рядом с домом по карте: садик, школа, парк — только то, что просил клиент.
 
     Запросы к Nominatim идут по одному в секунду, поэтому бюджет ограничен:
@@ -511,6 +511,8 @@ async def pipeline(s: Session) -> None:
                 fresh = [x for x in order if x["id"] not in shown and x["id"] not in s.prefs.disliked and x["id"] not in s.prefs.liked
                  and x.get("district") not in s.prefs.districts_minus]
         batch = liked + fresh[:BATCH]
+        if round_no == 1 and [k for k in (profile.get("infra") or []) if k != "метро"]:
+            await s.say("Смотрю по карте, что рядом с адресами из подборки — это займёт до 20 секунд.")
         nearby = await enrich_location(profile, batch)
         for x in batch:  # данные с карты появились — пересчитываем совпадение по ним
             if x.get("nearby"):
