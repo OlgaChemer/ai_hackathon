@@ -37,6 +37,8 @@ EMPTY_PROFILE = {
     "metro_max_minutes": None,
     "metro_any": False,
     "condition": None,        # ready | cosmetic | repair | any
+    "features": [],           # лоджия | парковка | кладовка
+    "features_any": False,
     "infra": [],              # школа | садик | парк
     "infra_any": False,
     "timeline": None,         # month | quarter | exploring
@@ -128,7 +130,7 @@ def year_min_from_text(text: str | None) -> int | None:
 def parse_request_rules(query: str) -> dict:
     """Запасной разбор запроса без LLM."""
     q = query.lower().replace("ё", "е")
-    p = dict(EMPTY_PROFILE, districts=[], wishes=[], infra=[], material=[])
+    p = dict(EMPTY_PROFILE, districts=[], wishes=[], infra=[], material=[], features=[])
     rooms = re.search(r"(\d)\s*-?\s*(?:х\s*)?(?:к\b|комн|комнат)", q)
     if rooms:
         p["rooms"] = int(rooms.group(1))
@@ -161,6 +163,12 @@ def parse_request_rules(query: str) -> dict:
         p["infra"].append("садик")
     if "парк" in q:
         p["infra"].append("парк")
+    if re.search(r"лоджи|балкон", q):
+        p["features"].append("лоджия")
+    if re.search(r"парковк|паркинг|машиномест", q):
+        p["features"].append("парковка")
+    if re.search(r"кладов", q):
+        p["features"].append("кладовка")
     p["material"] = material_from_text(q)
     p["year_min"] = year_min_from_text(q)
     kitchen = re.search(r"кухн\w*\s*(?:от|не меньше)?\s*(\d{1,2})", q)
@@ -179,7 +187,8 @@ def merge_profile(raw: dict, base: dict | None = None) -> dict:
     """Нормализует ответ LLM поверх базового профиля: пустые поля не затирают известные."""
     p = dict(base if base is not None else EMPTY_PROFILE,
              districts=[*(base or {}).get("districts", [])], wishes=[*(base or {}).get("wishes", [])],
-             infra=[*(base or {}).get("infra", [])], material=[*(base or {}).get("material", [])])
+             infra=[*(base or {}).get("infra", [])], material=[*(base or {}).get("material", [])],
+             features=[*(base or {}).get("features", [])])
     for key in EMPTY_PROFILE:
         v = raw.get(key)
         if v is None or v == "" or v == [] or v is False:  # «нет» в уточнении не отменяет сказанное раньше
@@ -214,6 +223,7 @@ def merge_profile(raw: dict, base: dict | None = None) -> dict:
         p["year_min"] = None
     p["material"] = [str(m).lower() for m in (p.get("material") or [])][:3]
     p["infra"] = [str(i).lower() for i in (p.get("infra") or [])][:4]
+    p["features"] = [str(f).lower() for f in (p.get("features") or [])][:4]
     p["wishes"] = [str(w) for w in (p.get("wishes") or [])][:6]
     return p
 
@@ -289,6 +299,8 @@ def profile_summary(p: dict) -> str:
         extra.append("дом: " + ", ".join(p["material"]))
     if p.get("year_min"):
         extra.append(f"дом не старше {p['year_min']}")
+    if p.get("features"):
+        extra.append("обязательно: " + ", ".join(p["features"]))
     if p.get("infra"):
         extra.append("рядом: " + ", ".join(p["infra"]))
     if p.get("timeline"):

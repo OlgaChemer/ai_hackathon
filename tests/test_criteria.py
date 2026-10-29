@@ -1,4 +1,4 @@
-"""Проверка критериев подбора: 5 обязательных + дополнительные, порог 70%."""
+"""Критерии подбора: 5 обязательных + дополнительные, три исхода и порог 70%."""
 import unittest
 
 from backend.agent import criteria as C
@@ -7,7 +7,7 @@ from backend.agent import tools as T
 
 def profile(**kw):
     p = dict(T.EMPTY_PROFILE)
-    p.update(districts=[], wishes=[], infra=[], material=[])
+    p.update(districts=[], wishes=[], infra=[], material=[], features=[])
     p.update(kw)
     return p
 
@@ -18,6 +18,7 @@ def listing(**kw):
         "condition": "косметика", "floor": 5, "floors": 10, "area": 50.0,
         "kitchen": 9.0, "year": 2005, "material": "кирпич",
         "metro": {"name": "Козья слобода", "minutes": 12, "mode": "пешком"},
+        "description": "Светлая квартира, окна во двор",
     }
     base.update(kw)
     return base
@@ -49,84 +50,112 @@ class MatchTest(unittest.TestCase):
                     condition="cosmetic", metro_max_minutes=15)
         res = C.check(p, listing())
         self.assertEqual((res["ok"], res["checked"], res["pct"]), (5, 5, 1.0))
-        self.assertTrue(C.matches(p, listing()))
+        self.assertEqual(C.status(p, listing()), "fits")
 
-    def test_one_fail_still_matches(self):
+    def test_explicit_mismatch_rejects(self):
+        """Один явный промах — квартиру не показываем, даже если остальное сошлось."""
         p = profile(city="Казань", rooms=2, budget_max=9_000_000,
                     condition="cosmetic", metro_max_minutes=15, not_first_floor=True)
-        res = C.check(p, listing(floor=1))
-        self.assertEqual(res["checked"], 6)
-        self.assertEqual(res["pct"], 0.833)
-        self.assertIn("floor", res["failed"])
-        self.assertTrue(C.matches(p, listing(floor=1)))
+        bad = listing(floor=1)
+        res = C.check(p, bad)
+        self.assertEqual(res["failed"], ["floor"])
+        self.assertEqual(C.status(p, bad), "rejected")
+        self.assertFalse(C.matches(p, bad))
 
-    def test_three_fails_rejected(self):
-        p = profile(city="Казань", rooms=2, budget_max=9_000_000,
-                    condition="ready", metro_max_minutes=10, area_min=60)
-        res = C.check(p, listing(price=999_000_000, condition="требует ремонта"))
-        self.assertFalse(C.matches(p, listing(price=999_000_000, condition="требует ремонта")))
-        self.assertLess(res["pct"], 0.7)
-
-    def test_unknown_data_does_not_count(self):
+    def test_unknown_counts_in_denominator(self):
+        """«7 из 10»: критерии без данных в объявлении считаются неподтверждёнными."""
         p = profile(city="Казань", rooms=2, budget_max=9_000_000,
                     condition="cosmetic", metro_max_minutes=15)
         res = C.check(p, listing(condition=None, metro=None))
-        self.assertEqual(res["checked"], 3)          # город, бюджет, комнаты
+        self.assertEqual(res["checked"], 5)          # все заданные критерии
+        self.assertEqual(res["ok"], 3)               # город, бюджет, комнаты
+        self.assertEqual(res["pct"], 0.6)
         self.assertEqual(res["unknown"], ["condition", "metro_max_minutes"])
-        self.assertEqual(res["pct"], 1.0)
+        self.assertEqual(res["failed"], [])
+
+    def test_too_many_unknown_is_unverified(self):
+        p = profile(city="Казань", rooms=2, budget_max=9_000_000,
+                    condition="cosmetic", metro_max_minutes=15, not_first_floor=True)
+        x = listing(condition=None, metro=None, floor=None, floors=None)
+        self.assertEqual(C.status(p, x), "unverified")
 
     def test_condition_ranking(self):
         p = profile(city="Казань", rooms=2, budget_max=9_000_000,
                     condition="ready", metro_any=True)
-        ok = C.check(p, listing(condition="евроремонт"))
-        bad = C.check(p, listing(condition="требует ремонта"))
-        self.assertNotIn("condition", ok["failed"])
-        self.assertIn("condition", bad["failed"])
+        self.assertNotIn("condition", C.check(p, listing(condition="евроремонт"))["failed"])
+        self.assertIn("condition", C.check(p, listing(condition="требует ремонта"))["failed"])
 
     def test_budget_tolerance(self):
         p = profile(city="Казань", rooms=2, budget_max=9_000_000,
                     condition="any", metro_any=True)
-        self.assertTrue(C.matches(p, listing(price=9_400_000)))   # +4,4% — можно сторговать
-        self.assertFalse(C.matches(p, listing(price=9_600_000)))  # +6,7% — уже нет
+        self.assertEqual(C.status(p, listing(price=9_400_000)), "fits")       # +4,4% — можно сторговать
+        self.assertEqual(C.status(p, listing(price=9_600_000)), "rejected")   # +6,7% — уже нет
 
     def test_wrong_rooms_and_city(self):
         p = profile(city="Казань", rooms=2, budget_max=9_000_000,
                     condition="any", metro_any=True)
-        self.assertFalse(C.matches(p, listing(rooms=3)))
-        self.assertFalse(C.matches(p, listing(city="Москва")))
+        self.assertEqual(C.status(p, listing(rooms=3)), "rejected")
+        self.assertEqual(C.status(p, listing(city="Москва")), "rejected")
+
+
+class FeaturesTest(unittest.TestCase):
+    """Кейс с лоджией: нет данных — показываем с пометкой, явное «без» — скрываем."""
+
+    def setUp(self):
+        self.p = profile(city="Казань", rooms=2, budget_max=9_000_000,
+                         condition="any", metro_any=True, features=["лоджия"])
+
+    def test_no_info_about_feature_is_shown_with_warning(self):
+        x = listing(description="Светлая квартира, окна во двор")
+        res = C.check(self.p, x)
+        self.assertEqual(res["failed"], [])
+        self.assertEqual(res["unknown"], ["features"])
+        self.assertEqual(C.status(self.p, x), "fits")
+        self.assertEqual(C.unknown_labels(self.p, x), ["лоджия/балкон"])
+
+    def test_feature_mentioned_is_confirmed(self):
+        x = listing(description="Квартира с лоджией, окна во двор")
+        self.assertEqual(C.check(self.p, x)["unknown"], [])
+        self.assertEqual(C.status(self.p, x), "fits")
+
+    def test_explicit_no_feature_is_rejected(self):
+        x = listing(description="Квартира без лоджии, окна во двор")
+        self.assertEqual(C.check(self.p, x)["failed"], ["features"])
+        self.assertEqual(C.status(self.p, x), "rejected")
 
 
 class SelectTest(unittest.TestCase):
-    def test_threshold_keeps_only_matching(self):
+    def test_rejected_never_shown(self):
         p = profile(city="Казань", rooms=2, budget_max=9_000_000,
                     condition="ready", metro_max_minutes=10)
         good = listing(id="good", condition="евроремонт", metro={"minutes": 5, "mode": "пешком"})
         bad = listing(id="bad", condition="требует ремонта", metro={"minutes": 40, "mode": "транспортом"})
-        sel, info = C.select(p, [good, bad], limit=1)
+        sel, info = C.select(p, [good, bad], limit=10)
         self.assertEqual([x["id"] for x in sel], ["good"])
-        self.assertEqual(info["threshold"], 0.7)
+        self.assertEqual(info["rejected"], 1)
 
-    def test_relax_when_few(self):
+    def test_unverified_fills_the_gap(self):
         p = profile(city="Казань", rooms=2, budget_max=9_000_000,
-                    condition="ready", metro_max_minutes=10, area_min=60)
-        bad = listing(id="bad", condition="требует ремонта", metro={"minutes": 40, "mode": "транспортом"})
-        sel, info = C.select(p, [bad], limit=10)
-        self.assertLess(info["threshold"], 0.7)
-        self.assertTrue(info["relaxed"])
+                    condition="cosmetic", metro_max_minutes=10, area_min=40)
+        unclear = listing(id="unclear", condition=None, metro=None, area=None)
+        sel, info = C.select(p, [unclear], limit=10)
+        self.assertEqual([x["id"] for x in sel], ["unclear"])
+        self.assertEqual(info["confirmed"], 0)
+        self.assertEqual(info["unverified"], 1)
 
-    def test_rank_prefers_better_match(self):
+    def test_rank_prefers_confirmed(self):
         p = profile(city="Казань", rooms=2, budget_max=9_000_000,
-                    condition="ready", metro_max_minutes=10)
-        a = listing(id="a", condition="евроремонт", metro={"minutes": 5, "mode": "пешком"})
-        b = listing(id="b", condition="косметика", metro={"minutes": 20, "mode": "пешком"})
-        self.assertEqual([x["id"] for x in C.rank(p, [b, a])], ["a", "b"])
+                    condition="ready", metro_max_minutes=10, area_min=40)
+        clear = listing(id="clear", condition="евроремонт", metro={"minutes": 5, "mode": "пешком"})
+        unclear = listing(id="unclear", condition=None, metro=None, area=None)
+        self.assertEqual([x["id"] for x in C.rank(p, [unclear, clear])], ["clear", "unclear"])
 
 
 class ParseTest(unittest.TestCase):
     def test_rules_parse_new_criteria(self):
         p = T.parse_request_rules(
             "Двушка в Казани до 9 млн, косметический ремонт, не первый и не последний этаж, "
-            "метро до 10 минут, кирпич, не старше 1990, рядом школа, срочно"
+            "метро до 10 минут, кирпич, не старше 1990, рядом школа, срочно, обязательно лоджия"
         )
         self.assertEqual(p["condition"], "cosmetic")
         self.assertTrue(p["not_first_floor"])
@@ -136,14 +165,17 @@ class ParseTest(unittest.TestCase):
         self.assertEqual(p["year_min"], 1990)
         self.assertEqual(p["infra"], ["школа"])
         self.assertEqual(p["timeline"], "month")
+        self.assertEqual(p["features"], ["лоджия"])
 
     def test_summary_mentions_criteria(self):
         p = T.merge_profile({"city": "Казань", "rooms": 2, "budget_max": 9_000_000,
-                             "condition": "cosmetic", "metro_max_minutes": 10})
+                             "condition": "cosmetic", "metro_max_minutes": 10,
+                             "features": ["лоджия"]})
         text = T.profile_summary(p)
         self.assertIn("Казань", text)
         self.assertIn("косметический", text)
         self.assertIn("метро", text)
+        self.assertIn("лоджия", text)
 
 
 if __name__ == "__main__":

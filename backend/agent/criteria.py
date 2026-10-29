@@ -22,7 +22,7 @@ MIN_CHECKED = 3
 TOP = 10
 
 CORE = ("city", "budget_max", "rooms", "condition", "metro_max_minutes")
-EXTRA = ("floor", "area", "house", "infra", "timeline")
+EXTRA = ("floor", "area", "house", "features", "infra", "timeline")
 EXTRA_MIN, EXTRA_MAX = 3, 5
 
 # «Состояние не хуже ожидаемого»: ранг объявления >= ранга запроса.
@@ -55,11 +55,31 @@ def is_set(profile: dict, key: str) -> bool:
         return bool(p.get("area_min") or p.get("kitchen_min") or p.get("area_any"))
     if key == "house":
         return bool(p.get("material") or p.get("year_min") or p.get("house_any"))
+    if key == "features":
+        return bool(p.get("features") or p.get("features_any"))
     if key == "infra":
         return bool(p.get("infra") or p.get("infra_any"))
     if key == "timeline":
         return bool(p.get("timeline") or p.get("timeline_any"))
     return False
+
+
+def is_constraining(profile: dict, key: str) -> bool:
+    """Критерий что-то ограничивает. «Не важно» — ответ, но не фильтр: его не считаем."""
+    p = profile
+    if key == "condition":
+        return bool(p.get("condition")) and p["condition"] != "any"
+    if key == "metro_max_minutes":
+        return bool(p.get("metro_max_minutes")) and not p.get("metro_any")
+    if key == "floor":
+        return bool(p.get("not_first_floor") or p.get("not_last_floor")) and not p.get("floor_any")
+    if key == "area":
+        return bool(p.get("area_min") or p.get("kitchen_min")) and not p.get("area_any")
+    if key == "house":
+        return bool(p.get("material") or p.get("year_min")) and not p.get("house_any")
+    if key == "features":
+        return bool(p.get("features") or p.get("features_any"))
+    return is_set(p, key)
 
 
 def missing(profile: dict, keys) -> list[str]:
@@ -93,6 +113,7 @@ QUESTIONS = {
     "floor": "Какие этажи не рассматриваете — первый, последний?",
     "area": "Есть рамки по площади: общая от скольких м² и кухня от скольких?",
     "house": "Есть предпочтения по дому — кирпич, монолит, панель? И насколько старый дом допустим?",
+    "features": "Что в квартире обязательно должно быть — лоджия, балкон, парковка?",
     "infra": "Что должно быть рядом — школа, садик, парк?",
     "timeline": "К какому сроку нужна квартира — в течение месяца, 2–3 месяца или пока присматриваетесь?",
 }
@@ -106,6 +127,7 @@ CHIPS = {
     "floor": ["Не первый", "Не первый и не последний", "Любой этаж"],
     "area": ["Общая от 45 м²", "Общая от 55 м²", "Кухня от 10 м²", "Площадь не важна"],
     "house": ["Кирпич или монолит", "Не старше 1980 года", "Дом не важен"],
+    "features": ["Лоджия или балкон", "Парковка", "Кладовка", "Ничего особенного"],
     "infra": ["Школа", "Садик", "Парк", "Ничего критично"],
     "timeline": ["В течение месяца", "2–3 месяца", "Пока присматриваюсь"],
 }
@@ -223,6 +245,34 @@ def _check_house(profile: dict, x: dict) -> bool | None:
     return True
 
 
+FEATURE_WORDS = {
+    "лоджия": (r"лоджи", r"балкон"),
+    "парковка": (r"парковк", r"паркинг", r"машиномест"),
+    "кладовка": (r"кладов", r"келлер"),
+}
+FEATURE_NONE = {
+    "лоджия": r"(?:без|нет|отсутству\w*)\s+(?:\w+\s+){0,2}(?:лоджи|балкон)|лоджи\w*\s+нет|балкон\w*\s+нет",
+    "парковка": r"(?:без|нет)\s+(?:\w+\s+){0,2}парковк|парковк\w*\s+нет",
+    "кладовка": r"(?:без|нет)\s+(?:\w+\s+){0,2}кладов",
+}
+
+
+def _check_features(profile: dict, x: dict) -> bool | None:
+    """Лоджия, парковка, кладовка: есть в тексте — да, явно «без» — нет, не сказано — неизвестно."""
+    text = (x.get("description") or "").lower().replace("ё", "е")
+    if not text:
+        return None
+    for name in (profile.get("features") or []):
+        words = FEATURE_WORDS.get(name)
+        if not words:
+            continue
+        if re.search(FEATURE_NONE.get(name, r"$^"), text):
+            return False
+        if not any(re.search(w, text) for w in words):
+            return None
+    return True
+
+
 # Критерии, которые нельзя проверить по объявлению: они про сценарий и ранжирование.
 NOT_CHECKABLE = {"infra", "timeline"}
 
@@ -235,6 +285,7 @@ CHECKS = {
     "floor": _check_floor,
     "area": _check_area,
     "house": _check_house,
+    "features": _check_features,
 }
 
 LABEL = {
@@ -246,46 +297,63 @@ LABEL = {
     "floor": "этаж",
     "area": "площадь",
     "house": "дом",
+    "features": "лоджия/балкон",
     "infra": "инфраструктура",
     "timeline": "сроки",
 }
 
 
 def check(profile: dict, x: dict) -> dict:
-    """Сколько критериев клиента объявление выполняет.
+    """Как объявление выглядит по критериям клиента.
 
-    Возвращает {"ok", "checked", "pct", "failed": [ключи], "unknown": [ключи]}.
-    Критерии без данных в объявлении попадают в unknown и не влияют на pct.
+    Возвращает {"ok", "checked", "pct", "failed": [ключи], "unknown": [ключи]},
+    где checked — все критерии, которые клиент задал и которые в принципе
+    проверяемы по объявлению. Процент считается от них: «7 из 10».
     """
-    ok = checked = 0
-    failed: list[str] = []
+    ok = 0
+    criteria = failed = unknown_list = 0  # noqa: F841
+    failed_keys: list[str] = []
     unknown: list[str] = []
     for key, fn in CHECKS.items():
         if key not in CORE and key not in EXTRA:
             continue
-        if not is_set(profile, key):
+        if not is_constraining(profile, key):
             continue
         if key in NOT_CHECKABLE:
             continue
+        criteria += 1
         verdict = fn(profile, x)
         if verdict is None:
             unknown.append(key)
-            continue
-        checked += 1
-        if verdict:
+        elif verdict:
             ok += 1
         else:
-            failed.append(key)
-    pct = round(ok / checked, 3) if checked else None
-    return {"ok": ok, "checked": checked, "pct": pct, "failed": failed, "unknown": unknown}
+            failed_keys.append(key)
+    pct = round(ok / criteria, 3) if criteria else None
+    return {"ok": ok, "checked": criteria, "pct": pct, "failed": failed_keys, "unknown": unknown}
+
+
+def status(profile: dict, x: dict) -> str:
+    """Три исхода: подходит · подходит частично (нет данных) · не подходит.
+
+    Явный промах по любому критерию — «не подходит»: квартиру без лоджии не
+    показываем клиенту, который лоджию просил. Если по критерию нет данных,
+    объявление не отбрасываем — покажем и предложим уточнить у продавца.
+    """
+    res = check(profile, x)
+    if res["failed"]:
+        return "rejected"
+    if res["pct"] is None:
+        return "unverified"
+    return "fits" if res["pct"] >= THRESHOLD else "unverified"
 
 
 def matches(profile: dict, x: dict, threshold: float = THRESHOLD) -> bool:
-    """Объявление подходит, если совпало не меньше 70% проверяемых критериев."""
+    """Подходит полностью: нет ни одного явного промаха и подтверждено не меньше 70%."""
     res = check(profile, x)
+    if res["failed"]:
+        return False
     if res["pct"] is None:  # проверить нечего — решают жёсткие фильтры
-        return True
-    if res["checked"] < MIN_CHECKED:  # слишком мало данных, чтобы судить по проценту
         return True
     return res["pct"] >= threshold
 
@@ -294,36 +362,51 @@ def failed_labels(profile: dict, x: dict) -> list[str]:
     return [LABEL.get(k, k) for k in check(profile, x)["failed"]]
 
 
+def unknown_labels(profile: dict, x: dict) -> list[str]:
+    return [LABEL.get(k, k) for k in check(profile, x)["unknown"]]
+
+
 def summary_line(profile: dict, x: dict) -> str:
     res = check(profile, x)
     if res["pct"] is None:
         return "проверить нечего"
     tail = f", не совпало: {', '.join(failed_labels(profile, x))}" if res["failed"] else ""
+    if res["unknown"]:
+        tail += f", нет данных: {', '.join(unknown_labels(profile, x))}"
     return f"совпало {res['ok']} из {res['checked']} ({round(res['pct'] * 100)}%){tail}"
 
 
 # ------------------------------------------------------------------ отбор
 
 def rank(profile: dict, listings: list[dict]) -> list[dict]:
-    """Сортировка: сначала те, у кого выше доля совпавших критериев."""
+    """Сначала полные совпадения, потом «нет данных», внутри — по доле подтверждённых."""
+    order = {"fits": 0, "unverified": 1, "rejected": 2}
+
     def key(x: dict) -> tuple:
+        st = status(profile, x)
         res = check(profile, x)
-        pct = res["pct"] if res["pct"] is not None else -1.0
-        return (-pct, -res["ok"])
+        return (order.get(st, 3), -(res["pct"] or 0), -res["ok"])
 
     return sorted(listings, key=key)
 
 
 def select(profile: dict, listings: list[dict], limit: int = TOP) -> tuple[list[dict], dict]:
-    """Прошедшие порог объявления, отсортированные по доле совпадения.
+    """Топ подборки: сначала подходящие, затем «нет данных» — и отчёт для агента.
 
-    Если вариантов меньше limit, порог честно ослабляется до 60% и 50% — и это
-    видно в отчёте, чтобы агент сказал клиенту правду, а не выдал подборку молча.
+    Явно не подходящие не показываем никогда: если в объявлении сказано
+    «без лоджии», а клиент просил лоджию, вариант отбрасывается.
     """
-    info = {"threshold": THRESHOLD, "passed": 0, "total": len(listings), "relaxed": None}
-    for threshold, note in ((THRESHOLD, None), (0.6, "снизил порог до 60%"), (0.5, "снизил порог до 50%")):
-        passed = [x for x in listings if matches(profile, x, threshold)]
-        info = {"threshold": threshold, "passed": len(passed), "total": len(listings), "relaxed": note}
-        if len(passed) >= limit:
-            return rank(profile, passed), info
-    return rank(profile, passed), info
+    fits = [x for x in listings if status(profile, x) == "fits"]
+    unverified = [x for x in listings if status(profile, x) == "unverified"]
+    chosen = fits[:limit]
+    if len(chosen) < limit:
+        chosen += unverified[: limit - len(chosen)]
+    info = {
+        "threshold": THRESHOLD,
+        "total": len(listings),
+        "confirmed": len(fits),
+        "unverified": len(unverified),
+        "rejected": len(listings) - len(fits) - len(unverified),
+        "shown": len(chosen),
+    }
+    return rank(profile, chosen), info

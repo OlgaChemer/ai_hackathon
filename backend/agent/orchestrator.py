@@ -145,10 +145,12 @@ def card(x: dict, meta: dict) -> dict:
 
 
 def match_payload(m: dict | None) -> dict | None:
-    """Процент совпадения для карточки: проваленные критерии — человеческими словами."""
+    """Совпадение для карточки: провалы и пробелы — человеческими словами."""
     if not m:
         return None
-    return {**m, "failed": [C.LABEL.get(k, k) for k in m.get("failed", [])]}
+    failed = [C.LABEL.get(k, k) for k in m.get("failed", [])]
+    unknown = [C.LABEL.get(k, k) for k in m.get("unknown", [])]
+    return {**m, "failed": failed, "unknown": unknown, "ask_seller": unknown}
 
 
 async def score_into(pool: list[dict], comps: list[dict], profile: dict, meta: dict) -> None:
@@ -347,28 +349,32 @@ async def pipeline(s: Session) -> None:
             if fits:
                 pool = fits
                 break
-            # до 50% не дотянуло ни одно — показываем ближайшие, но честно об этом говорим
-            pool = C.rank(profile, pool)[:BATCH]
-            sel = {"threshold": 0.5, "passed": len(pool), "total": len(pool),
-                   "relaxed": "ни одно объявление не совпало даже на 50% — показываю ближайшие"}
-            break
-        await s.emit("result", step=3, kind="search", data={"report": report, "total": len(listings), "matched": 0, "rows": []})
-        if report and report[0]["status"] == "unavailable":
-            await s.say(f"Циан сейчас не отдаёт объявления ({report[0]['note']}). Попробуйте чуть позже.")
-            await s.emit("done", status="empty")
-            return
-        m = await sources.market(profile)
-        question = (f"Целых квартир ({T.rooms_text(profile['rooms'])}, {where}) до {T.fmt(profile['budget_max'])} сейчас нет — "
-                    "доли и комнаты я не показываю.")
-        chips = []
-        if m:
-            cheapest = int(-(-m["min"] // 100_000) * 100_000)
-            question += f" Самые доступные — от {T.mln(m['min'])}, обычно {T.mln(m['p25'])}–{T.mln(m['p75'])}."
-            chips.append(f"Бюджет до {T.mln(cheapest)}")
-        if profile["rooms"] and profile["rooms"] > 1:
-            chips.append(f"{profile['rooms'] - 1}-комнатные")
-        if profile.get("okrug"):
-            chips.append(f"Искать по всему городу ({profile['city']})")
+            await s.emit("result", step=3, kind="search",
+                         data={"report": report, "total": len(pool), "matched": 0, "rows": [],
+                               "confirmed": 0, "unverified": 0, "rejected": sel["rejected"]})
+            question = (f"Среди {sel['total']} объявлений ни одно не подошло под все ваши критерии — "
+                        "в них прямо сказано, что что-то не выполняется. Что смягчим?")
+            chips = ["Любой этаж", "Площадь не важна", "Любое состояние", "Метро не важно"]
+            if "лоджия" in (profile.get("features") or []):
+                chips.append("Без лоджии можно")
+        else:
+            await s.emit("result", step=3, kind="search", data={"report": report, "total": len(listings), "matched": 0, "rows": []})
+            if report and report[0]["status"] == "unavailable":
+                await s.say(f"Циан сейчас не отдаёт объявления ({report[0]['note']}). Попробуйте чуть позже.")
+                await s.emit("done", status="empty")
+                return
+            m = await sources.market(profile)
+            question = (f"Целых квартир ({T.rooms_text(profile['rooms'])}, {where}) до {T.fmt(profile['budget_max'])} сейчас нет — "
+                        "доли и комнаты я не показываю.")
+            chips = []
+            if m:
+                cheapest = int(-(-m["min"] // 100_000) * 100_000)
+                question += f" Самые доступные — от {T.mln(m['min'])}, обычно {T.mln(m['p25'])}–{T.mln(m['p75'])}."
+                chips.append(f"Бюджет до {T.mln(cheapest)}")
+            if profile["rooms"] and profile["rooms"] > 1:
+                chips.append(f"{profile['rooms'] - 1}-комнатные")
+            if profile.get("okrug"):
+                chips.append(f"Искать по всему городу ({profile['city']})")
         question += " Что меняем?"
         r = await s.ask("clarify", "Ничего не нашлось", question, chips=chips)
         text = r["data"].get("text", "")
@@ -387,18 +393,29 @@ async def pipeline(s: Session) -> None:
     for x in pool:
         meta[x["id"]]["match"] = C.check(profile, x)
     order = ranked(pool, meta, s.prefs)
+    top = order[:BATCH]
     rows = [{"id": x["id"], "address": x["address"], "district": x.get("district"), "area": x["area"],
              "price": x["price"], "match": match_payload(meta[x["id"]].get("match")),
-             **meta[x["id"]]["fair"]} for x in order[:8]]
+             **meta[x["id"]]["fair"]} for x in top[:8]]
+    unclear = sorted({lab for x in top for lab in C.unknown_labels(profile, x)})
     await s.emit("result", step=3, kind="search",
-                 data={"report": report, "total": len(listings), "matched": len(pool), "rows": rows,
-                       "threshold": sel["threshold"], "relaxed": sel["relaxed"]})
+                 data={"report": report, "total": sel["total"], "matched": len(pool), "rows": rows,
+                       "threshold": sel["threshold"], "confirmed": sel["confirmed"],
+                       "unverified": sel["unverified"], "rejected": sel["rejected"],
+                       "unclear": unclear})
     src = ", ".join(f"{r['source']} — {r['count']}" + (" (сохранённый срез)" if r["status"] == "snapshot" else "") for r in report)
     over = sum(1 for x in pool if meta[x["id"]]["fair"]["overprice_pct"] > 1)
-    await s.say(f"Нашёл объявлений: {src}. Проверил {sel['total']} по вашим критериям — "
-                f"совпало на {round(sel['threshold'] * 100)}% и больше: {len(pool)}; "
-                f"{over} из них дороже справедливой цены — там есть что сторговать."
-                + (f" {sel['relaxed']}." if sel["relaxed"] else ""))
+    parts = [f"Нашёл объявлений: {src}. Проверил {sel['total']} по вашим критериям."]
+    if sel["confirmed"]:
+        parts.append(f"Полностью совпали: {sel['confirmed']}.")
+    if sel["unverified"]:
+        tail = f" — в них не указано: {', '.join(unclear[:4])}" if unclear else ""
+        parts.append(f"Ещё {sel['unverified']} подходят частично: по части пунктов в объявлении нет данных"
+                     f"{tail}. Покажу их с пометкой и могу позвонить продавцу, чтобы уточнить.")
+    if sel["rejected"]:
+        parts.append(f"Отсеял {sel['rejected']}: в объявлении прямо сказано, что критерий не выполняется.")
+    parts.append(f"Из прошедших {over} дороже справедливой цены — там есть что сторговать.")
+    await s.say(" ".join(parts))
     await s.step(3, "done")
 
     # 4. Подбор с обратной связью
@@ -436,8 +453,11 @@ async def pipeline(s: Session) -> None:
             "disliked": s.prefs.disliked, "learned": s.prefs.learned(), "remaining": len(fresh) - BATCH,
         })
         if round_no == 1:
+            unclear = sorted({lab for x in batch for lab in C.unknown_labels(profile, x)})
+            tail = (f" Где стоит пометка «нет данных» ({', '.join(unclear[:4])}) — "
+                    "в объявлении об этом не сказано, уточню у продавца по телефону." if unclear else "")
             await s.say("Вот лучшие варианты. Отметьте «Нравится» или «Не то» — я учту это и подберу ещё. "
-                        "Пожелания можно написать или сказать голосом. Когда будете готовы — позвоню по отмеченным.")
+                        "Пожелания можно написать или сказать голосом. Когда будете готовы — позвоню по отмеченным." + tail)
         r = await s.ask("selection", "Подборка", "Отметьте квартиры на экране подбора.")
         d = r["data"]
         s.prefs.liked = [i for i in d.get("liked", []) if i in by_id]

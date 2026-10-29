@@ -181,7 +181,7 @@ export function search(d) {
   <section class="panel">
     <h2 class="panel-title">Поиск и справедливая цена</h2>
     <div class="sources">${html.raw(d.report.map(sourceChip).join(""))}</div>
-    <p class="panel-lead">Прошли по вашим критериям (порог ${d.threshold ? Math.round(d.threshold * 100) : 70}%): ${d.matched} из ${d.total}. Справедливая цена — медиана цены м² ближайших похожих квартир (по координатам, площадь ±30%) с поправками на ремонт, год дома и этаж, минус 3% на торг. Коридор — разброс цен аналогов. Если объявление правее коридора — есть что сторговать.</p>
+    <p class="panel-lead">Полностью совпали: ${d.confirmed ?? d.matched} из ${d.total}${d.unverified ? `, подходят частично (нет данных): ${d.unverified}` : ""}${d.rejected ? `, отсеяно: ${d.rejected}` : ""}. Справедливая цена — медиана цены м² ближайших похожих квартир (по координатам, площадь ±30%) с поправками на ремонт, год дома и этаж, минус 3% на торг. Коридор — разброс цен аналогов. Если объявление правее коридора — есть что сторговать.</p>
     ${html.raw(items.join(""))}
     <div class="legend"><span class="l-band">коридор справедливой цены</span><span class="l-tick">цена в объявлении</span></div>
   </section>`;
@@ -208,9 +208,16 @@ function matchTag(m) {
   return `<span class="tag ${good ? "tag-green" : "tag-amber"}" title="Совпадение по вашим критериям">${label}</span>`;
 }
 
-function matchMissed(m) {
-  if (!m || !m.failed || !m.failed.length) return "";
-  return `<p class="meta">Не совпало: ${m.failed.join(", ")}</p>`;
+function matchNotes(m) {
+  if (!m) return "";
+  const parts = [];
+  if (m.unknown && m.unknown.length) {
+    parts.push(`<p class="missing">Нет данных: ${m.unknown.join(", ")} — могу позвонить продавцу и уточнить</p>`);
+  }
+  if (m.failed && m.failed.length) {
+    parts.push(`<p class="meta">Не совпало: ${m.failed.join(", ")}</p>`);
+  }
+  return parts.join("");
 }
 
 function offerCard(c, vote) {
@@ -230,7 +237,7 @@ function offerCard(c, vote) {
       ${html.raw(matchTag(c.match))}
       <p class="meta">${meta}</p>
       ${html.raw(params ? html`<p class="meta">${params}</p>` : "")}
-      ${html.raw(matchMissed(c.match))}
+      ${html.raw(matchNotes(c.match))}
       ${html.raw(c.missing?.length ? html`<p class="missing">Нет в объявлении: ${c.missing.join(", ")} — уточню по телефону</p>` : "")}
     </div>
     <div class="offer-actions">
