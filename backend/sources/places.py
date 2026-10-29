@@ -187,8 +187,9 @@ async def nearby(lat: float | None, lng: float | None, kinds: list[str], budget_
 
 def status() -> dict:
     """Что используется для карты: 2GIS, если он отвечает, иначе OpenStreetMap."""
+    provider = {"up": "2gis", "down": "osm"}.get(_2gis, "auto" if TWOGIS_KEY else "osm")
     return {
-        "provider": "2gis" if _2gis == "up" else "osm",
+        "provider": provider,
         "2gis": _2gis,
         "2gis_key": bool(TWOGIS_KEY),
         "cache": str(CACHE),

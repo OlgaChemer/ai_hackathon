@@ -512,7 +512,7 @@ async def pipeline(s: Session) -> None:
                  and x.get("district") not in s.prefs.districts_minus]
         batch = liked + fresh[:BATCH]
         if round_no == 1 and [k for k in (profile.get("infra") or []) if k != "метро"]:
-            await s.say("Смотрю по карте, что рядом с адресами из подборки — это займёт до 20 секунд.")
+            await s.say("Смотрю по карте, что рядом с адресами из подборки.")
         nearby = await enrich_location(profile, batch)
         for x in batch:  # данные с карты появились — пересчитываем совпадение по ним
             if x.get("nearby"):
