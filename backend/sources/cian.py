@@ -224,12 +224,22 @@ async def _get_httpx(url: str) -> tuple[int, str, str]:
 
 
 async def _get_browser_like(url: str) -> tuple[int, str, str]:
-    """Запасной путь: TLS-отпечаток Chrome (curl_cffi). Без него Циан чаще отвечает капчей."""
+    """Запасной путь: TLS-отпечаток браузера (curl_cffi). Без него Циан чаще отвечает капчей.
+
+    Антибот Циана проверяет отпечаток: на профиль Chrome отдаёт JS-задачу (200 без <title>),
+    а на Safari — обычную страницу выдачи. Поэтому профили перебираем по порядку.
+    """
     from curl_cffi.requests import AsyncSession
 
-    async with AsyncSession(impersonate="chrome", timeout=20) as http:
-        r = await http.get(url, allow_redirects=False, headers={"Accept-Language": "ru-RU,ru;q=0.9"})
-    return r.status_code, r.headers.get("location", ""), r.text
+    last = (0, "", "")
+    for impersonate in ("safari17_0", "chrome"):
+        async with AsyncSession(impersonate=impersonate, timeout=25) as http:
+            # allow_redirects=True: Циан отвечает 307 на «холодный» запрос и уже потом отдаёт выдачу
+            r = await http.get(url, allow_redirects=True, headers={"Accept-Language": "ru-RU,ru;q=0.9"})
+        last = (r.status_code, str(r.url), r.text)
+        if "<title>" in r.text:  # это страница выдачи, а не JS-задача антибота
+            break
+    return last
 
 
 def _blocked(status: int, location: str) -> str | None:
@@ -262,6 +272,9 @@ async def _fetch_page(city: str, rooms: int, budget: int | None, page: int, okru
                 problem = f"{name}: {type(exc).__name__}"
                 continue
             problem = _blocked(status, location)
+            if problem is None and "<title>" not in text:
+                # 200 без <title> — JS-задача антибота, а не страница выдачи
+                problem = f"{name}: JS-задача антибота"
             if problem is None:
                 break
             log.info("Циан через %s: %s — пробую дальше", name, problem)
