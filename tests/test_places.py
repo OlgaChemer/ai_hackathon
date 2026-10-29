@@ -73,6 +73,50 @@ class NearbyTest(unittest.TestCase):
         self.assertEqual(asyncio.run(places.nearby(None, None, ["школа"])), {})
 
 
+class MunicipalTest(unittest.TestCase):
+    """«Просто садик» = муниципальный садик, а не частный центр развития."""
+
+    def test_municipal_names_kept(self):
+        for name in ("Детский сад № 49 комбинированного вида", "МБДОУ «Детский сад № 188»", "Школа № 1"):
+            self.assertTrue(places.is_municipal("садик", name) or "Школа" in name)
+
+    def test_private_kindergartens_dropped(self):
+        for name in ("Бала-Сити, полилингвальный детский сад и международная школа",
+                     "Дар, частный детский сад",
+                     "Индивид.ум, Монтессори-школа и детский сад",
+                     "Глобокидс, центр детского развития-частный детский сад"):
+            self.assertFalse(places.is_municipal("садик", name), name)
+
+    def test_rubric_ids(self):
+        self.assertEqual(places.twogis_params(55.7, 49.1, "садик")["rubric_id"], "237")
+        self.assertEqual(places.twogis_params(55.7, 49.1, "школа")["rubric_id"], "245")
+        self.assertEqual(places.twogis_params(55.7, 49.1, "парк")["rubric_id"], "168")
+        self.assertEqual(places.twogis_params(55.7, 49.1, "садик")["radius"], 1200)
+
+    def test_osm_results_filtered(self):
+        import asyncio
+        from unittest.mock import patch
+
+        class FakeResp:
+            status_code = 200
+
+            def json(self):
+                return [
+                    {"display_name": "Детский сад № 49, улица Баумана", "lat": "55.79", "lon": "49.10"},
+                    {"display_name": "Дар, частный детский сад, улица Пушкина", "lat": "55.79", "lon": "49.11"},
+                ]
+
+        class FakeClient:
+            def __init__(self, *a, **kw): ...
+            async def __aenter__(self): return self
+            async def __aexit__(self, *a): return False
+            async def get(self, *a, **kw): return FakeResp()
+
+        with patch.object(places.httpx, "AsyncClient", FakeClient):
+            pois = asyncio.run(places._fetch_osm(55.796, 49.106, "садик"))
+        self.assertEqual([p["name"] for p in pois], ["Детский сад № 49"])
+
+
 class TwoGisFallbackTest(unittest.TestCase):
     """2GIS с зарубежного IP недоступен — молча уходим на OSM, а не ломаем подборку."""
 

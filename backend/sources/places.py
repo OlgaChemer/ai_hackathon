@@ -19,6 +19,8 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import re
+
 import httpx
 
 from ..config import ROOT  # noqa: F401 — импорт загружает .env (ключ 2GIS)
@@ -36,13 +38,30 @@ TTL = timedelta(days=30)
 MIN_INTERVAL = 1.1          # секунд между запросами к Nominatim
 DEFAULT_RADIUS = 1500       # метров: дальше не считаем «рядом»
 
-# что ищем: ключ критерия -> поисковая фраза и радиус
+# что ищем: ключ критерия -> поисковая фраза, радиус и рубрика 2GIS.
+# Рубрики важны: по тексту «детский сад» 2GIS отдаёт и частные центры развития,
+# а рубрика 237 — обычные (муниципальные) детские сады.
 KINDS = {
-    "садик": ("детский сад", 1200),
-    "школа": ("школа", 1200),
-    "парк": ("парк", 1500),
-    "метро": ("метро", 2000),
+    "садик": {"q": "детский сад", "radius": 1200, "rubric": "237"},
+    "школа": {"q": "школа", "radius": 1200, "rubric": "245"},
+    "парк": {"q": "парк", "radius": 1500, "rubric": "168"},
+    "метро": {"q": "метро", "radius": 2000, "rubric": "113944"},
 }
+
+# Страховка для запасного источника: частные садики и центры развития не берём,
+# если клиент просто сказал «садик».
+PRIVATE_RE = re.compile(r"частн|центр развития|монтессори|полилингв|международн|языков", re.I)
+MUNICIPAL_RE = {
+    "садик": re.compile(r"детский сад|мбдоу|мадоу|д/с|сад\s*№", re.I),
+    "школа": re.compile(r"школ|лицей|гимнази", re.I),
+}
+
+
+def is_municipal(kind: str, name: str) -> bool:
+    pattern = MUNICIPAL_RE.get(kind)
+    if pattern is None:
+        return True
+    return bool(pattern.search(name or "")) and not PRIVATE_RE.search(name or "")
 
 _lock = asyncio.Lock()
 _last = 0.0
@@ -89,11 +108,17 @@ def _write_cache(lat: float, lng: float, kind: str, pois: list[dict]) -> None:
         log.warning("не удалось сохранить кеш мест: %s", exc)
 
 
+def twogis_params(lat: float, lng: float, kind: str) -> dict:
+    """Параметры поиска в 2GIS: рубрика важнее текста — она отсекает частников."""
+    spec = KINDS[kind]
+    return {"rubric_id": spec["rubric"], "q": spec["q"], "point": f"{lng},{lat}",
+            "radius": spec["radius"], "key": TWOGIS_KEY, "page_size": 10, "sort": "distance",
+            "fields": "items.point,items.name,items.rubrics"}
+
+
 async def _fetch_2gis(lat: float, lng: float, kind: str) -> list[dict]:
     """Каталог 2GIS: точнее по России, но работает только с российских адресов."""
-    query, radius = KINDS[kind]
-    params = {"q": query, "point": f"{lng},{lat}", "radius": radius, "key": TWOGIS_KEY,
-              "fields": "items.point,items.name", "page_size": 10, "sort": "distance"}
+    params = twogis_params(lat, lng, kind)
     async with httpx.AsyncClient(timeout=6) as http:
         r = await http.get(TWOGIS_URL, params=params)
     if r.status_code != 200:
@@ -110,7 +135,8 @@ async def _fetch_2gis(lat: float, lng: float, kind: str) -> list[dict]:
 
 async def _fetch_osm(lat: float, lng: float, kind: str) -> list[dict]:
     global _last
-    query, radius = KINDS[kind]
+    spec = KINDS[kind]
+    query, radius = spec["q"], spec["radius"]
     d = radius / 111_000  # ~градусы широты
     dl = radius / (111_000 * max(0.2, math.cos(math.radians(lat))))
     params = {
@@ -129,8 +155,10 @@ async def _fetch_osm(lat: float, lng: float, kind: str) -> list[dict]:
     pois = []
     for item in r.json():
         try:
-            pois.append({"name": (item.get("display_name") or "").split(",")[0].strip(),
-                         "lat": float(item["lat"]), "lng": float(item["lon"])})
+            name = (item.get("display_name") or "").split(",")[0].strip()
+            if not is_municipal(kind, name):
+                continue
+            pois.append({"name": name, "lat": float(item["lat"]), "lng": float(item["lon"])})
         except (KeyError, TypeError, ValueError):
             continue
     return pois
@@ -176,7 +204,7 @@ async def nearby(lat: float | None, lng: float | None, kinds: list[str], budget_
         best = None
         for p in pois:
             dist = haversine(lat, lng, p["lat"], p["lng"])
-            if dist <= KINDS[kind][1] and (best is None or dist < best["distance_m"]):
+            if dist <= KINDS[kind]["radius"] and (best is None or dist < best["distance_m"]):
                 best = {"name": p["name"], "distance_m": round(dist), "walk_min": walk_minutes(dist),
                         "lat": p["lat"], "lng": p["lng"]}
         return kind, best
