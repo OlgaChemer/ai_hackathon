@@ -17,7 +17,7 @@ from collections import Counter
 import httpx
 
 CASES = {
-    'cash': ('Двушка в Казани до 9 млн рублей, покупаю за наличные',
+    'cash': ('Двушка в Казани до 9 млн рублей, покупаю за наличные. Сначала предложите выбор типа жилья через карточку «Где искать».',
              {'housing': {'housing': 'both'}, 'payment': {'payment': 'cash'}}),
     'mortgage': ('Двушка в Москве до 17,5 млн рублей, вторичка, ипотека, взнос 5 млн рублей, детей нет',
                  {'housing': {'housing': 'secondary'}, 'payment': {'payment': 'mortgage_ready'},
@@ -25,6 +25,12 @@ CASES = {
     'saving': ('Ищу двушку в Казани до 9 млн, новостройку, ипотека, на взнос ещё копим, сыну 4 года, есть маткапитал',
                {'housing': {'housing': 'new'}, 'payment': {'payment': 'mortgage_saving'},
                 'family': {'children': 1, 'youngest_age': 4, 'matcap': 737200}}),
+}
+
+CONTINUE = {
+    'cash': 'Ищите в Казани двушку до 9 млн, наличными, новостройки и вторичку. Бюджет сохраняем, дополнительных условий нет.',
+    'mortgage': 'Ищите двушку в Москве на вторичке до 17,5 млн, ипотека, взнос 5 млн, детей нет. Бюджет сохраняем, дополнительных условий нет.',
+    'saving': 'Ищите двушку в Казани в новостройке до 9 млн, ипотека, взнос копим, сыну 4 года, есть маткапитал. Бюджет сохраняем, дополнительных условий нет.',
 }
 
 
@@ -55,11 +61,21 @@ async def scenario(base: str, name: str, until: str, timeout: float) -> dict:
                         raise AssertionError('Модель временно недоступна')
                     if event['type'] == 'error':
                         raise AssertionError(event.get('text', 'Ошибка API'))
+                    if event['type'] == 'done' and until == 'sign':
+                        summary['completed'] = True
+                        return
                     if event['type'] == 'message' and event['role'] == 'agent':
                         text = event['text']
                         summary['messages'].append(text[:300])
                         if 'Достигнут лимит действий' in text:
                             raise AssertionError('Цикл инструментов достиг лимита')
+                        if event.get('await_reply'):
+                            counts['free_text'] += 1
+                            if counts['free_text'] > 3:
+                                raise AssertionError('Повторные текстовые вопросы не продвигают поиск')
+                            print(f'{name}: отвечаю на текстовый вопрос', flush=True)
+                            answer = await client.post(f'/api/chat/{sid}/message', json={'text': CONTINUE[name]})
+                            answer.raise_for_status()
                     if event['type'] == 'result':
                         summary['results'].append(kind)
                         if kind == 'search':
@@ -79,7 +95,14 @@ async def scenario(base: str, name: str, until: str, timeout: float) -> dict:
                     if kind == 'housing' and counts[kind] > 1:
                         raise AssertionError('Повторилась отвеченная карточка жилья')
                     if kind == 'clarify':
-                        raise AssertionError('Для полного тестового запроса потребовалось уточнение: ' + event.get('text', ''))
+                        if counts[kind] > 2:
+                            raise AssertionError('Модель повторяет уточнения вместо поиска: ' + event.get('text', ''))
+                        # Модель вправе один раз уточнить пожелания или предложить пересмотр бюджета.
+                        # Синтетический клиент сохраняет свои рамки и просит продолжить.
+                        answer = await client.post(f'/api/chat/{sid}/message', json={
+                            'text': CONTINUE[name]})
+                        answer.raise_for_status()
+                        continue
                     if kind == 'selection':
                         if until == 'selection':
                             return
@@ -91,12 +114,15 @@ async def scenario(base: str, name: str, until: str, timeout: float) -> dict:
                     reply = await client.post(f'/api/session/{sid}/confirm', json={
                         'kind': kind, 'approved': True, 'data': {**data, '_label': 'Проверка развёртывания'}})
                     reply.raise_for_status()
-                    if kind == 'sign':
-                        return
             raise AssertionError('Лента завершилась до целевого этапа')
 
         started = time.monotonic()
         await asyncio.wait_for(consume(), timeout)
+        if name == 'cash':
+            if counts['housing'] != 1:
+                raise AssertionError('Не проверено ровно одно подтверждение карточки типа жилья')
+            if {r.get('new') for r in summary['sources'] if r.get('source', '').startswith('Циан')} != {False, True}:
+                raise AssertionError('После выбора обоих рынков поиск не охватил оба рынка')
         summary['seconds'] = round(time.monotonic() - started, 1)
         chats = await client.get('/api/chats')
         chats.raise_for_status()

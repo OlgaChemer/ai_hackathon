@@ -119,6 +119,7 @@ async function handle(ev, myGen) {
     case "provider": setProvider(ev); break;
     case "message":
       addMsg(ev.role, ev.text);
+      if (ev.await_reply) setChatExpanded(true);
       if (!quiet && ev.role === "agent" && talk.on && !phoneActive()) talk.say(ev.text);
       await pause(ev.role === "agent" ? 300 : 0);
       break;

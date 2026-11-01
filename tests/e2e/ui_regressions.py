@@ -42,6 +42,15 @@ async def main(base):
         assert await page.evaluate('document.documentElement.scrollWidth <= innerWidth')
         assert 'CARTO' not in await page.locator('.leaflet-control-attribution').inner_text()
         await page.screenshot(path='/tmp/ui-mobile-selection.png', full_page=True)
+        # Обычный текстовый вопрос модели должен снова открыть свёрнутый мобильный чат.
+        await page.evaluate("""async () => {
+          const {state}=await import('/js/state.js');
+          state.es.onmessage(new MessageEvent('message',{data:JSON.stringify({
+            type:'message',role:'agent',text:'Продолжать поиск в этом бюджете?',await_reply:true
+          })}));
+        }""")
+        await page.wait_for_selector('#chatPanel.expanded')
+        await page.locator('#chatToggle').click()
         print('PASS: новая главная → реальный запрос → подборка, мобильная ширина и локальный Leaflet')
 
         # Полная ошибка плиток должна давать ссылку на карту вместо немого пустого прямоугольника.

@@ -31,6 +31,17 @@ class GigaChatStateTest(unittest.TestCase):
         result = to_gigachat_messages([{'role': 'assistant', 'content': 'Ответ', 'functions_state_id': STATE}], False)
         self.assertEqual(result[0]['functions_state_id'], STATE)
 
+    def test_free_text_question_marks_waiting_for_user_without_marking_action_narration(self):
+        async def go():
+            s = session.create_session('Квартира', ScriptedLLM(say('Продолжать поиск в этом бюджете?')))
+            await s.say('Ищу объявления')
+            await drive(s)
+            return s
+        s = asyncio.run(go())
+        narration, question = [e for e in s.history if e['type'] == 'message' and e['role'] == 'agent']
+        self.assertNotIn('await_reply', narration)
+        self.assertTrue(question['await_reply'])
+
     def test_early_server_history_provider_state_is_preserved(self):
         messages = [{'role': 'assistant', 'content': '', 'provider_state': STATE, 'tool_calls': [
             {'id': 'a', 'function': {'name': 'ask_housing', 'arguments': '{}'}}]},

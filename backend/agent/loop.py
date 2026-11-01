@@ -117,7 +117,7 @@ async def run(s) -> None:
         s.signal("typing", on=False)
         text = guard.output(resp.text.strip(), s)
         if text:
-            await s.say(text)
+            await s.say(text, await_reply=True)
             s.messages.append({"role": "assistant", "content": text, **({"functions_state_id": resp.functions_state_id} if resp.functions_state_id else {})})
         s.remember()
         s.messages.append({"role": "user", "content": await s.inbox.get()})

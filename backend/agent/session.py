@@ -120,8 +120,8 @@ class Session:
     async def emit(self, type_: str, **payload: Any) -> None:
         self.push(type_, **payload)
 
-    async def say(self, text: str) -> None:
-        self.push("message", role="agent", text=text)
+    async def say(self, text: str, *, await_reply: bool = False) -> None:
+        self.push("message", role="agent", text=text, **({"await_reply": True} if await_reply else {}))
 
     async def step(self, n: int) -> None:
         """Шаг степпера: n — активный, все активные до него — сделаны. Агент может вернуться назад (уточнить запрос)."""
