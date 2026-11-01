@@ -18,10 +18,11 @@ import re
 import time
 from datetime import date, datetime
 from pathlib import Path
+from urllib.parse import urljoin, urlparse
 
 import httpx
 
-from .base import SourceUnavailable
+from .base import CIAN_REGIONS, SourceUnavailable, city_stem
 
 log = logging.getLogger(__name__)
 
@@ -32,18 +33,15 @@ CACHE_TTL = 30 * 60
 SNAPSHOT_VERSION = 2  # 2 — без долей; срезы другой версии не используем
 MIN_INTERVAL = 3.0
 
-# город -> (код региона, поддомен, город в предложном падеже для проверки заголовка)
-REGIONS = {
-    "Москва": (1, "www", "Москв"),
-    "Санкт-Петербург": (2, "spb", "Санкт-Петербург"),
-    "Казань": (4777, "kazan", "Казан"),
-    "Новосибирск": (4897, "novosibirsk", "Новосибирск"),
-    "Екатеринбург": (4743, "ekb", "Екатеринбург"),
-    "Нижний Новгород": (4885, "nn", "Нижн"),
-    "Краснодар": (4820, "krasnodar", "Краснодар"),
-}
+# город -> (код региона, поддомен, основа названия для проверки заголовка страницы).
+# Поддомены семи городов проверены; остальные Циан называет сам редиректом — запоминаем (SUBS_FILE).
+SUBDOMAINS = {"Москва": "www", "Санкт-Петербург": "spb", "Казань": "kazan", "Новосибирск": "novosibirsk",
+              "Екатеринбург": "ekb", "Нижний Новгород": "nn", "Краснодар": "krasnodar"}
+TITLE_STEMS = {"Москва": "москв", "Нижний Новгород": "нижн"}
+REGIONS = {city: (region, SUBDOMAINS.get(city, "www"), TITLE_STEMS.get(city) or city_stem(city))
+           for city, region in CIAN_REGIONS.items()}
+FEATURED_CITIES = list(SUBDOMAINS)  # проверены на живом Циане — их предлагаем кнопками
 
-# Округа Москвы: номер в фильтре Циана (district[0]=...) — проверено по данным выдачи
 MOSCOW_OKRUGS = {"СЗАО": 1, "ЦАО": 4, "САО": 5, "СВАО": 6, "ВАО": 7, "ЮВАО": 8, "ЮАО": 9, "ЮЗАО": 10, "ЗАО": 11}
 
 REPAIR = {"cosmetic": "косметика", "euro": "евроремонт", "design": "дизайнерский", "no": "требует ремонта"}
@@ -78,13 +76,51 @@ def supported(city: str | None) -> bool:
     return city in REGIONS
 
 
-def build_url(city: str, rooms: int, budget: int | None, page: int = 1, okrug: str | None = None) -> str:
-    """Свежие объявления вторички, только целые квартиры (flat_share=2 — без долей);
+SUBS_FILE = CACHE_DIR / "subdomains.json"
+_subs: dict[str, str] | None = None
+
+
+def _learned_subdomains() -> dict[str, str]:
+    """Поддомены, которые Циан назвал редиректом (www.cian.ru?region=4780 -> kaluga.cian.ru)."""
+    global _subs
+    if _subs is None:
+        try:
+            _subs = json.loads(SUBS_FILE.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            _subs = {}
+    return _subs
+
+
+def _learn_subdomain(city: str, sub: str) -> None:
+    subs = _learned_subdomains()
+    if subs.get(city) == sub:
+        return
+    subs[city] = sub
+    log.info("Циан: город %s живёт на %s.cian.ru — запомнил", city, sub)
+    try:
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        SUBS_FILE.write_text(json.dumps(subs, ensure_ascii=False, indent=1), encoding="utf-8")
+    except OSError as exc:
+        log.warning("не удалось запомнить поддомен Циана: %s", exc)
+
+
+def redirect_target(url: str, location: str) -> str | None:
+    """Куда Циан перенаправил запрос — если это не капча и не чужой сайт. Иначе None."""
+    if not location or "captcha" in location:
+        return None
+    target = urljoin(url, location)
+    host = urlparse(target).hostname or ""
+    return target if urlparse(target).scheme == "https" and (host == "cian.ru" or host.endswith(".cian.ru")) else None
+
+
+def build_url(city: str, rooms: int, budget: int | None, page: int = 1, okrug: str | None = None, new: bool = False) -> str:
+    """Свежие объявления, только целые квартиры (flat_share=2 — без долей); object_type: 1 — вторичка, 2 — новостройки;
     сортировка по дате — без перекоса в продвигаемые премиум-объекты."""
     region, sub, _ = REGIONS[city]
+    sub = _learned_subdomains().get(city, sub)
     room_param = "room9=1" if rooms == 0 else f"room{min(rooms, 5)}=1"
     url = (f"https://{sub}.cian.ru/cat.php?deal_type=sale&engine_version=2&offer_type=flat"
-           f"&region={region}&{room_param}&object_type%5B0%5D=1&flat_share=2&sort=creation_date_desc&p={page}")
+           f"&region={region}&{room_param}&object_type%5B0%5D={2 if new else 1}&flat_share=2&sort=creation_date_desc&p={page}")
     if budget:
         url += f"&maxprice={int(budget * 1.05)}"
     if city == "Москва" and okrug in MOSCOW_OKRUGS:
@@ -96,7 +132,7 @@ def build_url(city: str, rooms: int, budget: int | None, page: int = 1, okrug: s
 
 
 def _json_array_at(s: str, start: int) -> str | None:
-    """Вырезает JSON-массив, начинающийся с s[start] == '[' (учитывает строки)."""
+    """Вырезает JSON-массив или объект, начинающийся с s[start] ('[' или '{'), с учётом строк."""
     depth, in_str, esc = 0, False, False
     for i in range(start, len(s)):
         c = s[i]
@@ -116,6 +152,17 @@ def _json_array_at(s: str, start: int) -> str | None:
             if depth == 0:
                 return s[start : i + 1]
     return None
+
+
+def extract_offer(page: str) -> dict | None:
+    """Объявление со страницы объявления: offerData.offer — те же поля, что в выдаче поиска."""
+    m = re.search(r'"offerData":\{"offer":\{', page)
+    raw = _json_array_at(page, m.end() - 1) if m else None
+    try:
+        data = json.loads(raw) if raw else None
+    except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, dict) and "totalArea" in data else None
 
 
 def extract_offers(page: str) -> list[dict]:
@@ -147,12 +194,52 @@ def _address(geo: dict, city: str) -> str:
     return text.split(f"{city},")[-1].strip() or text
 
 
-def normalize(o: dict, city: str, today: date | None = None) -> dict | None:
+def _count(o: dict, *keys: str) -> int | None:
+    """Сумма счётчиков из объявления; None — площадка поле не прислала."""
+    values = [o[k] for k in keys if isinstance(o.get(k), int)]
+    return sum(values) if values else None
+
+
+QUARTERS = {"first": 1, "second": 2, "third": 3, "fourth": 4, 1: 1, 2: 2, 3: 3, 4: 4}
+SALE_TYPES = {"fz214": "ДДУ (214-ФЗ)", "dupt": "договор уступки", "pdkp": "предварительный ДКП",
+              "dkp": "договор купли-продажи", "free": "свободная продажа", "alternative": "альтернатива"}
+
+
+def _deadline(o: dict) -> tuple[str | None, bool | None]:
+    """Срок сдачи корпуса: («4 кв. 2027», False) или («дом сдан», True).
+    Точнее всего — newbuilding.house.finishDate (это «Сдача корпуса» на карточке Циана), потом building.deadline."""
+    nb = o.get("newbuilding") or {}
+    house = nb.get("house") or {}
+    dl = house.get("finishDate") or (o.get("building") or {}).get("deadline") or {}
+    finished = house.get("isFinished") if house.get("isFinished") is not None else dl.get("isComplete")
+    if finished:
+        return "дом сдан", True
+    q, y = QUARTERS.get(dl.get("quarter")), dl.get("year")
+    if y:
+        return (f"{q} кв. {y}" if q else f"{y} г."), False
+    return None, finished
+
+
+def _from_developer(o: dict) -> bool:
+    nb = o.get("newbuilding") or {}
+    return bool(o.get("fromDeveloper") or nb.get("isFromDeveloper") or nb.get("isFromBuilder") or (o.get("user") or {}).get("isBuilder"))
+
+
+def _developer(o: dict) -> str | None:
+    """Имя застройщика Циан отдаёт только когда продаёт он сам (в выдаче у остальных — лишь id застройщика)."""
+    if _from_developer(o):
+        user = o.get("user") or {}
+        return user.get("companyName") or user.get("agencyName")
+    return None
+
+
+def normalize(o: dict, city: str, today: date | None = None, new: bool = False) -> dict | None:
+    """new=True — выдача новостроек: ДДУ (214-ФЗ) не отбрасываем, добавляем ЖК, срок сдачи, застройщика."""
     today = today or date.today()
     terms = o.get("bargainTerms") or {}
     price = terms.get("priceRur") or terms.get("price")
     area = _float(o.get("totalArea"))
-    if not price or not area or terms.get("saleType") == "fz214":
+    if not price or not area or (terms.get("saleType") == "fz214" and not new):
         return None
     if o.get("shareAmount") or o.get("category") == "flatShareSale":  # продажа доли, а не квартиры
         return None
@@ -196,6 +283,9 @@ def normalize(o: dict, city: str, today: date | None = None) -> dict | None:
         "floors": building.get("floorsCount"),
         "year": building.get("buildYear"),
         "condition": condition,
+        "balconies": _count(o, "balconiesCount", "loggiasCount"),  # балконы и лоджии вместе
+        "loggias": _count(o, "loggiasCount"),
+        "separate_wc": _count(o, "separateWcsCount"),
         "lat": coords.get("lat"),
         "lng": coords.get("lng"),
         "material": MATERIAL.get(building.get("materialType")),
@@ -208,10 +298,33 @@ def normalize(o: dict, city: str, today: date | None = None) -> dict | None:
         "is_apartments": bool(o.get("isApartments")),
         "is_auction": bool(o.get("isAuction")),
         "seller_role": "собственник" if o.get("isByHomeowner") else "агент продавца",
+        **(_new_fields(o, terms) if new else {"is_new": False}),
     }
 
 
 # ------------------------------------------------------------------ загрузка
+
+
+def _new_fields(o: dict, terms: dict) -> dict:
+    nb = o.get("newbuilding") or {}
+    deadline, finished = _deadline(o)
+    developer = _developer(o)
+    user = o.get("user") or {}
+    if _from_developer(o):
+        role = "застройщик"
+    elif user.get("isAgent"):
+        role = "агент продавца (переуступка)"
+    else:
+        role = "собственник (переуступка)" if terms.get("saleType") == "dupt" else "собственник"
+    return {
+        "is_new": True,
+        "complex": nb.get("name") or None,          # ЖК
+        "deadline": deadline,                       # «4 кв. 2027» / «дом сдан»
+        "finished": finished,
+        "developer": developer,
+        "sale_type": SALE_TYPES.get(terms.get("saleType"), terms.get("saleType")),
+        "seller_role": role,
+    }
 
 
 async def _get_httpx(url: str) -> tuple[int, str, str]:
@@ -224,25 +337,36 @@ async def _get_httpx(url: str) -> tuple[int, str, str]:
 
 
 async def _get_browser_like(url: str) -> tuple[int, str, str]:
-    """Запасной путь: TLS-отпечаток Chrome (curl_cffi). Без него Циан чаще отвечает капчей."""
+    """Браузерные TLS-профили; редиректы по-прежнему проверяет вызывающий код."""
     from curl_cffi.requests import AsyncSession
 
-    async with AsyncSession(impersonate="chrome", timeout=20) as http:
-        r = await http.get(url, allow_redirects=False, headers={"Accept-Language": "ru-RU,ru;q=0.9"})
-    return r.status_code, r.headers.get("location", ""), r.text
+    last = (0, "", "")
+    for fingerprint in ("safari17_0", "chrome"):
+        try:
+            async with AsyncSession(impersonate=fingerprint, timeout=20) as http:
+                r = await http.get(url, allow_redirects=False, headers={"Accept-Language": "ru-RU,ru;q=0.9"})
+            last = (r.status_code, r.headers.get("location", ""), r.text)
+            if r.status_code in (301, 302, 303, 307, 308) or _blocked(*last) is None:
+                return last
+        except Exception as exc:
+            log.info("Циан: профиль %s не сработал (%s)", fingerprint, type(exc).__name__)
+    return last
 
 
-def _blocked(status: int, location: str) -> str | None:
+def _blocked(status: int, location: str, text: str) -> str | None:
     if status in (301, 302) and "captcha" in location:
         return "капча"
     if status != 200:
         return f"ответ {status}"
+    if not re.search(r"<title>[^<]", text):  # заглушка защиты от ботов: 200, пара килобайт, без заголовка
+        return "заглушка защиты от ботов"
     return None
 
 
-async def _fetch_page(city: str, rooms: int, budget: int | None, page: int, okrug: str | None = None) -> tuple[list[dict], str]:
+async def _fetch_page(city: str, rooms: int, budget: int | None, page: int, okrug: str | None = None,
+                      new: bool = False) -> tuple[list[dict], str]:
     global _last_request
-    url = build_url(city, rooms, budget, page, okrug)
+    url = build_url(city, rooms, budget, page, okrug, new)
     async with _lock:
         attempts = [("httpx", _get_httpx)]
         try:
@@ -258,10 +382,24 @@ async def _fetch_page(city: str, rooms: int, budget: int | None, page: int, okru
             _last_request = time.monotonic()
             try:
                 status, location, text = await getter(url)
+                # Циан переводит на поддомен города (www -> kaluga.cian.ru) — идём за ним с нашими же фильтрами
+                for _ in range(2):
+                    target = redirect_target(url, location) if status in (301, 302, 303, 307, 308) else None
+                    if not target:
+                        break
+                    host = urlparse(target).hostname or ""
+                    if host != urlparse(url).hostname and host.endswith(".cian.ru"):
+                        _learn_subdomain(city, host.split(".")[0])
+                        url = build_url(city, rooms, budget, page, okrug, new)
+                    else:
+                        url = target
+                    await asyncio.sleep(max(0.0, MIN_INTERVAL - (time.monotonic() - _last_request)))
+                    _last_request = time.monotonic()
+                    status, location, text = await getter(url)
             except Exception as exc:  # сеть, TLS — пробуем следующий способ
                 problem = f"{name}: {type(exc).__name__}"
                 continue
-            problem = _blocked(status, location)
+            problem = _blocked(status, location, text)
             if problem is None:
                 break
             log.info("Циан через %s: %s — пробую дальше", name, problem)
@@ -273,23 +411,23 @@ async def _fetch_page(city: str, rooms: int, budget: int | None, page: int, okru
     raw = extract_offers(text)
     if not raw and "offers" not in text:  # страница не та (вёрстка поменялась) — а не «ничего не нашлось»
         raise SourceUnavailable("не удалось разобрать страницу")
-    offers = [x for x in (normalize(o, city) for o in raw) if x]
+    offers = [x for x in (normalize(o, city, new=new) for o in raw) if x]
     return offers, name
 
 
-def _snapshot_path(city: str, rooms: int) -> Path:
-    return CACHE_DIR / f"{REGIONS[city][0]}_{rooms}.json"
+def _snapshot_path(city: str, rooms: int, new: bool = False) -> Path:
+    return CACHE_DIR / f"{REGIONS[city][0]}_{rooms}{'_new' if new else ''}.json"
 
 
 def _okrug_ok(x: dict, okrug: str | None) -> bool:
     return not okrug or x.get("okrug") == okrug
 
 
-def _save_snapshot(city: str, rooms: int, listings: list[dict]) -> None:
+def _save_snapshot(city: str, rooms: int, listings: list[dict], new: bool = False) -> None:
     try:
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        path = _snapshot_path(city, rooms)
-        old = load_snapshot(city, rooms)[0]
+        path = _snapshot_path(city, rooms, new)
+        old = load_snapshot(city, rooms, new)[0]
         merged = {x["id"]: x for x in old} | {x["id"]: x for x in listings}
         path.write_text(json.dumps({"version": SNAPSHOT_VERSION, "fetched_at": datetime.now().isoformat(timespec="minutes"),
                                     "listings": list(merged.values())}, ensure_ascii=False), encoding="utf-8")
@@ -297,8 +435,8 @@ def _save_snapshot(city: str, rooms: int, listings: list[dict]) -> None:
         log.warning("не удалось сохранить срез Циана: %s", exc)
 
 
-def load_snapshot(city: str, rooms: int) -> tuple[list[dict], str | None]:
-    path = _snapshot_path(city, rooms)
+def load_snapshot(city: str, rooms: int, new: bool = False) -> tuple[list[dict], str | None]:
+    path = _snapshot_path(city, rooms, new)
     if not path.exists():
         return [], None
     data = json.loads(path.read_text(encoding="utf-8"))
@@ -307,37 +445,97 @@ def load_snapshot(city: str, rooms: int) -> tuple[list[dict], str | None]:
     return data["listings"], data.get("fetched_at")
 
 
-async def search(city: str, rooms: int, budget: int | None, page: int = 1, okrug: str | None = None) -> tuple[list[dict], dict]:
-    """Возвращает (объявления, отчёт). Отчёт: status live | cached | snapshot | unavailable."""
+async def search(city: str, rooms: int, budget: int | None, page: int = 1, okrug: str | None = None,
+                 new: bool = False) -> tuple[list[dict], dict]:
+    """Возвращает (объявления, отчёт). new — новостройки. Отчёт: status live | cached | snapshot | unavailable."""
     if not supported(city):
         raise SourceUnavailable(f"для города «{city}» площадка не подключена")
-    key = (city, rooms, budget, page, okrug)
+    key = (city, rooms, budget, page, okrug, new)
     hit = _memory.get(key)
     if hit and time.time() - hit[0] < CACHE_TTL:
         return hit[1], {"status": "cached", "note": "из кеша сессии"}
     try:
-        listings, via = await _fetch_page(city, rooms, budget, page, okrug)
+        listings, via = await _fetch_page(city, rooms, budget, page, okrug, new)
         _memory[key] = (time.time(), listings)
-        _save_snapshot(city, rooms, listings)
+        _save_snapshot(city, rooms, listings, new)
         note = f"страница {page}" + (" (запасной путь curl_cffi после капчи)" if via == "curl_cffi" else "")
         return listings, {"status": "live", "note": note, "via": via}
     except SourceUnavailable as exc:
         log.warning("Циан недоступен: %s", exc)
         if page > 1:
             raise
-        saved, fetched_at = load_snapshot(city, rooms)
+        saved, fetched_at = load_snapshot(city, rooms, new)
         saved = [x for x in saved if (not budget or x["price"] <= budget * 1.05) and _okrug_ok(x, okrug)]
         if saved:
             return saved, {"status": "snapshot", "note": f"{exc}; сохранённый срез от {fetched_at}"}
         raise
 
 
-async def market(city: str, rooms: int, okrug: str | None = None) -> dict | None:
+# ------------------------------------------------------------------ проверка страницы объявления
+
+# Снятое объявление Циан отдаёт с кодом 200 и плашкой «Объявление снято с публикации» (проверено на живых
+# страницах 29.10.2026; флаг isArchived у снятых бывает и false — на него не опираемся).
+REMOVED_TEXT = re.compile(r"(?:объявление|квартира)\s+снят[оа]\s+с\s+(?:публикации|продажи)|объявление\s+удалено", re.I)
+PAGE_INTERVAL = 1.0
+_page_lock = asyncio.Lock()
+_page_last = 0.0
+
+
+def page_verdict(status: int, location: str, text: str, offer_id: str) -> tuple[bool | None, str]:
+    """(в продаже ли, почему). None — не удалось понять: капча, заглушка, чужая страница, сеть."""
+    if status in (404, 410):
+        return False, f"страница объявления отвечает {status}"
+    if status != 200:
+        return None, "капча" if "captcha" in location else f"ответ {status}"
+    if not re.search(r"<title>[^<]", text):
+        return None, "заглушка защиты от ботов"
+    if offer_id and offer_id not in text:
+        return None, "на странице нет этого объявления"
+    if REMOVED_TEXT.search(text):
+        return False, "объявление снято с публикации"
+    return True, "объявление в продаже"
+
+
+async def check_listing_page(url: str | None) -> dict:
+    """Открыть страницу объявления -> {"alive": True | False | None, "note", "offer"}.
+    alive: True — в продаже, False — снято, None — не удалось проверить. offer — свежие данные объявления
+    со страницы (как в выдаче поиска), чтобы обновить параметры: площадь, кухню, этаж, цену, описание."""
+    global _page_last
+    if not url or not redirect_target(url, url):  # только https-страницы Циана
+        return {"alive": None, "note": "ссылка не на Циан — не открываю", "offer": None}
+    offer_id = (re.search(r"/(\d{5,})/?", url) or [None, ""])[1]
+    getters = [_get_httpx]
+    try:
+        import curl_cffi  # noqa: F401
+        getters.append(_get_browser_like)
+    except ImportError:
+        pass
+    verdict: tuple[bool | None, str] = (None, "нет ответа")
+    text = ""
+    for getter in getters:
+        async with _page_lock:
+            await asyncio.sleep(max(0.0, PAGE_INTERVAL - (time.monotonic() - _page_last)))
+            _page_last = time.monotonic()
+        try:
+            status, location, text = await asyncio.wait_for(getter(url), timeout=15)
+            target = redirect_target(url, location) if status in (301, 302, 307, 308) else None
+            if target and offer_id and offer_id in target:  # то же объявление на поддомене города
+                status, location, text = await asyncio.wait_for(getter(target), timeout=15)
+        except Exception as exc:  # noqa: BLE001 — сеть, TLS, таймаут: пробуем следующий способ
+            verdict = (None, f"{type(exc).__name__}")
+            continue
+        verdict = page_verdict(status, location, text, offer_id)
+        if verdict[0] is not None:
+            break
+    return {"alive": verdict[0], "note": verdict[1], "offer": extract_offer(text) if verdict[0] else None}
+
+
+async def market(city: str, rooms: int, okrug: str | None = None, new: bool = False) -> dict | None:
     """Сколько стоят такие квартиры: квартили цены по свежим объявлениям (без фильтра по бюджету)."""
     import statistics
 
     try:
-        items, rep = await search(city, rooms, None, 1, okrug)
+        items, rep = await search(city, rooms, None, 1, okrug, new)
     except SourceUnavailable:
         return None
     items = drop_outliers(items)
@@ -360,23 +558,30 @@ def drop_outliers(items: list[dict]) -> list[dict]:
     return [x for x in items if x["price"] / x["area"] >= med * 0.33]
 
 
-if __name__ == "__main__":  # прогрев среза
+if __name__ == "__main__":  # прогрев: срез на диске и база агента
     import argparse
 
-    ap = argparse.ArgumentParser(description="Сохранить срез объявлений Циана для демо")
+    ap = argparse.ArgumentParser(description="Прогреть объявления Циана для демо: срез на диске и база агента")
     ap.add_argument("--city", default="Казань")
     ap.add_argument("--rooms", type=int, default=2)
     ap.add_argument("--budget", type=int, default=9_000_000)
     ap.add_argument("--pages", type=int, default=2)
     ap.add_argument("--okrug", default=None, help="для Москвы: ЮЗАО, ЦАО, …")
+    ap.add_argument("--new", action="store_true", help="новостройки")
     args = ap.parse_args()
 
     async def main():
+        from .. import db
+        from . import store
+        db.configure()
         total = 0
         for p in range(1, args.pages + 1):
-            items, report = await search(args.city, args.rooms, args.budget, p, args.okrug)
+            items, report = await search(args.city, args.rooms, args.budget, p, args.okrug, args.new)
+            if report["status"] == "live":
+                store.remember(items)
             total += len(items)
             print(f"страница {p}: {len(items)} объявлений ({report['status']})")
-        print(f"готово: {total}, срез — {_snapshot_path(args.city, args.rooms)}")
+        store.track({"city": args.city, "rooms": args.rooms, "okrug": args.okrug, "budget_max": args.budget}, args.new)
+        print(f"готово: {total}; срез — {_snapshot_path(args.city, args.rooms, args.new)}, объявления — в базе агента")
 
     asyncio.run(main())

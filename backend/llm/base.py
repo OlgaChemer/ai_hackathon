@@ -22,6 +22,7 @@ class LLMError(RuntimeError):
 class ToolCall:
     name: str
     arguments: dict[str, Any]
+    id: str = ""  # чтобы вернуть результат именно этому вызову (сообщение role=tool, tool_call_id)
 
 
 @dataclass
@@ -48,7 +49,7 @@ class LLMClient(ABC):
     @abstractmethod
     async def chat(
         self,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, Any]],
         *,
         tools: list[Tool] | None = None,
         json_mode: bool = False,
@@ -56,10 +57,11 @@ class LLMClient(ABC):
         max_tokens: int = 800,
         tag: str = "",
     ) -> LLMResponse:
-        """Один ход диалога. `tag` — подсказка для офлайн-провайдера (какой это шаг)."""
+        """Один ход диалога. messages — в формате OpenAI: system / user / assistant (в т. ч. с tool_calls) / tool.
+        tag — метка шага для логов."""
 
     async def chat_json(
-        self, messages: list[dict[str, str]], *, temperature: float = 0.2, tag: str = "", **kw
+        self, messages: list[dict[str, Any]], *, temperature: float = 0.2, tag: str = "", **kw
     ) -> dict[str, Any]:
         """Ответ модели в виде JSON-объекта. Устойчив к ```json-обёрткам и тексту вокруг."""
         resp = await self.chat(messages, json_mode=True, temperature=temperature, tag=tag, **kw)

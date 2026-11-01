@@ -63,7 +63,7 @@ class DeepSeekClient(LLMClient):
                 args = json.loads(fn.get("arguments") or "{}")
             except json.JSONDecodeError:
                 args = {}
-            calls.append(ToolCall(name=fn.get("name", ""), arguments=args))
+            calls.append(ToolCall(name=fn.get("name", ""), arguments=args, id=c.get("id") or ""))
         return LLMResponse(
             text=msg.get("content") or "", tool_calls=calls, provider=self.name, model=self.model
         )

@@ -1,5 +1,6 @@
 // Отрисовка панелей этапов (кроме звонка — он в call.js, и графика — chart.js).
 import { html, rub, mln, pct, plural, shortDate } from "./format.js";
+import { POI_COLORS } from "./map.js";
 
 const EXAMPLES = [
   "Ищу 2-комнатную в Казани до 9 млн, у нас ребёнок — нужна школа рядом",
@@ -10,7 +11,7 @@ const EXAMPLES = [
 const ICON_UP = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M7 10v11H3V10h4zm2 11h8.3a2 2 0 0 0 2-1.6l1.4-7A2 2 0 0 0 18.7 10H14l.7-3.6a2 2 0 0 0-.5-1.8L13 3.4 8.6 8.6A2 2 0 0 0 8 10v9a2 2 0 0 0 1 2z" fill="currentColor"/></svg>';
 const ICON_DOWN = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M17 14V3h4v11h-4zm-2-11H6.7a2 2 0 0 0-2 1.6l-1.4 7A2 2 0 0 0 5.3 14H10l-.7 3.6a2 2 0 0 0 .5 1.8l1.2 1.2 4.4-5.2A2 2 0 0 0 16 14V5a2 2 0 0 0-1-2z" fill="currentColor"/></svg>';
 
-export function welcome(cities = []) {
+export function welcome(cities = {}) {
   return html`
   <section class="panel welcome">
     <h1>Какую квартиру ищем?</h1>
@@ -20,7 +21,7 @@ export function welcome(cities = []) {
     <div class="examples">
       ${html.raw(EXAMPLES.map((e) => html`<button class="example" data-example="${e}">${e}</button>`).join(""))}
     </div>
-    <p class="hint">Объявления — с Циана${cities.length ? `: ${cities.join(", ")}` : ""}.</p>
+    <p class="hint">Объявления — с Циана${cities.featured?.length ? `: ${cities.featured.join(", ")} и ещё ${cities.total - cities.featured.length} ${plural(cities.total - cities.featured.length, "город", "города", "городов")}` : ""}.</p>
   </section>`;
 }
 
@@ -58,6 +59,7 @@ export function profile(p) {
       <div><dt>Районы</dt><dd>${p.districts?.length ? p.districts.join(", ") : "любые"}</dd></div>
       <div><dt>Школа рядом</dt><dd>${p.near_school ? "важно" : "не важно"}</dd></div>
       <div><dt>Кухня</dt><dd>${p.kitchen_min ? `от ${p.kitchen_min} м²` : "любая"}</dd></div>
+      <div><dt>Рынок</dt><dd>${{ new: "новостройки", both: "новостройки и вторичка", secondary: "вторичный" }[p.housing] || "уточню"}</dd></div>
     </dl>
     ${html.raw(p.wishes?.length ? html`<p class="hint">Ещё учту: ${p.wishes.join("; ")}.</p>` : "")}
     ${html.raw(p.market ? marketBlock(p) : "")}
@@ -81,7 +83,7 @@ export function finance(d, opened = {}, selected) {
       </div>
     </section>`;
   }
-  if (d.mode === "mortgage") return mortgage(d.mortgage);
+  if (d.mode === "mortgage") return programs(d.programs) + mortgage(d.mortgage);
   const f = d.finance;
   const sel = f.strategies.find((s) => s.key === (selected || f.risk)) || f.strategies[0];
   const alloc = sel.mix.map((m) => ({ ...m, amount_now: Math.round((f.available * m.share) / 1000) * 1000, monthly: Math.round((f.monthly * m.share) / 1000) * 1000 }));
@@ -91,7 +93,7 @@ export function finance(d, opened = {}, selected) {
     <h2 class="panel-title">Финансовая подготовка</h2>
     <p class="panel-lead">${f.verdict}</p>
     <div class="fin-kpis">
-      <div><span class="k">Нужно на взнос 20% и сделку</span><b class="num">${rub(f.need)}</b></div>
+      <div><span class="k">Нужно на взнос 20% и сделку</span><b class="num">${rub(f.need)}</b>${html.raw(f.matcap ? html`<small>маткапитал ${rub(f.matcap)} уже учтён</small>` : "")}</div>
       <div><span class="k">Можно направить сейчас</span><b class="num">${rub(f.available)}</b><small>подушка ${rub(f.cushion)} остаётся</small></div>
       <div class="${f.gap ? "is-gap" : "is-ok"}"><span class="k">${f.gap ? "Не хватает" : "Хватает с запасом"}</span><b class="num">${rub(f.gap || f.available - f.need)}</b></div>
       <div><span class="k">Откладывать в месяц</span><b class="num">${rub(f.monthly)}</b><small>70% от свободных ${rub(f.free_monthly)}</small></div>
@@ -117,8 +119,51 @@ export function finance(d, opened = {}, selected) {
     </div>
     <p class="hint">${f.assumption} Риск-профиль в проде подтвердит анкета брокера.</p>
   </section>
+  ${html.raw(programs(d.programs))}
   ${html.raw(mortgage(d.mortgage))}`;
 }
+
+const PROGRAM_TAG = {
+  ok: ["tag-green", "подходит"], no: ["tag-red", "не подходит"], check: ["tag-amber", "нужно уточнить"], info: ["tag-amber", "для сравнения"],
+};
+
+function programs(p) {
+  if (!p) return "";
+  const cards = p.programs.map((c) => {
+    const [cls, label] = PROGRAM_TAG[c.status] || PROGRAM_TAG.check;
+    const chosen = c.key === p.chosen;
+    const showPay = c.show_payment !== false;
+    return html`
+      <article class="scenario program ${chosen ? "is-best" : ""} ${c.status === "no" ? "is-off" : ""}">
+        <p class="program-head"><span class="tag ${cls}">${chosen ? "считаем по ней" : label}</span></p>
+        <h3>${c.title}</h3>
+        <div class="big num">${pct(c.rate)}${html.raw(c.subsidy_years ? html`<small class="program-sub"> первые ${c.subsidy_years} лет</small>` : "")}</div>
+        <dl>
+          ${html.raw(showPay ? html`<dt>Платёж</dt><dd class="num">${rub(c.monthly)} / мес</dd>` : "")}
+          ${html.raw(showPay && c.monthly_after_subsidy ? html`<dt>После ${c.subsidy_years} лет*</dt><dd class="num">≈ ${rub(c.monthly_after_subsidy)}</dd>` : "")}
+          ${html.raw(showPay ? html`<dt>Взнос</dt><dd class="num">${rub(c.down_payment)}</dd>` : "")}
+          ${html.raw(c.limit ? html`<dt>Лимит кредита</dt><dd class="num">${mln(c.limit)}</dd>` : "")}
+        </dl>
+        <ul class="program-why">${html.raw(c.reasons.map((r) => html`<li>${r}</li>`).join(""))}</ul>
+      </article>`;
+  });
+  const cap = p.matcap ? html`
+    <div class="alloc" style="margin-top:14px">
+      <div class="alloc-row">
+        <div><strong>Маткапитал во взнос — ${rub(p.matcap.amount)}</strong><small>${p.matcap.note}</small></div>
+        <div class="num">${rub(p.matcap.own_down)}<small>своих на взнос</small></div>
+      </div>
+    </div>` : "";
+  return html`
+  <section class="panel">
+    <h2 class="panel-title">Ипотечные программы</h2>
+    <p class="panel-lead">${p.explanation}</p>
+    <div class="scenarios">${html.raw(cards.join(""))}</div>
+    ${html.raw(cap)}
+    <p class="hint">${p.assumption}${p.programs.some((c) => c.monthly_after_subsidy) ? " * Льготная ставка субсидируется не дольше 15 лет; дальше — по договору с банком (в расчёте условно 12%)." : ""}</p>
+  </section>`;
+}
+
 
 function mortgage(m) {
   const cards = m.scenarios.map((s) => {
@@ -131,6 +176,7 @@ function mortgage(m) {
         <h3>${s.title}</h3>
         <div class="big num">${rub(s.monthly)}<small style="font-size:14px;font-weight:500"> / мес</small></div>
         <dl>
+          <dt>Ставка</dt><dd class="num">${pct(s.rate)}</dd>
           <dt>Кредит</dt><dd class="num">${rub(s.loan)}</dd>
           <dt>Первый взнос</dt><dd class="num">${rub(s.down_payment)}</dd>
           <dt>Переплата</dt><dd class="num">${mln(s.overpay)}</dd>
@@ -142,7 +188,7 @@ function mortgage(m) {
   return html`
   <section class="panel">
     <h2 class="panel-title">Ипотека</h2>
-    <p class="panel-lead">Три сценария по ставке ${pct(m.rate)} (допущение). Каждые 100 000 ₽, которые агент сторгует, — это минус ${rub(m.per_100k_discount)} в месяц.</p>
+    <p class="panel-lead">${m.program || "Ипотека"}: три сценария${m.scenarios.every((s) => s.rate === m.rate) ? ` по ставке ${pct(m.rate)}` : ", ставка зависит от взноса"}. Каждые 100 000 ₽, которые агент сторгует, — это минус ${rub(m.per_100k_discount)} в месяц.</p>
     <div class="scenarios">${html.raw(cards.join(""))}</div>
   </section>`;
 }
@@ -150,7 +196,7 @@ function mortgage(m) {
 // ------------------------------------------------------------------ поиск и цена
 
 function sourceChip(r) {
-  const label = { live: "живые данные", cached: "кеш сессии", snapshot: "сохранённый срез", unavailable: "недоступен" }[r.status] || r.status;
+  const label = { live: "живые данные", cached: "кеш сессии", snapshot: "сохранённый срез", unavailable: "недоступен", db: "видели за неделю" }[r.status] || r.status;
   const cls = r.status === "unavailable" ? "tag-red" : r.status === "snapshot" ? "tag-amber" : "tag-green";
   return html`<span class="source-chip"><b>${r.source}</b> ${r.count} ${plural(r.count, "объявление", "объявления", "объявлений")} <span class="tag ${cls}">${label}</span></span>`;
 }
@@ -180,7 +226,9 @@ export function search(d) {
   return html`
   <section class="panel">
     <h2 class="panel-title">Поиск и справедливая цена</h2>
+    ${html.raw(d.confirmed !== undefined ? html`<p class="panel-lead">Все обязательные условия подтверждены: ${d.confirmed}. Нужно уточнить данные: ${d.unverified}. Не подошли: ${d.rejected}.</p>` : "")}
     <div class="sources">${html.raw(d.report.map(sourceChip).join(""))}</div>
+    ${html.raw(d.store?.total ? html`<p class="store-line">В базе агента по такому запросу — ${d.store.total} ${plural(d.store.total, "квартира", "квартиры", "квартир")}${d.store.mapped ? html`, у ${d.store.mapped} уже проверено по карте, что рядом` : ""}. Признаки считаются один раз и нужны всем, кто ищет похожее.${d.store.crawl ? html` Последний обход Циана ${shortDate(d.store.crawl.finished_at.slice(0, 10))}: +${d.store.crawl.added} новых, ${d.store.crawl.price_changed} изменений цены, ${d.store.crawl.removed} снято.` : ""}</p>` : "")}
     <p class="panel-lead">Под ваши параметры подходят ${d.matched} из ${d.total}. Справедливая цена — медиана цены м² ближайших похожих квартир (по координатам, площадь ±30%) с поправками на ремонт, год дома и этаж, минус 3% на торг. Коридор — разброс цен аналогов. Если объявление правее коридора — есть что сторговать.</p>
     ${html.raw(items.join(""))}
     <div class="legend"><span class="l-band">коридор справедливой цены</span><span class="l-tick">цена в объявлении</span></div>
@@ -201,7 +249,35 @@ function metroText(m) {
   return `м. ${m.name || ""} ${m.minutes} мин ${m.mode}`.replace("  ", " ");
 }
 
-function offerCard(c, vote) {
+// что рядом с домом (по карте): «школа · 350 м», «поликлиники нет в 1 км»
+function nearbyChips(nearby = []) {
+  if (!nearby.length) return "";
+  const dist = (m) => (m < 1000 ? `${Math.round(m / 10) * 10} м` : `${(m / 1000).toFixed(1).replace(".", ",")} км`);
+  return html`<p class="features">${html.raw(nearby.map((p) => (p.dist !== null
+    ? html`<span class="feat ${p.dist <= 500 ? "is-yes" : ""}" title="${[p.name, p.source === "2gis" ? "2GIS" : p.source === "osm" ? "OpenStreetMap" : "", "расстояние по прямой или до границы, без проверки пешего маршрута"].filter(Boolean).join(" · ")}"><i class="dot" style="background:${POI_COLORS[p.kind]}"></i>${p.label} · ${dist(p.dist)}</span>`
+    : html`<span class="feat is-no">${p.label}: нет в 1 км</span>`)).join(""))}</p>`;
+}
+
+// удобства, о которых просил клиент: есть / нет по данным объявления (неизвестные — в строке «уточню»)
+function featureChips(features = []) {
+  const known = features.filter((f) => f.status !== null && f.status !== undefined);
+  if (!known.length) return "";
+  return html`<p class="features">${html.raw(known.map((f) => html`<span class="feat ${f.status ? "is-yes" : "is-no"}" title="${[f.source === "seller_call" ? "Со слов продавца" : "По объявлению", f.evidence].filter(Boolean).join(": ")}">${f.status ? "✓" : "✕"} ${f.label}</span>`).join(""))}</p>`;
+}
+
+const FIELD_LABELS = { kitchen: ["кухня", " м²"], area: ["площадь", " м²"], floor: ["этаж", ""], floors: ["этажей в доме", ""],
+  year: ["год постройки", ""], rooms: ["комнат", ""], condition: ["ремонт", ""] };
+
+// продавец уточнил в звонке: показываем, что изменилось против объявления
+function correctedLine(c) {
+  const items = Object.entries(c.listed || {}).filter(([k]) => FIELD_LABELS[k]).map(([k, was]) => {
+    const [label, unit] = FIELD_LABELS[k];
+    return `${label} ${c[k]}${unit}${was != null ? ` (в объявлении — ${was}${unit})` : ""}`;
+  });
+  return items.length ? html`<p class="meta corrected">Со слов продавца: ${items.join(", ")}</p>` : "";
+}
+
+function offerCard(c, vote, no) {
   const rooms = c.rooms === 0 ? "Студия" : `${c.rooms}-комн.`;
   const floor = c.floor ? `${c.floor}${c.floors ? `/${c.floors}` : ""} эт.` : "";
   const meta = [c.district, c.address, metroText(c.metro)].filter(Boolean).join(" · ");
@@ -210,13 +286,25 @@ function offerCard(c, vote) {
   <article class="offer ${vote === "up" ? "is-liked" : vote === "down" ? "is-disliked" : ""}" data-id="${c.id}">
     <a class="offer-photo" ${c.url ? html.raw(html`href="${c.url}" target="_blank" rel="noopener noreferrer"`) : ""} aria-label="Открыть объявление на площадке">
       ${html.raw(c.photo ? html`<img src="${c.photo}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : "")}
-      <span class="offer-src">${c.source_name}</span>
+      ${html.raw(c.stored_at
+        ? html`<span class="offer-src" title="Агент видел это объявление на площадке ${shortDate(c.stored_at.slice(0, 10))}. Перед звонком проверю, что оно не снято.">${c.source_name} · из базы</span>`
+        : html`<span class="offer-src">${c.source_name}</span>`)}
+      ${html.raw(no ? html`<span class="offer-no" title="Номер — можно сказать «вторая нравится»">${no}</span>` : "")}
     </a>
     <div class="offer-body">
       <div class="offer-price"><span class="num">${rub(c.price)}</span> ${html.raw(priceTag(c))}</div>
+      ${html.raw(c.pay ? html`<p class="offer-pay ${c.pay.program === "семейная" ? "is-family" : ""}"><b class="num">≈ ${rub(c.pay.monthly)}/мес</b> ${c.pay.program} ${pct(c.pay.rate)}${c.pay.hint ? ` · ${c.pay.hint}` : ""}</p>` : "")}
+      ${html.raw(c.is_new ? html`<p class="offer-new"><span class="tag tag-blue">Новостройка</span> ${[c.complex ? `ЖК ${c.complex}` : null, c.deadline ? `сдача: ${c.deadline}` : null, c.developer || c.sale_type].filter(Boolean).join(" · ")}</p>` : "")}
       <h3>${rooms}, ${c.area} м²${floor ? `, ${floor}` : ""}</h3>
       <p class="meta">${meta}</p>
       ${html.raw(params ? html`<p class="meta">${params}</p>` : "")}
+      ${html.raw(correctedLine(c))}
+      ${html.raw(c.match ? html`<p class="meta ${c.match.status === "confirmed" ? "" : "missing"}">${c.match.status === "confirmed" ? "Обязательные условия подтверждены" : c.match.status === "rejected" ? "Есть несоответствия условиям" : `Нужно проверить: ${c.match.unknown.join(", ")}`}</p>` : "")}
+      ${html.raw(c.match?.checks?.filter((r) => r.source === "cian_description" && r.key.startsWith("poi:")).map((r) => html`<p class="hint">В описании упомянуто: ${r.label}. Расстояние по карте не подтверждено.</p>`).join("") || "")}
+
+      ${html.raw(featureChips(c.features))}
+      ${html.raw(nearbyChips(c.nearby))}
+      ${html.raw(c.unchecked?.length ? html`<p class="missing">Не проверено по карте: ${c.unchecked.join(", ")}</p>` : "")}
       ${html.raw(c.missing?.length ? html`<p class="missing">Нет в объявлении: ${c.missing.join(", ")} — уточню по телефону</p>` : "")}
     </div>
     <div class="offer-actions">
@@ -224,6 +312,17 @@ function offerCard(c, vote) {
       <button class="vote vote-down" data-vote="down" aria-pressed="${vote === "down"}" title="Не подходит">${html.raw(ICON_DOWN)}<span>Не то</span></button>
     </div>
   </article>`;
+}
+
+function mapBlock(cards) {
+  const kinds = new Map();
+  cards.forEach((c) => (c.nearby || []).forEach((p) => p.lat && kinds.set(p.kind, p.label)));
+  const legend = [html`<span><i class="pin-dot"></i>квартира, цена в млн ₽</span>`,
+    ...[...kinds].map(([k, label]) => html`<span><i class="dot" style="background:${POI_COLORS[k]}"></i>${label}</span>`)];
+  return html`<div class="map-wrap" data-map-wrap>
+    <div class="map" data-map role="region" aria-label="Карта подборки"></div>
+    <p class="map-legend">${html.raw(legend.join(""))}</p>
+  </div>`;
 }
 
 export function selection(d, marks) {
@@ -237,7 +336,8 @@ export function selection(d, marks) {
       </div>
     </div>
     ${html.raw(d.learned?.length ? html`<div class="learned"><span>Учёл:</span>${html.raw(d.learned.map((l) => html`<span class="chip">${l}</span>`).join(""))}</div>` : "")}
-    <div class="offers">${html.raw(d.cards.map((c) => offerCard(c, vote(c.id))).join(""))}</div>
+    ${html.raw(d.cards.some((c) => c.lat && c.lng) ? mapBlock(d.cards) : "")}
+    <div class="offers">${html.raw(d.cards.map((c, i) => offerCard(c, vote(c.id), i + 1)).join(""))}</div>
     <div class="sel-actions">
       <button class="btn btn-ghost" data-selection="more">Подобрать ещё с учётом отметок</button>
       <button class="btn btn-primary" data-selection="proceed">Звонить по отмеченным <span data-liked-count>(${marks.liked.size})</span></button>
@@ -290,7 +390,7 @@ export function deal(d) {
   return html`
   <section class="panel">
     <h2 class="panel-title">План сделки</h2>
-    <p class="panel-lead">${d.cash ? "Без ипотеки: деньги через сервис безопасных расчётов, регистрация — электронно." : `Взнос ${rub(d.down_payment)}, ипотека ${rub(d.loan)} на ${d.years} лет, платёж ${rub(d.monthly)} в месяц — на ${rub(d.monthly_saved)} меньше благодаря торгу.`}</p>
+    <p class="panel-lead">${d.cash ? "Без ипотеки: деньги через сервис безопасных расчётов, регистрация — электронно." : `Взнос ${rub(d.down_payment)}, ${(d.program || "ипотека").toLowerCase()} ${rub(d.loan)} на ${d.years} лет под ${pct(d.rate)}, платёж ${rub(d.monthly)} в месяц — на ${rub(d.monthly_saved)} меньше благодаря торгу.`}</p>
     <div class="two-col">
       <ol class="timeline">
         ${html.raw(d.timeline.map((t) => html`<li><time>${shortDate(t.date)}</time><span class="pt"></span><div><strong>${t.title}</strong><span>${t.note}</span></div></li>`).join(""))}

@@ -20,8 +20,16 @@ export const api = {
   confirm: (sid, kind, approved, data = {}) =>
     request(`/api/session/${sid}/confirm`, { method: "POST", body: { kind, approved, data } }),
   seller: (sid, text) => request(`/api/session/${sid}/seller`, { method: "POST", body: { text } }),
-  message: (sid, text, marks = {}) => request(`/api/session/${sid}/message`, { method: "POST", body: { text, ...marks } }),
   product: (sid, product, amount) => request(`/api/session/${sid}/product`, { method: "POST", body: { product, amount } }),
   economics: (params) => request(`/api/economics?${new URLSearchParams(params)}`),
-  stream: (sid) => new EventSource(`/api/session/${sid}/stream`),
+
+  // диалоги: лента (история + живые события), сообщение (агент работает — ответ; закончил — продолжение)
+  chats: () => request("/api/chats"),
+  chatStream: (id, after = 0) => new EventSource(`/api/chat/${id}/stream?after=${after}`),
+  chatMessage: (id, text, marks = {}) => request(`/api/chat/${id}/message`, { method: "POST", body: { text, ...marks } }),
+
+  me: () => request("/api/me"),
+  login: (email, password) => request("/api/auth/login", { method: "POST", body: { email, password } }),
+  register: (email, password, name) => request("/api/auth/register", { method: "POST", body: { email, password, name } }),
+  logout: () => request("/api/auth/logout", { method: "POST" }),
 };

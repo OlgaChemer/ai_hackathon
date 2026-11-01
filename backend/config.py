@@ -19,7 +19,6 @@ def _bool(name: str, default: bool) -> bool:
 @dataclass(frozen=True)
 class Settings:
     llm_provider: str = os.getenv("LLM_PROVIDER", "deepseek").strip().lower()
-    llm_fallback_to_mock: bool = _bool("LLM_FALLBACK_TO_MOCK", True)
 
     deepseek_api_key: str = os.getenv("DEEPSEEK_API_KEY", "")
     deepseek_base_url: str = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
@@ -36,6 +35,28 @@ class Settings:
     )
     gigachat_verify_ssl: bool = _bool("GIGACHAT_VERIFY_SSL", True)
     gigachat_ca_bundle: str = os.getenv("GIGACHAT_CA_BUNDLE", "")
+
+    # МТС Exolve: настоящий звонок продавцу (синтез речи + SIP через WebRTC)
+    exolve_api_key: str = os.getenv("EXOLVE_API_KEY", "")
+    exolve_voice: int = int(os.getenv("EXOLVE_VOICE", "13") or 13)  # 13 — Кирилл
+    seller_phone: str = os.getenv("SELLER_PHONE", "")
+    # PIN для звонков на публичном сервере: без него любой посетитель звонил бы за ваш счёт
+    phone_pin: str = os.getenv("PHONE_PIN", "")
+
+    # База: пользователи, история диалогов, объявления с признаками
+    database_url: str = os.getenv("DATABASE_URL") or f"sqlite:///{ROOT / 'backend' / 'data' / 'app.db'}"
+    auth_session_days: int = int(os.getenv("AUTH_SESSION_DAYS", "30") or 30)
+    cookie_secure: bool = _bool("COOKIE_SECURE", False)  # true — за HTTPS
+
+    # Каталог 2GIS: без ключа используем OpenStreetMap. Общий бюджет на карту в одном поиске.
+    twogis_api_key: str = os.getenv("TWOGIS_API_KEY", "").strip()
+    places_budget_s: float = max(0.1, float(os.getenv("PLACES_BUDGET_S") or 12))
+
+    # Ночной обход объявлений: время (ЧЧ:ММ, пусто — выключен), сколько страниц выдачи на поиск,
+    # сколько пропавших объявлений проверить за раз
+    refresh_at: str = os.getenv("REFRESH_AT", "").strip()
+    refresh_pages: int = int(os.getenv("REFRESH_PAGES", "3") or 3)
+    refresh_check_limit: int = int(os.getenv("REFRESH_CHECK_LIMIT", "40") or 40)
 
 
 settings = Settings()

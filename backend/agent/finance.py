@@ -12,7 +12,8 @@ from __future__ import annotations
 
 from datetime import date
 
-from .tools import deal_costs, fmt
+from .mortgage import deal_costs
+from .numbers import fmt
 
 PRODUCTS = {
     "savings_account": {"name": "Накопительный счёт", "rate": 0.10, "low": 0.10, "high": 0.10,
@@ -74,7 +75,8 @@ def _add_months(d: date, months: int) -> date:
     return date(d.year + y, m + 1, 1)
 
 
-def plan(price: int, inputs: dict, today: date | None = None) -> dict:
+def plan(price: int, inputs: dict, today: date | None = None, matcap: int = 0) -> dict:
+    """matcap — маткапитал: идёт в первоначальный взнос, копить нужно меньше."""
     today = today or date.today()
     i = {**DEFAULT_INPUTS, **{k: v for k, v in inputs.items() if v not in (None, "")}}
     income, expenses = int(i["monthly_income"]), int(i["monthly_expenses"])
@@ -83,7 +85,8 @@ def plan(price: int, inputs: dict, today: date | None = None) -> dict:
 
     down = int(price * DOWN_SHARE)
     costs = sum(deal_costs(price, price - down).values())
-    need = down + costs
+    matcap = max(0, min(int(matcap or 0), down))
+    need = down - matcap + costs
     cushion = expenses * CUSHION_MONTHS
     start = max(0, savings - cushion)
     free = max(0, income - expenses)
@@ -142,7 +145,7 @@ def plan(price: int, inputs: dict, today: date | None = None) -> dict:
     return {
         "inputs": {"monthly_income": income, "monthly_expenses": expenses, "savings": savings,
                    "horizon_months": horizon, "risk": risk},
-        "price": price, "down_payment": down, "deal_costs": costs, "need": need,
+        "price": price, "down_payment": down, "deal_costs": costs, "need": need, "matcap": matcap,
         "cushion": cushion, "available": start, "gap": gap,
         "free_monthly": free, "monthly": monthly, "monthly_needed": monthly_needed,
         "months": months, "ready_date": ready_date.isoformat() if ready_date else None,

@@ -4,6 +4,20 @@ import { bindMic, mic, recorder } from "./voice.js";
 
 const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
 
+const SIM_NOTES = {
+  auto: "Симуляция: продавца играет ИИ, настоящему продавцу прототип не звонит",
+  human: "Продавец — вы: отвечайте текстом или голосом",
+  phone: "Настоящий звонок через МТС Exolve: продавец — вы, на телефоне",
+};
+
+function pageNote(p) {
+  if (!p) return "";
+  const at = p.checked_at ? new Date(p.checked_at).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" }) : "";
+  return p.alive
+    ? html`<p class="page-check is-ok">✓ Объявление в продаже${at ? ` · проверено в ${at}` : ""}</p>`
+    : html`<p class="page-check" title="${p.note}">Не удалось проверить, что объявление в продаже (${p.note}) — уточню у продавца</p>`;
+}
+
 export function createCall(payload) {
   return {
     listing: payload.listing,
@@ -11,6 +25,7 @@ export function createCall(payload) {
     authority: payload.authority,
     arguments: payload.arguments || [],
     questions: payload.questions || [],
+    page: payload.page || null, // проверка страницы объявления перед звонком
     sellerName: payload.seller_name || "Продавец",
     sellerRole: payload.seller_role || payload.listing.seller_role || "",
     phase: null,
@@ -67,8 +82,9 @@ export function renderCall(c, onSellerSubmit) {
       <ol class="phases" data-phases>
         ${html.raw(phases.map(([k, t]) => html`<li data-phase="${k}" class="${phaseClass(c, k, order)}">${t}</li>`).join(""))}
       </ol>
-      <span class="sim-note">${c.mode === "human" ? "Продавец — вы: отвечайте текстом или голосом" : "Симуляция: продавца играет ИИ, настоящему продавцу прототип не звонит"}</span>
+      <span class="sim-note">${SIM_NOTES[c.mode] || SIM_NOTES.auto}</span>
     </div>
+    ${html.raw(pageNote(c.page))}
     ${html.raw(c.questions.length ? html`<p class="call-questions">Агент уточнит: ${c.questions.map((q) => q.label).join(", ")}</p>` : "")}
     <div class="counter">
       <div class="label">Лучшая цена продавца сейчас</div>
@@ -81,11 +97,11 @@ export function renderCall(c, onSellerSubmit) {
     <div class="ruler" aria-hidden="true">
       <div class="rail"></div>
       <div class="corridor" style="left:${s.x(c.fair.low)}%;width:${s.x(c.fair.high) - s.x(c.fair.low)}%"></div>
-      <div class="limit" style="left:${s.x(c.authority)}%"><span>лимит клиента</span></div>
+      <div class="limit" style="left:${s.x(c.authority)}%" title="лимит клиента"></div>
       <div class="marker marker-seller" data-m-seller style="left:${s.x(c.ask)}%"><b data-m-seller-label>продавец ${rub(c.ask)}</b><i></i></div>
       <div class="marker marker-agent" data-m-agent style="left:${s.x(c.offer ?? c.fair.target)}%;${c.offer ? "" : "opacity:.35"}"><b data-m-agent-label>${c.offer ? `агент ${rub(c.offer)}` : `цель ${rub(c.fair.target)}`}</b><i></i></div>
     </div>
-    <div class="ruler-scale num"><span>${rub(Math.round(s.lo / 1e4) * 1e4)}</span><span>коридор справедливой цены ${rub(c.fair.low)} – ${rub(c.fair.high)}</span><span>${rub(Math.round(s.hi / 1e4) * 1e4)}</span></div>
+    <div class="ruler-scale num"><span>${rub(Math.round(s.lo / 1e4) * 1e4)}</span><span>коридор справедливой цены ${rub(c.fair.low)} – ${rub(c.fair.high)} · <i class="limit-key"></i>лимит клиента ${rub(c.authority)}</span><span>${rub(Math.round(s.hi / 1e4) * 1e4)}</span></div>
     <div class="transcript" data-transcript>
       ${html.raw(c.lines.map(lineMarkup).join(""))}
       ${html.raw(c.started ? "" : html`<p class="typing">Расшифровка появится, как только агент наберёт номер.</p>`)}

@@ -29,8 +29,9 @@ export const voice = {
   supported: "speechSynthesis" in window,
 
   // Возвращает Promise, который завершается, когда реплика прозвучала.
-  speak(text, speaker = "agent") {
-    if (!this.enabled) return Promise.resolve();
+  // force — говорить, даже если озвучка звонка выключена (голосовой режим чата).
+  speak(text, speaker = "agent", force = false) {
+    if (!(force ? this.supported : this.enabled)) return Promise.resolve();
     return new Promise((resolve) => {
       const u = new SpeechSynthesisUtterance(text.replace(/₽/g, "рублей"));
       u.lang = "ru-RU";
@@ -134,14 +135,68 @@ const REC_ERRORS = {
   NotReadableError: "Микрофон занят другой программой.",
 };
 
+/**
+ * Пишет одну фразу из аудиопотока (микрофон или голос собеседника в звонке).
+ * Останавливается после тишины, по stop() или по лимиту длины.
+ * result -> {blob, heard, ms}: heard — детектор громкости заметил речь.
+ * onLevel(rms) — громкость 10 раз в секунду (для анимации); heard() — человек уже начал говорить.
+ */
+export function capturePhrase(stream, { threshold = 0.006, silenceMs = 1500, maxMs = 20000, waitMs = 8000, onLevel } = {}) {
+  const mime = ["audio/webm;codecs=opus", "audio/ogg;codecs=opus", "audio/webm"].find((m) => MediaRecorder.isTypeSupported(m)) || "";
+  const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+  const chunks = [];
+  rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+
+  // детектор тишины
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  const analyser = ctx.createAnalyser();
+  analyser.fftSize = 1024;
+  ctx.createMediaStreamSource(stream).connect(analyser);
+  const buf = new Float32Array(analyser.fftSize);
+  let heard = false;
+  let silentSince = performance.now();
+  const t0 = performance.now();
+
+  const stopped = new Promise((resolve) => { rec.onstop = resolve; });
+  const stop = () => { if (rec.state !== "inactive") rec.stop(); };
+  const timer = setInterval(() => {
+    analyser.getFloatTimeDomainData(buf);
+    const rms = Math.sqrt(buf.reduce((a, v) => a + v * v, 0) / buf.length);
+    const now = performance.now();
+    onLevel?.(rms);
+    if (rms > threshold) { heard = true; silentSince = now; }
+    if ((heard && now - silentSince > silenceMs) || now - t0 > maxMs || (!heard && now - t0 > waitMs)) stop();
+  }, 100);
+  rec.start(250);
+
+  const result = stopped.then(() => {
+    clearInterval(timer);
+    ctx.close();
+    return { blob: new Blob(chunks, { type: rec.mimeType || "audio/webm" }), heard, ms: performance.now() - t0 };
+  });
+  return { stop, result, heard: () => heard };
+}
+
+/** Распознаёт запись на сервере (Whisper). -> {text, error} */
+export async function transcribe(blob) {
+  try {
+    const res = await fetch("/api/stt", { method: "POST", headers: { "Content-Type": blob.type }, body: blob });
+    const data = await res.json();
+    if (!res.ok) return { text: "", error: data.detail || `Сервер не распознал запись (${res.status})` };
+    return { text: (data.text || "").trim(), error: data.text ? null : "Не разобрал слова — попробуйте ещё раз." };
+  } catch (e) {
+    return { text: "", error: `Не удалось отправить запись: ${e.message}` };
+  }
+}
+
 export const recorder = {
   // включается, если сервер сообщил, что Whisper установлен (см. app.js)
   available: false,
   supported: Boolean(navigator.mediaDevices?.getUserMedia && window.MediaRecorder),
 
   /**
-   * Записывает одну фразу и распознаёт её на сервере.
-   * Останавливается сам после 1,3 с тишины (или по stop()); максимум 20 с.
+   * Записывает одну фразу с микрофона и распознаёт её на сервере.
+   * Останавливается сам после 1,5 с тишины (или по stop()); максимум 20 с.
    * onState("listening" | "processing").
    */
   listen(onState = () => {}) {
@@ -154,51 +209,15 @@ export const recorder = {
         return { text: "", error: REC_ERRORS[e.name] || `Микрофон не включился: ${e.message}` };
       }
       voice.stop();
-      const mime = ["audio/webm;codecs=opus", "audio/ogg;codecs=opus", "audio/webm"].find((m) => MediaRecorder.isTypeSupported(m)) || "";
-      const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
-      const chunks = [];
-      rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
-
-      // детектор тишины
-      const ctx = new (window.AudioContext || window.webkitAudioContext)();
-      const analyser = ctx.createAnalyser();
-      analyser.fftSize = 1024;
-      ctx.createMediaStreamSource(stream).connect(analyser);
-      const buf = new Float32Array(analyser.fftSize);
-      let heard = false;
-      let silentSince = performance.now();
-      const t0 = performance.now();
-
-      const stopped = new Promise((resolve) => { rec.onstop = resolve; });
-      const finish = () => { if (rec.state !== "inactive") rec.stop(); };
-      stopFn = finish;
-      const timer = setInterval(() => {
-        analyser.getFloatTimeDomainData(buf);
-        const rms = Math.sqrt(buf.reduce((a, v) => a + v * v, 0) / buf.length);
-        const now = performance.now();
-        if (rms > 0.006) { heard = true; silentSince = now; }
-        if ((heard && now - silentSince > 1500) || now - t0 > 20000 || (!heard && now - t0 > 8000)) finish();
-      }, 100);
-
-      rec.start(250);
+      const phrase = capturePhrase(stream);
+      stopFn = phrase.stop;
       onState("listening");
-      await stopped;
-      clearInterval(timer);
+      const { blob, ms } = await phrase.result;
       stream.getTracks().forEach((t) => t.stop());
-      ctx.close();
       // даже если детектор громкости не сработал (тихий микрофон), отдаём запись Whisper — у него свой детектор речи
-      if (performance.now() - t0 < 400) return { text: "", error: "Запись слишком короткая — нажмите и говорите." };
-
+      if (ms < 400) return { text: "", error: "Запись слишком короткая — нажмите и говорите." };
       onState("processing");
-      const blob = new Blob(chunks, { type: rec.mimeType || "audio/webm" });
-      try {
-        const res = await fetch("/api/stt", { method: "POST", headers: { "Content-Type": blob.type }, body: blob });
-        const data = await res.json();
-        if (!res.ok) return { text: "", error: data.detail || `Сервер не распознал запись (${res.status})` };
-        return { text: (data.text || "").trim(), error: data.text ? null : "Не разобрал слова — попробуйте ещё раз." };
-      } catch (e) {
-        return { text: "", error: `Не удалось отправить запись: ${e.message}` };
-      }
+      return transcribe(blob);
     })();
     return { stop: () => stopFn(), result };
   },

@@ -166,9 +166,27 @@ button, input, textarea { font: inherit; color: inherit; }
 .confirm.is-done .actions { display: none; }
 .confirm .verdict { font-size: 13px; color: var(--ink-3); }
 .confirm label { font-size: 13px; color: var(--ink-2); display: flex; flex-direction: column; gap: 4px; }
-.confirm input[type="number"] {
+.confirm input[type="number"], .confirm input[type="tel"] {
   border: 1px solid var(--line); border-radius: var(--radius-s); padding: 8px 10px; background: var(--canvas); width: 100%;
 }
+.dial-note { font-size: 13px; color: var(--ink-2); }
+.map-wrap { margin: 0 0 18px; }
+.map { position: relative; z-index: 0; isolation: isolate; height: 320px; border-radius: var(--radius-m); overflow: hidden; background: var(--canvas); border: 1px solid var(--line); }
+.map-fallback { padding: 16px; font-size: 13px; color: var(--ink-3); }
+.map-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 8px 2px 0; font-size: 12.5px; color: var(--ink-2); }
+.map-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; flex: none; margin-right: 5px; vertical-align: 0; }
+.map-legend .dot { margin-right: 0; }
+.pin-dot { display: inline-block; width: 22px; height: 12px; border-radius: 6px; background: var(--green); }
+.flat-pin { background: none; border: 0; }
+.flat-pin span { display: inline-block; transform: translate(-50%, -50%); padding: 3px 8px; border-radius: 999px; background: var(--green); color: #fff;
+  font: 700 12px/1.2 Onest, system-ui, sans-serif; white-space: nowrap; box-shadow: 0 0 0 2px #fff, 0 2px 6px rgb(0 0 0 / .25); }
+.offer.is-flash { box-shadow: 0 0 0 3px var(--green); transition: box-shadow .2s; }
+.features { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 0; }
+.feat { font-size: 12.5px; padding: 3px 9px; border-radius: 999px; background: var(--canvas); color: var(--ink-2); }
+.feat.is-yes { background: var(--green-soft); color: var(--green-strong); }
+.feat.is-no { color: var(--ink-3); text-decoration: line-through; }
+.dial-note.mic-error { color: var(--red); }
 .redlines { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; font-size: 13px; }
 .redlines dt { color: var(--ink-3); }
 .redlines dd { margin: 0; font-weight: 500; }
@@ -296,7 +314,7 @@ button, input, textarea { font: inherit; color: inherit; }
   position: absolute; top: 30px; height: 16px; border-radius: 8px; background: var(--sber-gradient); opacity: .9;
 }
 .ruler .limit { position: absolute; top: 24px; width: 2px; height: 28px; background: var(--ink); opacity: .35; }
-.ruler .limit span { position: absolute; top: 30px; left: 50%; transform: translateX(-50%); font-size: 11px; color: var(--ink-3); white-space: nowrap; }
+.limit-key { display: inline-block; width: 2px; height: 11px; margin: 0 5px -1px 0; background: var(--ink); opacity: .35; }
 .marker {
   position: absolute; top: 0; transform: translateX(-50%); transition: left .9s cubic-bezier(.2, .8, .2, 1);
   display: flex; flex-direction: column; align-items: center; gap: 2px;
@@ -546,7 +564,7 @@ table.scen td.neg { color: var(--red); }
   .tab { flex: 1; font-size: 14px; padding: 7px 8px; }
   .brand-sub { display: none; }
   .workspace { grid-template-columns: 1fr; padding: 12px 16px; }
-  .chat { position: static; height: auto; max-height: 70vh; }
+  .chat { position: relative; top: auto; height: auto; max-height: 70vh; }
   .stage { order: -1; }
   .panel { padding: 20px; }
   .welcome { padding: 28px 20px; }
@@ -583,3 +601,145 @@ table.scen td.neg { color: var(--red); }
 .market-scale .budget { position: absolute; top: 0; height: 32px; width: 2px; background: var(--green); }
 .market-scale .budget span { position: absolute; top: -18px; left: 50%; transform: translateX(-50%); font-size: 12px; font-weight: 600; color: var(--green-strong); white-space: nowrap; }
 .market-legend { display: flex; justify-content: space-between; font-size: 12px; color: var(--ink-3); margin-top: 4px; }
+
+/* ---------- голосовой режим: разговор без кнопок */
+.talk-btn {
+  display: inline-flex; align-items: center; gap: 6px; height: 44px; padding: 0 14px; flex: none;
+  border: 1px solid var(--green-line); border-radius: 999px; background: var(--green-soft); color: var(--green-strong);
+  font-weight: 600; cursor: pointer; transition: background .15s ease;
+}
+.talk-btn:hover { background: color-mix(in srgb, var(--green-soft) 70%, var(--green-line)); }
+.talk {
+  border-top: 1px solid var(--line); padding: 16px; display: flex; align-items: center; gap: 14px;
+  background: linear-gradient(180deg, var(--surface), var(--green-soft));
+}
+.talk-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.talk-text strong { font-size: 16px; }
+.talk-text span { font-size: 13px; color: var(--ink-2); overflow-wrap: anywhere; }
+.talk-orb {
+  --lvl: 0; position: relative; width: 64px; height: 64px; flex: none; border: 0; padding: 0;
+  border-radius: 50%; background: transparent; cursor: pointer; display: grid; place-items: center;
+}
+.talk-core {
+  width: 48px; height: 48px; border-radius: 50%;
+  background: radial-gradient(circle at 30% 30%, #7ed33b, #21a038 45%, #13c3b5 80%, #1a8fe0);
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--green) 35%, transparent);
+  transform: scale(calc(1 + var(--lvl) * .22)); transition: transform .1s linear;
+}
+.talk-ring {
+  position: absolute; inset: 0; border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--green) 45%, transparent);
+  transform: scale(calc(1 + var(--lvl) * .3)); opacity: calc(.35 + var(--lvl) * .65);
+  transition: transform .1s linear, opacity .1s linear;
+}
+.talk[data-state="listening"] .talk-ring { animation: talk-breathe 2.4s ease-in-out infinite; }
+.talk[data-state="processing"] .talk-ring {
+  border-color: transparent; border-top-color: var(--green); border-right-color: var(--blue);
+  animation: talk-spin .9s linear infinite;
+}
+.talk[data-state="speaking"] .talk-core { animation: talk-speak 1.1s ease-in-out infinite; }
+.talk[data-state="speaking"] .talk-ring { animation: talk-wave 1.1s ease-out infinite; }
+.talk[data-state="waiting"] .talk-core { filter: grayscale(.8); opacity: .6; }
+@keyframes talk-breathe { 50% { transform: scale(1.08); opacity: .6; } }
+@keyframes talk-spin { to { transform: rotate(360deg); } }
+@keyframes talk-speak { 50% { transform: scale(1.1); } }
+@keyframes talk-wave { from { transform: scale(.9); opacity: .9; } to { transform: scale(1.35); opacity: 0; } }
+.offer-no {
+  position: absolute; top: 10px; right: 10px; min-width: 26px; height: 26px; padding: 0 6px; border-radius: 999px;
+  display: grid; place-items: center; background: var(--surface); color: var(--ink); font-weight: 700; font-size: 13px;
+  box-shadow: var(--shadow);
+}
+.talk[data-state="thinking"] .talk-ring {
+  border-color: transparent; border-top-color: var(--green); border-right-color: var(--blue);
+  animation: talk-spin 1.4s linear infinite;
+}
+
+/* ---------- диалоги: список как в чат-ботах */
+.chats-btn {
+  display: inline-flex; align-items: center; gap: 6px; border: 0; background: none; cursor: pointer;
+  font-weight: 600; font-size: 14px; color: var(--ink); padding: 4px 6px; margin-left: -6px; border-radius: var(--radius-s);
+}
+.chats-btn:hover, .chats-btn[aria-expanded="true"] { background: var(--canvas); }
+.chats-panel {
+  position: absolute; z-index: 5; top: 44px; left: 12px; right: 12px; max-height: min(60vh, 520px); overflow-y: auto;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-m); box-shadow: var(--shadow);
+  padding: 6px; display: flex; flex-direction: column; gap: 2px;
+}
+.chat-item {
+  display: flex; flex-direction: column; gap: 2px; text-align: left; border: 0; background: none; cursor: pointer;
+  padding: 9px 10px; border-radius: var(--radius-s); color: var(--ink); width: 100%;
+}
+.chat-item:hover { background: var(--canvas); }
+.chat-item.is-current { background: var(--green-soft); }
+.chat-new { font-weight: 600; color: var(--green-strong); }
+.chat-title { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-meta { font-size: 12px; color: var(--ink-3); }
+.chat-live { color: var(--green-strong); font-weight: 600; }
+.chat-live::before { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--green); margin-right: 5px; vertical-align: middle; }
+.chats-empty { margin: 8px 10px; font-size: 13px; color: var(--ink-3); }
+
+/* ---------- аккаунт */
+.account { position: relative; }
+.account-btn {
+  display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--line); background: var(--surface);
+  border-radius: 999px; padding: 4px 12px; cursor: pointer; font-size: 13px; color: var(--ink); font-weight: 600;
+}
+.account-btn .avatar {
+  width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; margin-left: -6px;
+  background: var(--green); color: #fff; font-size: 12px;
+}
+.account-name { max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-menu {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 20; min-width: 200px; padding: 6px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-m); box-shadow: var(--shadow);
+}
+.account-menu .account-email { margin: 6px 10px; font-size: 12px; color: var(--ink-3); overflow-wrap: anywhere; }
+.account-menu button { width: 100%; text-align: left; border: 0; background: none; padding: 8px 10px; border-radius: var(--radius-s); cursor: pointer; color: var(--ink); }
+.account-menu button:hover { background: var(--canvas); }
+dialog.auth {
+  border: 0; border-radius: var(--radius-l); padding: 0; width: min(400px, calc(100vw - 32px));
+  background: var(--surface); color: var(--ink); box-shadow: var(--shadow);
+}
+dialog.auth::backdrop { background: rgba(10, 20, 15, .45); }
+.auth-form { display: flex; flex-direction: column; gap: 12px; padding: 24px; }
+.auth-form h3 { margin: 0; font-size: 20px; }
+.auth-lead { margin: 0; font-size: 14px; color: var(--ink-2); }
+.auth-form label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--ink-2); }
+.auth-form input { border: 1px solid var(--line); border-radius: var(--radius-s); padding: 10px 12px; background: var(--canvas); color: var(--ink); font-size: 15px; }
+.auth-form input:focus { outline: none; border-color: var(--green); background: var(--surface); }
+.auth-error { margin: 0; font-size: 13px; color: var(--red); }
+.auth-actions { display: flex; gap: 8px; }
+.auth-actions .btn { flex: 1; }
+.cookie-note {
+  position: fixed; z-index: 30; left: 16px; bottom: 16px; max-width: 420px; display: flex; gap: 12px; align-items: center;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-m); box-shadow: var(--shadow); padding: 12px 14px;
+}
+.cookie-note p { margin: 0; font-size: 13px; color: var(--ink-2); }
+@media (max-width: 860px) {
+  .account-name { display: none; }
+  .cookie-note { right: 16px; }
+}
+.store-line { margin: 0 0 12px; font-size: 13px; color: var(--ink-2); }
+
+/* ---------- ипотечные программы, новостройки */
+.program-head { margin: 0 0 8px; }
+.program .program-sub { font-size: 13px; font-weight: 500; color: var(--ink-3); letter-spacing: 0; }
+.program.is-off { opacity: .85; }
+.program.is-off .big { color: var(--ink-3); }
+.program-why { margin: 12px 0 0; padding-left: 18px; font-size: 13px; color: var(--ink-2); display: grid; gap: 4px; }
+.tag-blue { background: color-mix(in srgb, var(--blue) 14%, transparent); color: var(--blue); }
+.offer-new { margin: 2px 0 4px; font-size: 13px; color: var(--ink-2); }
+.offer-pay { margin: 6px 0 4px; font-size: 13px; color: var(--ink-2); }
+.offer-pay b { font-size: 14px; color: var(--ink); }
+.offer-pay.is-family b { color: var(--green-strong); }
+.page-check { margin: 4px 28px 0; font-size: 13px; color: var(--ink-3); }
+.page-check.is-ok { color: var(--green-strong); }
+@media (max-width: 860px) { .page-check { margin-left: 20px; margin-right: 20px; } }
+.meta.corrected { color: var(--blue); }
+
+/* ---------- агент думает */
+.msg-thinking { align-self: flex-start; display: inline-flex; gap: 4px; padding: 12px 14px; background: var(--green-soft); border-bottom-left-radius: 6px; }
+.msg-thinking span { width: 6px; height: 6px; border-radius: 50%; background: var(--green-strong); opacity: .35; animation: thinking 1.2s infinite ease-in-out; }
+.msg-thinking span:nth-child(2) { animation-delay: .15s; }
+.msg-thinking span:nth-child(3) { animation-delay: .3s; }
+@keyframes thinking { 40% { opacity: 1; transform: translateY(-2px); } }
