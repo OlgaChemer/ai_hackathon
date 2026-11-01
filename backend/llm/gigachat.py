@@ -19,7 +19,8 @@ import uuid
 
 import httpx
 
-from .base import LLMClient, LLMError, LLMResponse, Tool, ToolCall, post_with_retry
+from .base import LLMBusy, LLMClient, LLMError, LLMResponse, Tool, ToolCall, post_with_retry
+from .. import runtime
 
 JSON_HINT = "Ответь строго одним JSON-объектом без пояснений и без markdown."
 
@@ -94,6 +95,8 @@ class GigaChatClient(LLMClient):
         verify_ssl: bool = True,
         ca_bundle: str = "",
         timeout: float = 60.0,
+        max_waiters: int = 6,
+        queue_timeout: float = 25.0,
     ):
         if not credentials:
             raise LLMError("GIGACHAT_CREDENTIALS не задан")
@@ -117,6 +120,10 @@ class GigaChatClient(LLMClient):
         # В текущем тарифе физлица доступен один запрос генерации одновременно.
         # get_llm() общий для диалогов, Q&A и переговоров: они ждут очередь, а не получают 429.
         self._generation_lock = asyncio.Lock()
+        self._waiters = 0
+        self._max_waiters = max_waiters
+        self._queue_timeout = queue_timeout
+        self._call_timeout = timeout
 
     async def _get_token(self) -> str:
         if self._token and time.time() < self._token_expires_at - 60:
@@ -150,8 +157,36 @@ class GigaChatClient(LLMClient):
         return [m.get("id") for m in r.json().get("data", [])]
 
     async def chat(self, messages, **kwargs) -> LLMResponse:
-        async with self._generation_lock:
-            return await self._chat(messages, **kwargs)
+        # Проверка/резервирование места без await: одна event loop не переполнит очередь.
+        queued = self._generation_lock.locked() or self._waiters > 0
+        if queued and self._waiters >= self._max_waiters:
+            runtime.record("llm_queue", outcome="full", waiting=self._waiters)
+            raise LLMBusy("Очередь модели заполнена")
+        started = time.monotonic()
+        if queued:
+            self._waiters += 1
+            try:
+                runtime.model_wait(True)
+                try:
+                    await asyncio.wait_for(self._generation_lock.acquire(), self._queue_timeout)
+                except asyncio.TimeoutError:
+                    runtime.record("llm_queue", outcome="timeout", waiting=self._waiters - 1)
+                    raise LLMBusy("Истекло время ожидания модели") from None
+            finally:
+                self._waiters -= 1
+                runtime.model_wait(False)
+        else:
+            # Для свободного Lock acquire завершается без переключения задачи.
+            await self._generation_lock.acquire()
+        try:
+            with runtime.timed("llm", provider=self.name, model=self.model, tag=kwargs.get("tag", ""),
+                               queue_ms=round((time.monotonic() - started) * 1000)):
+                try:
+                    return await asyncio.wait_for(self._chat(messages, **kwargs), self._call_timeout)
+                except asyncio.TimeoutError:
+                    raise LLMError("Истекло время ответа GigaChat") from None
+        finally:
+            self._generation_lock.release()
 
     async def _chat(
         self,

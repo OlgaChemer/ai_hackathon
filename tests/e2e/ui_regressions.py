@@ -51,6 +51,19 @@ async def main(base):
         }""")
         await page.wait_for_selector('#chatPanel.expanded')
         await page.locator('#chatToggle').click()
+        # Очередь модели видна и на телефоне; завершение ожидания убирает индикатор.
+        await page.evaluate("""async () => {
+          const {state}=await import('/js/state.js');
+          state.es.onmessage(new MessageEvent('message',{data:JSON.stringify({type:'model_wait',on:true})}));
+        }""")
+        await page.wait_for_selector('#chatPanel.expanded')
+        await page.wait_for_function("document.querySelector('.msg-thinking')?.textContent.includes('жду очередь')")
+        await page.evaluate("""async () => {
+          const {state}=await import('/js/state.js');
+          state.es.onmessage(new MessageEvent('message',{data:JSON.stringify({type:'model_wait',on:false})}));
+        }""")
+        await page.wait_for_selector('.msg-thinking', state='detached')
+        await page.locator('#chatToggle').click()
         print('PASS: новая главная → реальный запрос → подборка, мобильная ширина и локальный Leaflet')
 
         # Полная ошибка плиток должна давать ссылку на карту вместо немого пустого прямоугольника.

@@ -225,6 +225,10 @@ async function handle(ev, myGen) {
     case "typing": // агент думает (сигнал без номера, в истории его нет)
       showThinking(ev.on);
       break;
+    case "model_wait":
+      showThinking(ev.on, "Модель занята, жду очередь…");
+      if (ev.on) setChatExpanded(true);
+      break;
     case "error":
       addMsg("error", ev.text);
       if (quiet) break;
@@ -289,10 +293,12 @@ function finish() {
 }
 
 /** «Агент думает…» внизу чата, пока модель решает, что делать. */
-function showThinking(on) {
+function showThinking(on, text = "") {
   chatLog.querySelector(".msg-thinking")?.remove();
   if (!on) return;
-  chatLog.append(el(html`<div class="msg msg-thinking" aria-label="Агент думает"><span></span><span></span><span></span></div>`));
+  chatLog.append(el(text
+    ? html`<div class="msg msg-thinking" role="status">${text}</div>`
+    : html`<div class="msg msg-thinking" aria-label="Агент думает"><span></span><span></span><span></span></div>`));
   chatLog.scrollTop = chatLog.scrollHeight;
 }
 
@@ -447,7 +453,7 @@ function setProvider(p) {
   const node = $("provider");
   const names = { deepseek: "DeepSeek", gigachat: "GigaChat", offline: "Без модели (правила)" };
   const degraded = p.degraded || p.provider === "offline";
-  node.textContent = p.degraded ? `${names[p.provider] || p.provider} · запасной режим` : names[p.provider] || p.provider;
+  node.textContent = p.degraded ? `${names[p.provider] || p.provider} · недоступен` : names[p.provider] || p.provider;
   node.title = p.reason ? `Модель недоступна: ${p.reason}` : `Модель: ${p.model}`;
   node.classList.toggle("is-offline", degraded);
 }
