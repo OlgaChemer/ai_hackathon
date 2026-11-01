@@ -15,6 +15,7 @@ import asyncio
 import json
 import logging
 import re
+import tempfile
 import time
 from datetime import date, datetime
 from pathlib import Path
@@ -32,6 +33,9 @@ CACHE_DIR = Path(__file__).resolve().parent.parent / "data" / "cache" / "cian"
 CACHE_TTL = 30 * 60
 SNAPSHOT_VERSION = 2  # 2 — без долей; срезы другой версии не используем
 MIN_INTERVAL = 3.0
+FETCH_TIMEOUT = 35.0
+FAILURE_COOLDOWN = 60.0
+REDIRECTS = (301, 302, 303, 307, 308)
 
 # город -> (код региона, поддомен, основа названия для проверки заголовка страницы).
 # Поддомены семи городов проверены; остальные Циан называет сам редиректом — запоминаем (SUBS_FILE).
@@ -70,6 +74,7 @@ def condition_from_text(text: str | None) -> str | None:
 _memory: dict[tuple, tuple[float, list[dict]]] = {}
 _lock = asyncio.Lock()
 _last_request = 0.0
+_failures: dict[tuple[str, bool], tuple[float, str]] = {}
 
 
 def supported(city: str | None) -> bool:
@@ -106,7 +111,7 @@ def _learn_subdomain(city: str, sub: str) -> None:
 
 def redirect_target(url: str, location: str) -> str | None:
     """Куда Циан перенаправил запрос — если это не капча и не чужой сайт. Иначе None."""
-    if not location or "captcha" in location:
+    if not location or "captcha" in location.lower():
         return None
     target = urljoin(url, location)
     host = urlparse(target).hostname or ""
@@ -166,7 +171,7 @@ def extract_offer(page: str) -> dict | None:
 
 
 def extract_offers(page: str) -> list[dict]:
-    for m in re.finditer(r'"offers":\[', page):
+    for m in re.finditer(r'"offers"\s*:\s*\[', page):
         raw = _json_array_at(page, m.end() - 1)
         if not raw:
             continue
@@ -327,12 +332,30 @@ def _new_fields(o: dict, terms: dict) -> dict:
     }
 
 
+async def _follow_cookie_redirects(get, url: str):
+    """307 на ту же выдачу с Set-Cookie: повторяем в той же сессии, не теряя cookies.
+
+    Саму капчу и чужие адреса не открываем. Редирект города обрабатывает _fetch_page.
+    """
+    global _last_request
+    _last_request = time.monotonic()
+    response = await get()
+    for _ in range(2):
+        target = redirect_target(url, response.headers.get("location", "")) if response.status_code in REDIRECTS else None
+        if target != url or not response.cookies:
+            break
+        await asyncio.sleep(MIN_INTERVAL)
+        _last_request = time.monotonic()
+        response = await get()
+    return response
+
+
 async def _get_httpx(url: str) -> tuple[int, str, str]:
     # local_address=0.0.0.0 — принудительно IPv4: в WSL httpx иначе виснет на подключении
     async with httpx.AsyncClient(timeout=20, follow_redirects=False,
                                  transport=httpx.AsyncHTTPTransport(local_address="0.0.0.0"),
                                  headers={"Accept-Language": "ru-RU,ru;q=0.9"}) as http:
-        r = await http.get(url)
+        r = await _follow_cookie_redirects(lambda: http.get(url), url)
     return r.status_code, r.headers.get("location", ""), r.text
 
 
@@ -341,12 +364,18 @@ async def _get_browser_like(url: str) -> tuple[int, str, str]:
     from curl_cffi.requests import AsyncSession
 
     last = (0, "", "")
-    for fingerprint in ("safari17_0", "chrome"):
+    for index, fingerprint in enumerate(("safari17_0", "chrome")):
+        if index:
+            await asyncio.sleep(MIN_INTERVAL)
         try:
             async with AsyncSession(impersonate=fingerprint, timeout=20) as http:
-                r = await http.get(url, allow_redirects=False, headers={"Accept-Language": "ru-RU,ru;q=0.9"})
+                r = await _follow_cookie_redirects(
+                    lambda: http.get(url, allow_redirects=False, headers={"Accept-Language": "ru-RU,ru;q=0.9"}), url)
             last = (r.status_code, r.headers.get("location", ""), r.text)
-            if r.status_code in (301, 302, 303, 307, 308) or _blocked(*last) is None:
+            # Редирект на капчу — отказ профиля, а не успешная загрузка.
+            # Саму капчу не открываем; второй обычный HTTP-клиент может получить выдачу.
+            target = redirect_target(url, last[1]) if r.status_code in REDIRECTS else None
+            if (target and target != url) or _blocked(*last) is None:
                 return last
         except Exception as exc:
             log.info("Циан: профиль %s не сработал (%s)", fingerprint, type(exc).__name__)
@@ -354,11 +383,11 @@ async def _get_browser_like(url: str) -> tuple[int, str, str]:
 
 
 def _blocked(status: int, location: str, text: str) -> str | None:
-    if status in (301, 302) and "captcha" in location:
+    if status in REDIRECTS and "captcha" in location.lower():
         return "капча"
     if status != 200:
         return f"ответ {status}"
-    if not re.search(r"<title>[^<]", text):  # заглушка защиты от ботов: 200, пара килобайт, без заголовка
+    if not re.search(r"<title\b[^>]*>\s*[^<\s]", text, re.I):  # заглушка защиты от ботов
         return "заглушка защиты от ботов"
     return None
 
@@ -384,7 +413,7 @@ async def _fetch_page(city: str, rooms: int, budget: int | None, page: int, okru
                 status, location, text = await getter(url)
                 # Циан переводит на поддомен города (www -> kaluga.cian.ru) — идём за ним с нашими же фильтрами
                 for _ in range(2):
-                    target = redirect_target(url, location) if status in (301, 302, 303, 307, 308) else None
+                    target = redirect_target(url, location) if status in REDIRECTS else None
                     if not target:
                         break
                     host = urlparse(target).hostname or ""
@@ -405,7 +434,7 @@ async def _fetch_page(city: str, rooms: int, budget: int | None, page: int, okru
             log.info("Циан через %s: %s — пробую дальше", name, problem)
         else:
             raise SourceUnavailable(f"Циан недоступен ({problem})")
-    title = re.search(r"<title>([^<]*)", text)
+    title = re.search(r"<title\b[^>]*>([^<]*)", text, re.I)
     if not title or REGIONS[city][2].lower() not in title.group(1).lower():
         raise SourceUnavailable("страница не про нужный город")
     raw = extract_offers(text)
@@ -424,25 +453,53 @@ def _okrug_ok(x: dict, okrug: str | None) -> bool:
 
 
 def _save_snapshot(city: str, rooms: int, listings: list[dict], new: bool = False) -> None:
+    temporary = None
     try:
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
         path = _snapshot_path(city, rooms, new)
         old = load_snapshot(city, rooms, new)[0]
         merged = {x["id"]: x for x in old} | {x["id"]: x for x in listings}
-        path.write_text(json.dumps({"version": SNAPSHOT_VERSION, "fetched_at": datetime.now().isoformat(timespec="minutes"),
-                                    "listings": list(merged.values())}, ensure_ascii=False), encoding="utf-8")
+        data = {"version": SNAPSHOT_VERSION, "fetched_at": datetime.now().isoformat(timespec="minutes"),
+                "listings": list(merged.values())}
+        # Фоновый обход и HTTP-запрос могут читать один срез: не публикуем недописанный JSON.
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=CACHE_DIR, delete=False) as f:
+            temporary = Path(f.name)
+            json.dump(data, f, ensure_ascii=False)
+        temporary.replace(path)
     except OSError as exc:
         log.warning("не удалось сохранить срез Циана: %s", exc)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def load_snapshot(city: str, rooms: int, new: bool = False) -> tuple[list[dict], str | None]:
     path = _snapshot_path(city, rooms, new)
-    if not path.exists():
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
         return [], None
-    data = json.loads(path.read_text(encoding="utf-8"))
-    if data.get("version") != SNAPSHOT_VERSION:
+    if not isinstance(data, dict) or data.get("version") != SNAPSHOT_VERSION or not isinstance(data.get("listings"), list):
         return [], None
-    return data["listings"], data.get("fetched_at")
+    listings = [x for x in data["listings"] if isinstance(x, dict) and isinstance(x.get("id"), str)
+                and isinstance(x.get("price"), (int, float)) and x["price"] > 0]
+    return listings, data.get("fetched_at")
+
+
+async def _fetch_available(city, rooms, budget, page, okrug, new):
+    """Короткий отказ повторным запросам при блокировке; срез и база остаются доступны."""
+    scope = (city, new)
+    failed = _failures.get(scope)
+    if failed and time.monotonic() < failed[0]:
+        raise SourceUnavailable(f"{failed[1]}; повторная проверка через {max(1, int(failed[0] - time.monotonic()))} с")
+    try:
+        result = await asyncio.wait_for(_fetch_page(city, rooms, budget, page, okrug, new), timeout=FETCH_TIMEOUT)
+    except (SourceUnavailable, asyncio.TimeoutError) as exc:
+        reason = str(exc) if isinstance(exc, SourceUnavailable) else "Циан не ответил за отведённое время"
+        _failures[scope] = (time.monotonic() + FAILURE_COOLDOWN, reason)
+        raise SourceUnavailable(reason) from None
+    _failures.pop(scope, None)
+    return result
 
 
 async def search(city: str, rooms: int, budget: int | None, page: int = 1, okrug: str | None = None,
@@ -455,7 +512,7 @@ async def search(city: str, rooms: int, budget: int | None, page: int = 1, okrug
     if hit and time.time() - hit[0] < CACHE_TTL:
         return hit[1], {"status": "cached", "note": "из кеша сессии"}
     try:
-        listings, via = await _fetch_page(city, rooms, budget, page, okrug, new)
+        listings, via = await _fetch_available(city, rooms, budget, page, okrug, new)
         _memory[key] = (time.time(), listings)
         _save_snapshot(city, rooms, listings, new)
         note = f"страница {page}" + (" (запасной путь curl_cffi после капчи)" if via == "curl_cffi" else "")
@@ -486,7 +543,7 @@ def page_verdict(status: int, location: str, text: str, offer_id: str) -> tuple[
     if status in (404, 410):
         return False, f"страница объявления отвечает {status}"
     if status != 200:
-        return None, "капча" if "captcha" in location else f"ответ {status}"
+        return None, "капча" if "captcha" in location.lower() else f"ответ {status}"
     if not re.search(r"<title>[^<]", text):
         return None, "заглушка защиты от ботов"
     if offer_id and offer_id not in text:

@@ -14,6 +14,7 @@
 
 - Защита агента и её ограничения — [docs/SECURITY.md](docs/SECURITY.md)
 - Проверка защиты и сделок — [docs/TESTING.md](docs/TESTING.md)
+- Развёртывание и живые проверки сайта — [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
 - Разбор идей команды — [docs/IDEAS.md](docs/IDEAS.md)
 - Пути развития — [docs/ROADMAP.md](docs/ROADMAP.md)
 

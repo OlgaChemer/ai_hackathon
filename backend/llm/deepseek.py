@@ -33,7 +33,7 @@ class DeepSeekClient(LLMClient):
     ) -> LLMResponse:
         body: dict = {
             "model": self.model,
-            "messages": [{k: v for k, v in m.items() if k != "functions_state_id"} for m in messages],
+            "messages": [{k: v for k, v in m.items() if k not in ("functions_state_id", "provider_state")} for m in messages],
             "temperature": temperature,
             "max_tokens": max_tokens,
         }

@@ -82,7 +82,7 @@ async def main(base):
 
         result = await page.evaluate("""async () => {
           const {PhoneCall}=await import('/js/phone.js');
-          const {capturePhrase}=await import('/js/voice.js');
+          const {capturePhrase,prepareRecordingAudio}=await import('/js/voice.js');
           const original=window.AudioContext;
           const audioSession={type:'auto'};
           Object.defineProperty(navigator,'audioSession',{configurable:true,value:audioSession});
@@ -117,17 +117,25 @@ async def main(base):
           await speaking;
           const originalRecorder=window.MediaRecorder;
           window.MediaRecorder=class {
-            static isTypeSupported(){return true;}
+            static isTypeSupported(mime){return mime.startsWith('audio/mp4');}
+            constructor(stream,options){this.mimeType=options.mimeType;}
             start(){this.state='recording';}
             stop(){this.state='inactive';queueMicrotask(()=>this.onstop());}
           };
           const recording=capturePhrase({}, {audioContext:phone.ctx});
-          recording.stop();await recording.result;
+          recording.stop();const recorded=await recording.result;
+          if(!recorded.blob.type.startsWith('audio/mp4'))throw new Error('Safari AAC recording not supported');
           if(phone.ctx.state!=='running')throw new Error('capture closed shared call context');
           if(events.filter(e=>e==='create').length!==1)throw new Error('capture created another context');
           if(!events.includes('source-disconnect'))throw new Error('capture nodes leaked');
-          window.MediaRecorder=originalRecorder;
           phone.hangup();
+          const microphone=prepareRecordingAudio();
+          const phrase=capturePhrase({}, {audioContext:microphone.context});
+          phrase.stop();await phrase.result;
+          if(microphone.context.state!=='running')throw new Error('microphone context closed between phrases');
+          microphone.release();
+          if(microphone.context.state!=='closed')throw new Error('microphone context not released');
+          window.MediaRecorder=originalRecorder;
           window.fetch=originalFetch;window.AudioContext=original;
           if(audioSession.type!=='auto')throw new Error('audio session not restored');
           return events;

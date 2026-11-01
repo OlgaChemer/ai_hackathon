@@ -31,6 +31,14 @@ class GigaChatStateTest(unittest.TestCase):
         result = to_gigachat_messages([{'role': 'assistant', 'content': 'Ответ', 'functions_state_id': STATE}], False)
         self.assertEqual(result[0]['functions_state_id'], STATE)
 
+    def test_early_server_history_provider_state_is_preserved(self):
+        messages = [{'role': 'assistant', 'content': '', 'provider_state': STATE, 'tool_calls': [
+            {'id': 'a', 'function': {'name': 'ask_housing', 'arguments': '{}'}}]},
+            {'role': 'tool', 'tool_call_id': 'a', 'content': '{"housing":"both"}'}]
+        result = to_gigachat_messages(messages, False)
+        self.assertEqual(result[0]['functions_state_id'], STATE)
+        self.assertNotIn('provider_state', result[0])
+
     def test_old_deepseek_parallel_history_is_converted_to_pairs(self):
         messages = [{'role': 'assistant', 'content': '', 'tool_calls': [
             {'id': 'a', 'function': {'name': 'first', 'arguments': '{}'}},

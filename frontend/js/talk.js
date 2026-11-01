@@ -1,7 +1,7 @@
 // Голосовой режим: разговор с агентом без кнопок.
 // Микрофон слушает сам; замолчали — фраза уходит агенту. Ответ агента звучит голосом браузера,
 // пока он говорит — не слушаем (иначе агент услышит сам себя). Нажали на кружок — агент замолкает.
-import { capturePhrase, mic, recorder, transcribe, voice } from "./voice.js";
+import { capturePhrase, mic, prepareRecordingAudio, recorder, transcribe, voice } from "./voice.js";
 import { sleep } from "./format.js";
 
 // Whisper на тишине и шуме иногда «слышит» титры из обучающих видео
@@ -54,9 +54,13 @@ export class Talk {
   async start() {
     if (this.on) return;
     if (recorder.available && recorder.supported) {
+      this.audio = prepareRecordingAudio();
       try {
         this.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+        this.audio.context.resume().catch(() => {});
       } catch (e) {
+        this.audio.release();
+        this.audio = null;
         throw new Error(e.name === "NotAllowedError"
           ? "Браузер не дал доступ к микрофону. Разрешите микрофон для этой страницы (значок слева в адресной строке)."
           : `Микрофон не включился: ${e.message}`);
@@ -77,6 +81,11 @@ export class Talk {
     this.phrases = [];
     voice.stop();
     this.capture?.stop();
+    // capturePhrase отключит свои узлы; контекст принадлежит всему разговору.
+    const audio = this.audio;
+    if (this.capture) this.capture.result?.finally(() => audio?.release());
+    else audio?.release();
+    this.audio = null;
     this.stream?.getTracks().forEach((t) => t.stop());
     this.stream = null;
     this.#set("off");
@@ -144,6 +153,7 @@ export class Talk {
   // Запись фразы и распознавание на сервере (Whisper)
   async #whisperPhrase() {
     const cap = capturePhrase(this.stream, {
+      audioContext: this.audio?.context,
       threshold: 0.012, silenceMs: 1100, maxMs: 30000, waitMs: 15000,
       onLevel: (rms) => {
         this.onLevel?.(rms);

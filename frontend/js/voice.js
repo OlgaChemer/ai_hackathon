@@ -135,6 +135,32 @@ const REC_ERRORS = {
   NotReadableError: "Микрофон занят другой программой.",
 };
 
+/** Один контекст на сеанс микрофона; вызывается по клику до getUserMedia. */
+export function prepareRecordingAudio() {
+  const context = new (window.AudioContext || window.webkitAudioContext)();
+  let previousType;
+  try {
+    if (navigator.audioSession) {
+      previousType = navigator.audioSession.type;
+      navigator.audioSession.type = "play-and-record";
+    }
+  } catch { /* Audio Session API необязателен */ }
+  context.resume().catch(() => {});
+  // На iOS первая озвучка также должна начинаться из пользовательского жеста.
+  if (window.speechSynthesis && window.SpeechSynthesisUtterance) {
+    try {
+      const silent = new SpeechSynthesisUtterance(" ");
+      silent.volume = 0;
+      silent.lang = "ru-RU";
+      speechSynthesis.speak(silent);
+    } catch { /* озвучка необязательна */ }
+  }
+  return { context, release() {
+    context.close().catch(() => {});
+    try { if (previousType !== undefined) navigator.audioSession.type = previousType; } catch {}
+  } };
+}
+
 /**
  * Пишет одну фразу из аудиопотока (микрофон или голос собеседника в звонке).
  * Останавливается после тишины, по stop() или по лимиту длины.
@@ -142,7 +168,7 @@ const REC_ERRORS = {
  * onLevel(rms) — громкость 10 раз в секунду (для анимации); heard() — человек уже начал говорить.
  */
 export function capturePhrase(stream, { threshold = 0.006, silenceMs = 1500, maxMs = 20000, waitMs = 8000, onLevel, audioContext = null } = {}) {
-  const mime = ["audio/webm;codecs=opus", "audio/ogg;codecs=opus", "audio/webm"].find((m) => MediaRecorder.isTypeSupported(m)) || "";
+  const mime = ["audio/webm;codecs=opus", "audio/ogg;codecs=opus", "audio/mp4;codecs=mp4a.40.2", "audio/mp4", "audio/webm"].find((m) => MediaRecorder.isTypeSupported(m)) || "";
   const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
   const chunks = [];
   rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
@@ -205,23 +231,27 @@ export const recorder = {
    */
   listen(onState = () => {}) {
     let stopFn = () => {};
+    const audio = prepareRecordingAudio();
     const result = (async () => {
       let stream;
       try {
         stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+        audio.context.resume().catch(() => {});
+        voice.stop();
+        const phrase = capturePhrase(stream, { audioContext: audio.context });
+        stopFn = phrase.stop;
+        onState("listening");
+        const { blob, ms } = await phrase.result;
+        // Даже если анализатор не заметил тихий голос, Whisper проверит запись сам.
+        if (ms < 400) return { text: "", error: "Запись слишком короткая — нажмите и говорите." };
+        onState("processing");
+        return transcribe(blob);
       } catch (e) {
         return { text: "", error: REC_ERRORS[e.name] || `Микрофон не включился: ${e.message}` };
+      } finally {
+        stream?.getTracks().forEach((t) => t.stop());
+        audio.release();
       }
-      voice.stop();
-      const phrase = capturePhrase(stream);
-      stopFn = phrase.stop;
-      onState("listening");
-      const { blob, ms } = await phrase.result;
-      stream.getTracks().forEach((t) => t.stop());
-      // даже если детектор громкости не сработал (тихий микрофон), отдаём запись Whisper — у него свой детектор речи
-      if (ms < 400) return { text: "", error: "Запись слишком короткая — нажмите и говорите." };
-      onState("processing");
-      return transcribe(blob);
     })();
     return { stop: () => stopFn(), result };
   },

@@ -40,8 +40,10 @@ def to_gigachat_messages(messages: list[dict], json_mode: bool) -> list[dict]:
                 entry = {"role": "assistant", "content": m.get("content") or "",
                          "function_call": {"name": call["function"]["name"],
                                            "arguments": json.loads(args) if isinstance(args, str) else args}}
-                if m.get("functions_state_id"):
-                    entry["functions_state_id"] = m["functions_state_id"]
+                # Совместимость с историей раннего исправления на сервере.
+                state = m.get("functions_state_id") or m.get("provider_state")
+                if state:
+                    entry["functions_state_id"] = state
                 out.append(entry)
                 # Старые диалоги DeepSeek могут содержать несколько действий за один ход.
                 # Для GigaChat-2 превращаем их в последовательные пары вызов/результат.
