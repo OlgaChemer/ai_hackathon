@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import ssl
 from pathlib import Path
@@ -113,6 +114,9 @@ class GigaChatClient(LLMClient):
         self._http = httpx.AsyncClient(base_url=base_url.rstrip("/"), verify=verify, timeout=timeout)
         self._token: str | None = None
         self._token_expires_at: float = 0.0
+        # В текущем тарифе физлица доступен один запрос генерации одновременно.
+        # get_llm() общий для диалогов, Q&A и переговоров: они ждут очередь, а не получают 429.
+        self._generation_lock = asyncio.Lock()
 
     async def _get_token(self) -> str:
         if self._token and time.time() < self._token_expires_at - 60:
@@ -145,7 +149,11 @@ class GigaChatClient(LLMClient):
             raise LLMError(f"GigaChat /models {r.status_code}: {r.text[:300]}")
         return [m.get("id") for m in r.json().get("data", [])]
 
-    async def chat(
+    async def chat(self, messages, **kwargs) -> LLMResponse:
+        async with self._generation_lock:
+            return await self._chat(messages, **kwargs)
+
+    async def _chat(
         self,
         messages,
         *,

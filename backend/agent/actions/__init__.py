@@ -54,6 +54,9 @@ def available(s, name: str) -> bool:
     finance = p.get("payment") == "cash" or (s.mortgage is not None and
                (p.get("payment") != "mortgage_saving" or s.finance is not None))
     rules = {
+        # Подтверждение рамок завершает вводную анкету. Если поиск ничего не даст,
+        # снова разрешаем обсудить изменение условий.
+        "ask_client": not ready or not s.red_lines_ok or s.search is not None,
         "confirm_red_lines": ready and not s.red_lines_ok,
         "market_prices": bool(p.get("city") and p.get("rooms") is not None),
         "ask_payment": not p.get("payment"),

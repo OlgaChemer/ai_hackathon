@@ -69,6 +69,16 @@ class GigaChatStateTest(unittest.TestCase):
         self.assertIn('search_listings', [t.name for t in actions.tools(s)])
         self.assertNotIn('confirm_red_lines', [t.name for t in actions.tools(s)])
 
+    def test_confirmed_request_moves_to_search_before_optional_questionnaire(self):
+        s = session.create_session('Квартира', ScriptedLLM())
+        s.profile = {'city': 'Москва', 'rooms': 2, 'budget_max': 17_500_000, 'payment': 'mortgage_ready'}
+        self.assertIn('ask_client', [t.name for t in actions.tools(s)])
+        s.red_lines_ok = True
+        self.assertNotIn('ask_client', [t.name for t in actions.tools(s)])
+        self.assertIn('ask_family', [t.name for t in actions.tools(s)])
+        s.search = {'pool': []}
+        self.assertIn('ask_client', [t.name for t in actions.tools(s)])
+
     def test_repeated_housing_call_does_not_open_card_again(self):
         async def go():
             s = session.create_session('Квартира', ScriptedLLM(call('ask_housing'), call('ask_housing'), say('Ищу')))
