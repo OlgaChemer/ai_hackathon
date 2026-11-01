@@ -25,7 +25,7 @@ from .agent.loop import run_session
 from .config import ROOT, settings
 from .db import repo
 from .llm import LLMError, get_llm
-from . import phone, ratelimit, stt
+from . import maptiles, phone, ratelimit, stt
 from .agent import guard
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
@@ -138,6 +138,22 @@ async def health():
 
 
 MAX_AUDIO = 5 * 1024 * 1024  # ~ минута речи в webm/opus
+
+
+@app.get("/api/map")
+async def map_config():
+    return maptiles.configuration()
+
+
+@app.get("/api/map/tiles/{z}/{x}/{y}.png")
+async def map_tile(z: int, x: int, y: int):
+    try:
+        image = await maptiles.tile(z, x, y)
+    except ValueError:
+        raise HTTPException(404, "Нет такого фрагмента карты") from None
+    except maptiles.TileUnavailable:
+        raise HTTPException(503, "Подложка 2ГИС временно недоступна", headers={"Cache-Control": "no-store"}) from None
+    return Response(image, media_type="image/png", headers={"Cache-Control": "public, max-age=300"})
 
 
 @app.post("/api/stt")

@@ -238,6 +238,10 @@ async function dialSeller(card, label) {
   voice.stop();
   const phone = state.phone && !state.phone.ended ? state.phone : new PhoneCall();
   state.phone = phone;
+  phone.onAudioState = (audioState) => {
+    const button = $("resumeCallAudio");
+    if (button) button.hidden = audioState === "running" || audioState === "closed";
+  };
   const steps = {
     connecting: "Подключаюсь к МТС Exolve…",
     dialing: `Звоню на ${formatPhone(number)}…`,

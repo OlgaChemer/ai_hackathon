@@ -70,13 +70,15 @@ class GigaChatAdapterTest(unittest.TestCase):
             body = json.loads(req.content)
             self.assertEqual(body["functions"][0]["name"], "search")
             return httpx.Response(200, json={"choices": [{"message": {
-                "role": "assistant", "content": "", "function_call": {"name": "search", "arguments": {"rooms": 2}}}}]})
+                "role": "assistant", "content": "", "functions_state_id": "test-state",
+                "function_call": {"name": "search", "arguments": {"rooms": 2}}}}]})
 
         c = self.make_client(handler)
         tool = Tool("search", "Поиск квартир", {"type": "object", "properties": {"rooms": {"type": "integer"}}})
         for _ in range(2):
             r = run(c.chat([{"role": "user", "content": "двушка"}], tools=[tool]))
             self.assertEqual(r.tool_calls[0].arguments, {"rooms": 2})
+            self.assertEqual(r.functions_state_id, "test-state")
         self.assertEqual(calls, {"oauth": 1, "chat": 2})
 
     def test_401_refreshes_token(self):

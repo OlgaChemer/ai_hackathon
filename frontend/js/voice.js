@@ -141,17 +141,19 @@ const REC_ERRORS = {
  * result -> {blob, heard, ms}: heard — детектор громкости заметил речь.
  * onLevel(rms) — громкость 10 раз в секунду (для анимации); heard() — человек уже начал говорить.
  */
-export function capturePhrase(stream, { threshold = 0.006, silenceMs = 1500, maxMs = 20000, waitMs = 8000, onLevel } = {}) {
+export function capturePhrase(stream, { threshold = 0.006, silenceMs = 1500, maxMs = 20000, waitMs = 8000, onLevel, audioContext = null } = {}) {
   const mime = ["audio/webm;codecs=opus", "audio/ogg;codecs=opus", "audio/webm"].find((m) => MediaRecorder.isTypeSupported(m)) || "";
   const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
   const chunks = [];
   rec.ondataavailable = (e) => e.data.size && chunks.push(e.data);
 
   // детектор тишины
-  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  // В звонке используем контекст, уже разблокированный нажатием пользователя.
+  const ctx = audioContext || new (window.AudioContext || window.webkitAudioContext)();
   const analyser = ctx.createAnalyser();
   analyser.fftSize = 1024;
-  ctx.createMediaStreamSource(stream).connect(analyser);
+  const source = ctx.createMediaStreamSource(stream);
+  source.connect(analyser);
   const buf = new Float32Array(analyser.fftSize);
   let heard = false;
   let silentSince = performance.now();
@@ -171,7 +173,9 @@ export function capturePhrase(stream, { threshold = 0.006, silenceMs = 1500, max
 
   const result = stopped.then(() => {
     clearInterval(timer);
-    ctx.close();
+    source.disconnect();
+    analyser.disconnect();
+    if (!audioContext) ctx.close();
     return { blob: new Blob(chunks, { type: rec.mimeType || "audio/webm" }), heard, ms: performance.now() - t0 };
   });
   return { stop, result, heard: () => heard };

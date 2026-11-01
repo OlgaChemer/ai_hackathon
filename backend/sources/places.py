@@ -30,7 +30,7 @@ async def enrich(listings: list[dict], kinds: list[str], radius: int) -> None:
     if not settings.twogis_api_key or time.monotonic() < _retry_at:
         return
     sem = asyncio.Semaphore(4)
-    async with httpx.AsyncClient(timeout=4) as client:
+    async with httpx.AsyncClient(timeout=6) as client:
         async def one(x: dict, kind: str):
             global _retry_at, _last_provider
             async with sem:

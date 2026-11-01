@@ -31,6 +31,7 @@ class LLMResponse:
     tool_calls: list[ToolCall] = field(default_factory=list)
     provider: str = ""
     model: str = ""
+    functions_state_id: str | None = None  # непрозрачное состояние функции GigaChat
 
 
 @dataclass

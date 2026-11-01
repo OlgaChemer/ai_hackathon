@@ -278,7 +278,7 @@ async def nearby(listings: list[dict], kinds: list[str], budget_s: float | None 
     async def fill():
         if settings.twogis_api_key:
             try:
-                await asyncio.wait_for(places.enrich(todo, kinds, RADIUS), timeout=min(6, budget * .6))
+                await asyncio.wait_for(places.enrich(todo, kinds, RADIUS), timeout=min(8, budget * .7))
             except asyncio.TimeoutError:
                 pass
         missing = [x for x in todo if any(k not in (x.get("nearby") or {}) for k in kinds)]

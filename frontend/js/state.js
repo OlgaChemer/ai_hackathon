@@ -25,8 +25,10 @@ export function resetState() {
 }
 
 export function addMsg(role, text) {
-  const node = el(html`<div class="msg msg-${role}">${text}</div>`);
+  const node = el(html`<div class="msg msg-${role} ${role}">${role === "agent" || role === "user" ? html.raw(html`<span class="msg-who">${role === "agent" ? "Агент" : "Вы"}</span>`) : ""}${text}</div>`);
   chatLog.append(node);
+  const peek = $("chatPeek");
+  if (peek) peek.textContent = text;
   const thinking = chatLog.querySelector(".msg-thinking"); // «агент думает» — всегда последним
   if (thinking) chatLog.append(thinking);
   chatLog.scrollTop = chatLog.scrollHeight;

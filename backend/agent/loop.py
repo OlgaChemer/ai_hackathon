@@ -59,7 +59,7 @@ def state_brief(s) -> str:
 async def think(s, with_actions: bool):
     messages = [{"role": "system", "content": prompts.AGENT_SYSTEM + "\n" + guard.POLICY},
                 guard.data_message("session_state", state_brief(s)), *guard.output(s.messages, limit=False)]
-    return await s.llm.chat(messages, tools=actions.tools() if with_actions else None, temperature=0.3, max_tokens=900,
+    return await s.llm.chat(messages, tools=actions.tools(s) if with_actions else None, temperature=0.3, max_tokens=900,
                             tag="agent")
 
 
@@ -98,6 +98,8 @@ async def run(s) -> None:
             s.messages.append({"role": "assistant", "content": guard.output(resp.text or "", s), "tool_calls": [
                 {"id": c.id, "type": "function", "function": {"name": c.name, "arguments": json.dumps(guard.output(guard.sanitize(c.arguments), limit=False), ensure_ascii=False)}}
                 for c in calls]})
+            if resp.functions_state_id:
+                s.messages[-1]["functions_state_id"] = resp.functions_state_id
             s.remember()  # до действий: если сервер упадёт, пока карточка ждёт клиента, вызов не потеряется
             if resp.text.strip():
                 await s.say(resp.text.strip())
@@ -116,7 +118,7 @@ async def run(s) -> None:
         text = guard.output(resp.text.strip(), s)
         if text:
             await s.say(text)
-            s.messages.append({"role": "assistant", "content": text})
+            s.messages.append({"role": "assistant", "content": text, **({"functions_state_id": resp.functions_state_id} if resp.functions_state_id else {})})
         s.remember()
         s.messages.append({"role": "user", "content": await s.inbox.get()})
 
