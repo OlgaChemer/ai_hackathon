@@ -15,6 +15,7 @@ from backend import auth, db, ratelimit
 from backend import main as M
 from backend.agent import session as O
 from tests.fakes import ScriptedLLM, call, last_result, say
+from tests.streaming import BoundedStream
 
 QUERY = "Ищу 2-комнатную в Казани до 9 млн"
 
@@ -27,6 +28,7 @@ def start_model() -> ScriptedLLM:
 def read_until(client: TestClient, url: str, stop) -> list[dict]:
     """Читает SSE-ленту, пока stop(событие) не вернёт True."""
     out = []
+    client.app.stop = stop
     with client.stream("GET", url) as r:
         assert r.status_code == 200, r.status_code
         for line in r.iter_lines():
@@ -61,7 +63,7 @@ class ChatsAndAuthTest(unittest.TestCase):
         self.startup.stop()
 
     def client(self) -> TestClient:
-        return TestClient(M.app)
+        return TestClient(BoundedStream(M.app), base_url="https://testserver")
 
     def start_chat(self, c: TestClient) -> tuple[str, list[dict]]:
         sid = c.post("/api/session", json={"query": QUERY}).json()["id"]
