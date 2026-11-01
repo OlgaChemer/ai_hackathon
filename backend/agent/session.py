@@ -19,7 +19,7 @@ from ..db import repo
 from ..llm import LLMClient
 from . import finance as F
 from . import preferences as P
-from . import qa
+from . import guard, qa, validation
 from .numbers import fmt
 
 STEPS = ["Запрос", "Финансы", "Поиск", "Подбор", "Проверка", "Звонок", "Просмотр", "Сделка", "Итог"]
@@ -37,6 +37,7 @@ class Session:
     llm: LLMClient
     visitor_id: str | None = None
     user_id: int | None = None
+    client_revision: int = 0  # только принятые сообщения/решения клиента
     seq: int = 0                      # номер последнего события диалога
     history: list[dict] = field(default_factory=list)  # события этого запуска (если база недоступна)
     subscribers: set[asyncio.Queue] = field(default_factory=set)  # открытые вкладки
@@ -66,10 +67,42 @@ class Session:
     map_warned: bool = False
     stage: str | None = None
 
+    blocked: list[float] = field(default_factory=list)
+    qa_task: asyncio.Task | None = None
+
+    def blocked_recently(self, window: float = 120) -> int:
+        now = time.monotonic()
+        self.blocked = [t for t in self.blocked if now - t < window]
+        return len(self.blocked)
+
+    def refuse(self, value, where: str = "input") -> str | None:
+        verdict = guard.input_verdict(value)
+        if verdict.ok:
+            return None
+        self.blocked_recently()
+        self.blocked.append(time.monotonic())
+        guard.note(self, where, verdict.category, json.dumps(value, ensure_ascii=False))
+        self.push("security", category=verdict.category)
+        self.push("message", role="agent", text=verdict.reply)
+        return verdict.category
+
+    def invalidate_deal(self):
+        """Согласия относятся к прежним условиям и не могут разрешать новую сделку."""
+        self.red_lines_ok = False
+        self.search = None
+        self.calls.clear()
+        self.agreed.clear()
+        self.chosen = self.current = self.mortgage = self.finance = None
+        self.shown = []
+        self.journal.clear()
+
     # ------------------------------------------------------------- лента событий
     def push(self, type_: str, **payload: Any) -> dict:
         """Событие в ленту диалога: номер, база, все открытые вкладки. Синхронно — порядок не путается."""
         self.seq += 1
+        payload = guard.output(payload, self, limit=False)
+        if type_ in ("message", "turn", "confirm") and "text" in payload:
+            payload["text"] = guard.output(payload["text"], self)
         ev = _jsonable({"type": type_, **payload, "seq": self.seq})
         self.history.append(ev)
         db.safe(repo.save_event, self.id, self.seq, type_, ev)
@@ -124,6 +157,15 @@ class Session:
         if not fut or fut.done():
             return False
         data = dict(data or {})
+        try:
+            if approved is not None and type(approved) is not bool:
+                raise ValueError("Нужно явное решение клиента")
+            validation.confirmation(kind, data)
+        except ValueError as exc:
+            raise guard.InputRejected(str(exc)) from exc
+        if self.refuse(data, "confirmation"):
+            raise guard.InputRejected("Ответ отклонён. Карточка остаётся открытой — измените текст.")
+        self.client_revision += 1
         label, said = data.pop("_label", None), data.pop("_said", None)
         if said:
             self.push("message", role="user", text=str(said)[:500])
@@ -135,9 +177,13 @@ class Session:
         """Сообщение клиента. Ждёт карточка — вопрос («что такое СБР?») получает ответ сбоку, а другой текст
         закрывает карточку (агент сам поймёт, что клиент имел в виду). Карточек нет — сообщение агенту."""
         self.push("message", role="user", text=text)
+        if self.refuse(text):
+            return "blocked"
+        self.client_revision += 1
         if self.pending:
             if qa.is_question(text):
-                asyncio.create_task(qa.answer(self, text))
+                if self.qa_task is None or self.qa_task.done():
+                    self.qa_task = asyncio.create_task(qa.answer(self, text))
                 return "question"
             kind = next(iter(self.pending))
             data = {"text": text}
@@ -164,7 +210,7 @@ class Session:
             while cut < len(self.messages) and self.messages[cut]["role"] != "user":
                 cut += 1
             self.messages = self.messages[cut:]
-        db.safe(repo.update_chat, self.id, memory=_jsonable(self.messages),
+        db.safe(repo.update_chat, self.id, memory=_jsonable(guard.output(self.messages, limit=False)),
                 profile=_jsonable({k: v for k, v in self.profile.items() if k != "market"}) or None)
 
 
@@ -174,7 +220,7 @@ SESSIONS: dict[str, Session] = {}
 def create_session(query: str, llm: LLMClient, visitor_id: str | None = None, user_id: int | None = None) -> Session:
     s = Session(id=uuid.uuid4().hex[:12], query=query.strip(), llm=llm, visitor_id=visitor_id, user_id=user_id)
     SESSIONS[s.id] = s
-    db.safe(repo.create_chat, s.id, s.query, visitor_id, user_id)
+    db.safe(repo.create_chat, s.id, guard.output(s.query), visitor_id, user_id)
     return s
 
 

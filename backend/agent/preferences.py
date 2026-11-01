@@ -16,9 +16,11 @@ from .numbers import fmt
 
 @dataclass
 class Prefs:
+    profile: dict = field(default_factory=dict)
     liked: list[str] = field(default_factory=list)
     disliked: list[str] = field(default_factory=list)
     districts_plus: set[str] = field(default_factory=set)
+    explicit_avoids: set[str] = field(default_factory=set)
     districts_minus: set[str] = field(default_factory=set)
     area_min: float | None = None
     kitchen_min: float | None = None
@@ -32,20 +34,30 @@ class Prefs:
 
     def sync(self, profile: dict) -> None:
         """Пожелания из профиля запроса (их задаёт агент) -> правила подборки. Выученное из отметок остаётся."""
+        self.profile = dict(profile)
         self.features = list(profile.get("features") or [])
         self.poi = list(profile.get("poi") or [])
         self.area_min = profile.get("area_min")
         self.kitchen_min = profile.get("kitchen_min")
         self.avoid_first = bool(profile.get("not_first_floor"))
         self.metro_max = profile.get("metro_max_minutes")
-        self.districts_minus |= set(profile.get("avoid_districts") or [])
+        learned = self.districts_minus - self.explicit_avoids
+        self.explicit_avoids = set(profile.get("avoid_districts") or [])
+        self.districts_minus = learned | self.explicit_avoids
 
     def learned(self) -> list[str]:
         out = []
-        if self.features:
-            out.append("важно: " + ", ".join(FEATURES[k][0] for k in self.features))
-        if self.poi:
-            out.append("рядом: " + ", ".join(geo.POI[k][0] for k in self.poi))
+        soft = set(self.profile.get("soft_criteria") or [])
+        required_features = [k for k in self.features if f"feature:{k}" not in soft]
+        preferred_features = [k for k in self.features if f"feature:{k}" in soft]
+        required_poi = [k for k in self.poi if f"poi:{k}" not in soft]
+        preferred_poi = [k for k in self.poi if f"poi:{k}" in soft]
+        if preferred_features or preferred_poi:
+            out.append("желательно: " + ", ".join([FEATURES[k][0] for k in preferred_features] + [geo.POI[k][0] for k in preferred_poi]))
+        if required_features:
+            out.append("важно: " + ", ".join(FEATURES[k][0] for k in required_features))
+        if required_poi:
+            out.append("обязательно рядом: " + ", ".join(geo.POI[k][0] for k in required_poi))
         if self.districts_plus:
             out.append("нравятся районы: " + ", ".join(sorted(self.districts_plus)))
         if self.districts_minus:
@@ -121,9 +133,11 @@ def adjust(x: dict, p: Prefs) -> float:
     if x.get("condition") in p.conditions_plus:
         s += 5
     for key in p.features:
+        if f"feature:{key}" in p.profile.get("soft_criteria", []):
+            continue
         status = feature_status(x, key)
         s += 12 if status else -8 if status is False else 0
-    s += geo.score(x, p.poi)
+    s += geo.score(x, [k for k in p.poi if f"poi:{k}" not in p.profile.get("soft_criteria", [])])
     m = (x.get("metro") or {}).get("minutes")
     if p.metro_max and m is not None and m > p.metro_max:
         s -= 8

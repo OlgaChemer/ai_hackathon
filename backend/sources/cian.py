@@ -337,12 +337,20 @@ async def _get_httpx(url: str) -> tuple[int, str, str]:
 
 
 async def _get_browser_like(url: str) -> tuple[int, str, str]:
-    """Запасной путь: TLS-отпечаток Chrome (curl_cffi). Без него Циан чаще отвечает капчей."""
+    """Браузерные TLS-профили; редиректы по-прежнему проверяет вызывающий код."""
     from curl_cffi.requests import AsyncSession
 
-    async with AsyncSession(impersonate="chrome", timeout=20) as http:
-        r = await http.get(url, allow_redirects=False, headers={"Accept-Language": "ru-RU,ru;q=0.9"})
-    return r.status_code, r.headers.get("location", ""), r.text
+    last = (0, "", "")
+    for fingerprint in ("safari17_0", "chrome"):
+        try:
+            async with AsyncSession(impersonate=fingerprint, timeout=20) as http:
+                r = await http.get(url, allow_redirects=False, headers={"Accept-Language": "ru-RU,ru;q=0.9"})
+            last = (r.status_code, r.headers.get("location", ""), r.text)
+            if r.status_code in (301, 302, 303, 307, 308) or _blocked(*last) is None:
+                return last
+        except Exception as exc:
+            log.info("Циан: профиль %s не сработал (%s)", fingerprint, type(exc).__name__)
+    return last
 
 
 def _blocked(status: int, location: str, text: str) -> str | None:

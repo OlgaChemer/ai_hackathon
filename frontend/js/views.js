@@ -226,6 +226,7 @@ export function search(d) {
   return html`
   <section class="panel">
     <h2 class="panel-title">Поиск и справедливая цена</h2>
+    ${html.raw(d.confirmed !== undefined ? html`<p class="panel-lead">Все обязательные условия подтверждены: ${d.confirmed}. Нужно уточнить данные: ${d.unverified}. Не подошли: ${d.rejected}.</p>` : "")}
     <div class="sources">${html.raw(d.report.map(sourceChip).join(""))}</div>
     ${html.raw(d.store?.total ? html`<p class="store-line">В базе агента по такому запросу — ${d.store.total} ${plural(d.store.total, "квартира", "квартиры", "квартир")}${d.store.mapped ? html`, у ${d.store.mapped} уже проверено по карте, что рядом` : ""}. Признаки считаются один раз и нужны всем, кто ищет похожее.${d.store.crawl ? html` Последний обход Циана ${shortDate(d.store.crawl.finished_at.slice(0, 10))}: +${d.store.crawl.added} новых, ${d.store.crawl.price_changed} изменений цены, ${d.store.crawl.removed} снято.` : ""}</p>` : "")}
     <p class="panel-lead">Под ваши параметры подходят ${d.matched} из ${d.total}. Справедливая цена — медиана цены м² ближайших похожих квартир (по координатам, площадь ±30%) с поправками на ремонт, год дома и этаж, минус 3% на торг. Коридор — разброс цен аналогов. Если объявление правее коридора — есть что сторговать.</p>
@@ -253,7 +254,7 @@ function nearbyChips(nearby = []) {
   if (!nearby.length) return "";
   const dist = (m) => (m < 1000 ? `${Math.round(m / 10) * 10} м` : `${(m / 1000).toFixed(1).replace(".", ",")} км`);
   return html`<p class="features">${html.raw(nearby.map((p) => (p.dist !== null
-    ? html`<span class="feat ${p.dist <= 500 ? "is-yes" : ""}" title="${p.name}"><i class="dot" style="background:${POI_COLORS[p.kind]}"></i>${p.label} · ${dist(p.dist)}</span>`
+    ? html`<span class="feat ${p.dist <= 500 ? "is-yes" : ""}" title="${[p.name, p.source === "2gis" ? "2GIS" : p.source === "osm" ? "OpenStreetMap" : "", "расстояние по прямой или до границы, без проверки пешего маршрута"].filter(Boolean).join(" · ")}"><i class="dot" style="background:${POI_COLORS[p.kind]}"></i>${p.label} · ${dist(p.dist)}</span>`
     : html`<span class="feat is-no">${p.label}: нет в 1 км</span>`)).join(""))}</p>`;
 }
 
@@ -261,7 +262,7 @@ function nearbyChips(nearby = []) {
 function featureChips(features = []) {
   const known = features.filter((f) => f.status !== null && f.status !== undefined);
   if (!known.length) return "";
-  return html`<p class="features">${html.raw(known.map((f) => html`<span class="feat ${f.status ? "is-yes" : "is-no"}">${f.status ? "✓" : "✕"} ${f.label}</span>`).join(""))}</p>`;
+  return html`<p class="features">${html.raw(known.map((f) => html`<span class="feat ${f.status ? "is-yes" : "is-no"}" title="${[f.source === "seller_call" ? "Со слов продавца" : "По объявлению", f.evidence].filter(Boolean).join(": ")}">${f.status ? "✓" : "✕"} ${f.label}</span>`).join(""))}</p>`;
 }
 
 const FIELD_LABELS = { kitchen: ["кухня", " м²"], area: ["площадь", " м²"], floor: ["этаж", ""], floors: ["этажей в доме", ""],
@@ -298,6 +299,9 @@ function offerCard(c, vote, no) {
       <p class="meta">${meta}</p>
       ${html.raw(params ? html`<p class="meta">${params}</p>` : "")}
       ${html.raw(correctedLine(c))}
+      ${html.raw(c.match ? html`<p class="meta ${c.match.status === "confirmed" ? "" : "missing"}">${c.match.status === "confirmed" ? "Обязательные условия подтверждены" : c.match.status === "rejected" ? "Есть несоответствия условиям" : `Нужно проверить: ${c.match.unknown.join(", ")}`}</p>` : "")}
+      ${html.raw(c.match?.checks?.filter((r) => r.source === "cian_description" && r.key.startsWith("poi:")).map((r) => html`<p class="hint">В описании упомянуто: ${r.label}. Расстояние по карте не подтверждено.</p>`).join("") || "")}
+
       ${html.raw(featureChips(c.features))}
       ${html.raw(nearbyChips(c.nearby))}
       ${html.raw(c.unchecked?.length ? html`<p class="missing">Не проверено по карте: ${c.unchecked.join(", ")}</p>` : "")}

@@ -7,8 +7,8 @@ from typing import Any
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session
 
-from .models import (Chat, ChatEvent, CrawlRun, Listing, ListingFeature, ListingPrice, TrackedSearch, Visitor,
-                     utcnow)
+from .models import (Chat, ChatEvent, CrawlRun, Listing, ListingFeature, ListingPrice, SecurityEvent, TrackedSearch,
+                     Visitor, utcnow)
 
 # ================================================================ посетители и диалоги
 
@@ -250,3 +250,18 @@ def mark_crawled(db: Session, search_id: int) -> None:
     t = db.get(TrackedSearch, search_id)
     if t is not None:
         t.last_crawled_at = utcnow()
+
+
+# ================================================================ безопасность
+
+
+def log_security(db: Session, chat_id: str | None, visitor_id: str | None, user_id: int | None, where: str,
+                 category: str, sample: str) -> None:
+    db.add(SecurityEvent(chat_id=chat_id, visitor_id=visitor_id, user_id=user_id, where=where, category=category,
+                         sample=sample))
+
+
+def security_events(db: Session, limit: int = 100) -> list[dict]:
+    rows = db.scalars(select(SecurityEvent).order_by(SecurityEvent.id.desc()).limit(limit))
+    return [{"at": r.created_at.isoformat(timespec="seconds"), "chat": r.chat_id, "where": r.where, "category": r.category,
+             "sample": r.sample} for r in rows]

@@ -21,6 +21,11 @@ def flat(id_="cian-1", price=9_000_000, **kw) -> dict:
 
 class StoreTest(unittest.TestCase):
     def setUp(self):
+        from dataclasses import replace
+        from backend.config import settings
+        no_catalog = patch.object(geo, "settings", replace(settings, twogis_api_key=""))
+        no_catalog.start()
+        self.addCleanup(no_catalog.stop)
         db.configure("sqlite://")
         geo._live_cache.clear()
 

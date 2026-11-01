@@ -21,6 +21,13 @@ EMPTY_PROFILE = {
     "districts": [],          # районы, которые клиент назвал (ищем в них)
     "avoid_districts": [],    # районы, которые не показывать
     "not_first_floor": False,
+    "not_last_floor": False,
+    "condition": None,        # ready | cosmetic | repair | any
+    "material": [],
+    "year_min": None,
+    "timeline": None,         # month | quarter | exploring
+    "soft_criteria": [],      # ключи условий, которые клиент назвал желательными, не обязательными
+
     "kitchen_min": None,
     "area_min": None,
     "metro_max_minutes": None,
@@ -50,17 +57,19 @@ def okrug_from_text(text: str | None) -> str | None:
 def merge_profile(raw: dict, base: dict | None = None) -> dict:
     """Изменения запроса поверх известного профиля: пустые поля не затирают сказанное раньше,
     списки (features, poi, districts, wishes) заменяются целиком — так агент может и добавить, и снять условие."""
-    p = dict(base or EMPTY_PROFILE)
+    p = {**EMPTY_PROFILE, **(base or {})}
     for key in EMPTY_PROFILE:
-        v = raw.get(key)
-        # «детей нет», студия, «маткапитала нет» — содержательные ответы, а не пустые поля
-        meaningful = (key in ("children", "youngest_age", "rooms") and v == 0 and v is not False) or (key == "matcap" and v is False)
-        if v in (None, "", [], False) and not meaningful:  # «нет» в уточнении не отменяет сказанное раньше
+        if key not in raw:
+            continue
+        v = raw[key]
+        if v is None or v == "":
+            if key in ("area_min", "kitchen_min", "metro_max_minutes", "year_min", "condition", "timeline"):
+                p[key] = None
             continue
         p[key] = v
     p["city"] = normalize_city(p["city"]) or p["city"]
     for key, cast in (("rooms", int), ("budget_max", int), ("kitchen_min", float), ("area_min", float), ("metro_max_minutes", int),
-                      ("children", int), ("youngest_age", int)):
+                      ("children", int), ("youngest_age", int), ("year_min", int)):
         try:
             p[key] = cast(p[key]) if p[key] is not None else None
         except (TypeError, ValueError):
@@ -79,6 +88,13 @@ def merge_profile(raw: dict, base: dict | None = None) -> dict:
         p["housing"] = None
     p["features"] = merge_features([k for k in p.get("features") or [] if k in FEATURES])
     p["poi"] = list(dict.fromkeys(k for k in p.get("poi") or [] if k in geo.POI))
+    if p.get("condition") not in (None, "ready", "cosmetic", "repair", "any"):
+        p["condition"] = None
+    if p.get("timeline") not in (None, "month", "quarter", "exploring"):
+        p["timeline"] = None
+    p["material"] = [m for m in p.get("material") or [] if m in ("кирпич", "монолит", "панель", "блочный", "дерево")]
+    from .criteria import CRITERIA_KEYS
+    p["soft_criteria"] = [k for k in p.get("soft_criteria") or [] if k in CRITERIA_KEYS]
     p["wishes"] = [str(w) for w in (p.get("wishes") or [])][:6]
     return p
 
@@ -104,12 +120,24 @@ def profile_summary(p: dict) -> str:
         extra.append("рядом: " + ", ".join(near))
     if p.get("not_first_floor"):
         extra.append("не на первом этаже")
+    if p.get("not_last_floor"):
+        extra.append("не на последнем этаже")
+    if p.get("condition") not in (None, "any"):
+        extra.append({"ready": "заехать сразу", "cosmetic": "косметический ремонт", "repair": "под ремонт"}[p["condition"]])
+    if p.get("material"):
+        extra.append("дом: " + ", ".join(p["material"]))
+    if p.get("year_min"):
+        extra.append(f"дом от {p['year_min']} года")
     if p.get("kitchen_min"):
         extra.append(f"кухня от {p['kitchen_min']:g} м²")
     if p.get("area_min"):
         extra.append(f"площадь от {p['area_min']:g} м²")
     if p.get("metro_max_minutes"):
         extra.append(f"до метро до {p['metro_max_minutes']} мин")
+    if p.get("soft_criteria"):
+        from .criteria import SCALARS
+        labels = {**SCALARS, **{f"feature:{k}": v[0] for k, v in FEATURES.items()}, **{f"poi:{k}": v[0] for k, v in geo.POI.items()}}
+        extra.append("желательно, не обязательно: " + ", ".join(labels[k] for k in p["soft_criteria"]))
     tail = (", " + ", ".join(extra)) if extra else ""
     market = {"new": " в новостройке", "both": " в новостройке или на вторичке", "secondary": " на вторичном рынке"}.get(p.get("housing"), "")
     return f"Ищу {rooms}{market} в {where} до {fmt(p['budget_max'])}{tail}."
@@ -126,10 +154,12 @@ def in_districts(x: dict, districts: list[str] | None) -> bool:
 
 
 def passes_hard_filters(x: dict, p: dict) -> bool:
+    if p.get("city") and x.get("city") != p["city"]:
+        return False
     if p.get("rooms") is not None and x["rooms"] != p["rooms"]:
         return False
     if x["price"] > p["budget_max"] * 1.05:  # чуть дороже бюджета оставляем: можно сторговать
         return False
-    if p.get("not_first_floor") and x.get("floor") == 1:
+    if p.get("not_first_floor") and "not_first_floor" not in p.get("soft_criteria", []) and x.get("floor") == 1:
         return False
     return True

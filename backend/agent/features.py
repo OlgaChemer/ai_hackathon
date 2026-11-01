@@ -10,6 +10,8 @@ import re
 # ключ: (как назвать, что искать в пожелании и описании, вопрос продавцу)
 FEATURES = {
     "balcony": ("балкон или лоджия", r"балкон|лоджи", "есть ли балкон или лоджия"),
+    "loggia": ("лоджия", r"лоджи", "есть ли лоджия"),
+    "balcony_only": ("балкон", r"балкон", "есть ли именно балкон"),
     "balcony_loggia": ("и балкон, и лоджия", r"балкон|лоджи", "есть ли и балкон, и лоджия"),
     "wardrobe": ("гардеробная", r"гардеробн", "есть ли гардеробная"),
     "storage": ("кладовая", r"кладов", "есть ли кладовая"),
@@ -19,7 +21,7 @@ FEATURES = {
 }
 
 
-FEATURE_WITH = {"balcony": "балконом или лоджией", "balcony_loggia": "балконом и лоджией", "wardrobe": "гардеробной", "storage": "кладовой",
+FEATURE_WITH = {"balcony": "балконом или лоджией", "balcony_loggia": "балконом и лоджией", "loggia": "лоджией", "balcony_only": "балконом", "wardrobe": "гардеробной", "storage": "кладовой",
                 "parking": "парковкой", "separate_wc": "раздельным санузлом", "furniture": "мебелью"}
 
 
@@ -29,40 +31,50 @@ def merge_features(*lists: list[str]) -> list[str]:
     return [k for k in out if not (k == "balcony" and "balcony_loggia" in out)]
 
 
-def _outdoor_both(x: dict) -> bool | None:
-    """Есть ли и балкон, и лоджия: по счётчикам площадки, иначе по описанию."""
+def text_evidence(text: str, pattern: str) -> tuple[bool | None, str | None]:
+    """Короткая цитата и три состояния. Противоречивое описание требует уточнения."""
+    findings = []
+    for clause in re.split(r"[.!?;,\n]", (text or "").lower().replace("ё", "е")):
+        if not re.search(pattern, clause):
+            continue
+        neg = re.search(rf"\b(?:без|нет|отсутствует|отсутствуют)\s+(?:\w+\s+){{0,2}}(?:{pattern})", clause)
+        neg = neg or re.search(rf"(?:{pattern})\w*\s+(?:нет|отсутствует|отсутствуют|не предусмотрен)", clause)
+        findings.append((not bool(neg), clause.strip()[:180]))
+    if not findings:
+        return None, None
+    if len({v for v, _ in findings}) != 1:
+        return None, " / ".join(q for _, q in findings)[:180]
+    return findings[0]
+
+
+def feature_evidence(x: dict, key: str) -> dict:
+    value = (x.get("confirmed") or {}).get(key)
+    if value is not None:
+        return {"status": bool(value), "source": "seller_call", "evidence": "уточнено продавцом"}
     total, loggias = x.get("balconies"), x.get("loggias")
-    if total is not None and loggias is not None and loggias > 0 and total - loggias > 0:
-        return True
-    text = (x.get("description") or "").lower()
-    has = [re.search(p, text) and not re.search(rf"\bбез\s+(?:\w+\s+)?{p}", text) for p in ("балкон", "лоджи")]
-    if all(has):
-        return True
-    if total is not None and loggias is not None:
-        return False  # площадка указала количество — одного из двух нет
-    return False if total == 0 else None
+    if key == "balcony_loggia":
+        parts = [feature_evidence(x, k) for k in ("balcony_only", "loggia")]
+        states = [p['status'] for p in parts]
+        result = False if False in states else True if all(v is True for v in states) else None
+        return {"status": result, "source": "cian", "evidence": "; ".join(str(p['evidence']) for p in parts)}
+    if key == "balcony" and total is not None:
+        value = total > 0
+    elif key == "loggia" and loggias is not None:
+        value = loggias > 0
+    elif key == "balcony_only" and total is not None and loggias is not None:
+        value = total - loggias > 0
+    elif key == "balcony_only" and total == 0:
+        value = False
+    elif key == "separate_wc" and x.get("separate_wc") is not None:
+        value = bool(x["separate_wc"])
+    if value is not None:
+        return {"status": value, "source": "cian", "evidence": "поле объявления"}
+    value, quote = text_evidence(x.get("description") or "", FEATURES[key][1])
+    return {"status": value, "source": "cian_description" if quote else None, "evidence": quote}
 
 
 def feature_status(x: dict, key: str) -> bool | None:
-    """True — есть по данным объявления, False — точно нет, None — не указано (уточним у продавца).
-    Сказанное продавцом в звонке (x["confirmed"]) важнее объявления."""
-    if (x.get("confirmed") or {}).get(key) is not None:
-        return bool(x["confirmed"][key])
-    if key == "balcony_loggia":
-        return _outdoor_both(x)
-    if key == "balcony" and x.get("balconies"):
-        return True
-    if key == "separate_wc" and x.get("separate_wc"):
-        return True
-    text = (x.get("description") or "").lower()
-    pattern = FEATURES[key][1]
-    if re.search(rf"\bбез\s+(?:\w+\s+)?(?:{pattern})", text):
-        return False
-    if re.search(pattern, text):
-        return True
-    if key == "balcony" and x.get("balconies") == 0:
-        return False
-    return None
+    return feature_evidence(x, key)["status"]
 
 
 MISSING_QUESTIONS = {

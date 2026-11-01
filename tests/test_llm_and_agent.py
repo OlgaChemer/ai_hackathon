@@ -277,6 +277,13 @@ class EconomicsTest(unittest.TestCase):
 
 
 class WishesAndMapTest(unittest.TestCase):
+    def setUp(self):
+        from dataclasses import replace
+        from backend.config import settings
+        no_catalog = patch.object(geo, "settings", replace(settings, twogis_api_key=""))
+        no_catalog.start()
+        self.addCleanup(no_catalog.stop)
+
     def test_features_from_description(self):
         x = listing(description="Есть гардеробная, лоджия застеклена")
         self.assertTrue(FT.feature_status(x, "wardrobe"))
@@ -328,7 +335,7 @@ class WishesAndMapTest(unittest.TestCase):
         no_school = listing(description="Есть гардеробная", nearby={"school": None})
         unknown = listing(description="Хорошая квартира", nearby={"school": {"name": "Школа", "dist": 300}})
         self.assertEqual([fits(x, prefs) for x in (good, no_school, unknown)], [True, False, False])
-        self.assertTrue(fits(no_school, prefs, map_ok=False))  # карта не ответила — школу не проверяем
+        self.assertFalse(fits(no_school, prefs, map_ok=False))  # общая ошибка карты не отменяет уже известное отсутствие школы
 
     def test_seller_reply_with_price_skips_llm(self):
         x = listing()

@@ -1,6 +1,7 @@
 """Схема базы.
 
 Люди и диалоги   users, visitors, auth_sessions, chats, chat_events
+Безопасность     security_events (попытки инъекций и утечек — agent/guard.py)
 Квартиры         listings, listing_prices, listing_features
 Обход площадки   tracked_searches (что клиенты искали), crawl_runs (журнал ночных обходов)
 
@@ -171,3 +172,20 @@ class CrawlRun(Base):
     price_changed: Mapped[int] = mapped_column(Integer, default=0)
     removed: Mapped[int] = mapped_column(Integer, default=0)
     errors: Mapped[list | None] = mapped_column(JSON)
+
+
+# ================================================================ безопасность
+
+
+class SecurityEvent(Base):
+    """Попытка промпт-инъекции, утечки или злоупотребления (agent/guard.py): что, где, кто. Исходный текст не хранится: sample содержит только SHA-256 и длину."""
+    __tablename__ = "security_events"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    chat_id: Mapped[str | None] = mapped_column(String(32), index=True)
+    visitor_id: Mapped[str | None] = mapped_column(String(36), index=True)
+    user_id: Mapped[int | None] = mapped_column(Integer, index=True)
+    where: Mapped[str] = mapped_column(String(20))      # input | seller | output | data
+    category: Mapped[str] = mapped_column(String(20))   # exfiltration | override | persona | flood | code | offtopic | prompt_leak …
+    sample: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)

@@ -14,7 +14,7 @@ import uuid
 
 from .. import geo
 from ..llm import LLMError
-from . import actions, prompts
+from . import actions, guard, prompts
 from .features import FEATURES
 from .numbers import fmt
 from .profile import missing_required
@@ -57,7 +57,8 @@ def state_brief(s) -> str:
 
 
 async def think(s, with_actions: bool):
-    messages = [{"role": "system", "content": prompts.AGENT_SYSTEM.replace("{state}", state_brief(s))}, *s.messages]
+    messages = [{"role": "system", "content": prompts.AGENT_SYSTEM + "\n" + guard.POLICY},
+                guard.data_message("session_state", state_brief(s)), *guard.output(s.messages, limit=False)]
     return await s.llm.chat(messages, tools=actions.tools() if with_actions else None, temperature=0.3, max_tokens=900,
                             tag="agent")
 
@@ -67,40 +68,52 @@ async def run(s) -> None:
     s.push("provider", provider=s.llm.name, model=s.llm.model, degraded=False)
     if s.query:
         s.push("message", role="user", text=s.query)
-        s.messages.append({"role": "user", "content": s.query})
+        if s.refuse(s.query):
+            s.messages.append({"role": "user", "content": await s.inbox.get()})
+        else:
+            s.messages.append({"role": "user", "content": s.query})
     in_row = 0
     while True:
         s.signal("typing", on=True)
         try:
             resp = await think(s, with_actions=in_row < MAX_ACTIONS_IN_ROW)
         except LLMError as exc:
-            log.warning("модель не ответила: %s", exc)
+            log.warning("модель не ответила: %s", type(exc).__name__)
             s.signal("typing", on=False)
-            s.push("provider", provider=s.llm.name, model=s.llm.model, degraded=True, reason=str(exc)[:160])
+            s.push("provider", provider=s.llm.name, model=s.llm.model, degraded=True, reason="Модель временно недоступна")
             await s.say(f"Модель {s.llm.name} сейчас не отвечает — продолжить не могу. Напишите, когда попробовать снова: "
                         "продолжу с того же места.")
             s.remember()
             s.messages.append({"role": "user", "content": await s.inbox.get()})
             continue
         if resp.tool_calls:
-            in_row += 1
+            if len(resp.tool_calls) > MAX_ACTIONS_IN_ROW - in_row:
+                await s.say("Достигнут лимит действий за один ход. Напишите, чтобы продолжить.")
+                s.signal("typing", on=False)
+                s.messages.append({"role": "user", "content": await s.inbox.get()})
+                in_row = 0
+                continue
+            in_row += len(resp.tool_calls)
             calls = [c if c.id else dataclasses.replace(c, id=f"call_{uuid.uuid4().hex[:8]}") for c in resp.tool_calls]
-            s.messages.append({"role": "assistant", "content": resp.text or "", "tool_calls": [
-                {"id": c.id, "type": "function", "function": {"name": c.name, "arguments": json.dumps(c.arguments, ensure_ascii=False)}}
+            s.messages.append({"role": "assistant", "content": guard.output(resp.text or "", s), "tool_calls": [
+                {"id": c.id, "type": "function", "function": {"name": c.name, "arguments": json.dumps(guard.output(guard.sanitize(c.arguments), limit=False), ensure_ascii=False)}}
                 for c in calls]})
             s.remember()  # до действий: если сервер упадёт, пока карточка ждёт клиента, вызов не потеряется
             if resp.text.strip():
                 await s.say(resp.text.strip())
             s.signal("typing", on=False)
             for call in calls:
-                log.info("агент %s: %s(%s)", s.id, call.name, json.dumps(call.arguments, ensure_ascii=False)[:200])
+                log.info("агент %s: вызов действия", s.id)
+                revision = s.client_revision
                 result = await actions.execute(s, call)
-                s.messages.append({"role": "tool", "tool_call_id": call.id, "content": json.dumps(result, ensure_ascii=False, default=str)})
+                if s.client_revision != revision:  # карточку подтвердил человек: начался новый ход клиента
+                    in_row = 0
+                s.messages.append({"role": "tool", "tool_call_id": call.id, "content": json.dumps(guard.output(guard.sanitize(result), limit=False), ensure_ascii=False, default=str)})
             s.remember()
             continue
         in_row = 0
         s.signal("typing", on=False)
-        text = resp.text.strip()
+        text = guard.output(resp.text.strip(), s)
         if text:
             await s.say(text)
             s.messages.append({"role": "assistant", "content": text})
@@ -114,5 +127,5 @@ async def run_session(s) -> None:
     except asyncio.CancelledError:
         raise
     except Exception as exc:  # показать ошибку в интерфейсе, а не молча упасть
-        log.exception("агент упал")
-        s.push("error", text=f"Ошибка агента: {exc}")
+        log.error("агент упал (%s)", type(exc).__name__)
+        s.push("error", text="Ошибка агента. Попробуйте продолжить диалог.")

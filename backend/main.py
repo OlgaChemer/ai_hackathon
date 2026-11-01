@@ -7,28 +7,62 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import time
 from dataclasses import fields
 
 import httpx
 
 from fastapi import FastAPI, HTTPException, Request, Response
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictBool
 
 from . import auth, db, economics, sources
+from .sources import places
 from .agent import session as O
 from .agent.loop import run_session
 from .config import ROOT, settings
 from .db import repo
 from .llm import LLMError, get_llm
-from . import phone, stt
+from . import phone, ratelimit, stt
+from .agent import guard
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 app = FastAPI(title="Агент жизненных событий — Домклик")
 app.middleware("http")(auth.visitor_middleware)
+
+SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    "Permissions-Policy": "microphone=(self), camera=(), geolocation=()",
+    "Cross-Origin-Opener-Policy": "same-origin",
+}
+
+
+@app.middleware("http")
+async def _limits_and_headers(request: Request, call_next):
+    uid = auth.whoami(request)[1] if request.cookies.get(auth.SESSION_COOKIE) else None
+    wait = ratelimit.check(request.method, request.url.path,
+                           request.client.host if request.client else "unknown", uid)
+    if wait is not None:
+        response = JSONResponse({"detail": "Слишком много запросов. Попробуйте немного позже."}, status_code=429,
+                                headers={"Retry-After": str(math.ceil(wait))})
+    else:
+        response = await call_next(request)
+    for key, value in SECURITY_HEADERS.items():
+        response.headers.setdefault(key, value)
+    if not request.url.path.startswith("/api/"):
+        response.headers.setdefault("Cache-Control", "no-cache")
+    return response
+
+
+def _cooldown(s):
+    if s is not None and s.blocked_recently() >= 5:
+        raise HTTPException(429, "Слишком много отклонённых сообщений. Сделаем паузу на пару минут.",
+                            headers={"Retry-After": "120"})
 
 
 @app.on_event("startup")
@@ -53,8 +87,8 @@ class StartRequest(BaseModel):
 
 
 class ConfirmRequest(BaseModel):
-    kind: str
-    approved: bool = True
+    kind: str = Field(max_length=40)
+    approved: StrictBool = False
     data: dict = {}
 
 
@@ -98,6 +132,7 @@ async def health():
         "cities": sources.SUPPORTED_CITIES,
         "featured_cities": sources.FEATURED_CITIES,
         "stt": stt.status(),
+        "places": places.status(),
         "phone": phone.status(),
     }
 
@@ -222,7 +257,7 @@ def _can_open(sid: str, request: Request) -> bool:
 
 
 def _sse(ev: dict) -> str:
-    return f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
+    return f"data: {json.dumps(guard.output(ev, limit=False), ensure_ascii=False)}\n\n"
 
 
 @app.get("/api/chats")
@@ -293,6 +328,7 @@ async def chat_message(sid: str, req: ClientMessage, request: Request):
     if not _can_open(sid, request):
         raise HTTPException(404, "Диалог не найден")
     live = O.SESSIONS.get(sid)
+    _cooldown(live)
     if live is not None and (live.task is None or O.running(live)):  # агент ещё не запущен или работает
         kind = await live.receive_text(req.text.strip(), {"liked": req.liked, "disliked": req.disliked})
         return {"ok": True, "handled_as": kind, "continued": False}
@@ -302,14 +338,25 @@ async def chat_message(sid: str, req: ClientMessage, request: Request):
 
 @app.post("/api/session/{sid}/confirm")
 async def confirm(sid: str, req: ConfirmRequest, request: Request):
-    if not _session(sid, request).resolve(req.kind, req.approved, req.data):
-        raise HTTPException(409, f"Нет ожидающего подтверждения «{req.kind}»")
+    s = _session(sid, request)
+    _cooldown(s)
+    try:
+        resolved = s.resolve(req.kind, req.approved, req.data)
+    except guard.InputRejected as exc:
+        raise HTTPException(422, str(exc)) from exc
+    if not resolved:
+        raise HTTPException(409, "Нет ожидающего подтверждения")
     return {"ok": True}
 
 
 @app.post("/api/session/{sid}/seller")
 async def seller(sid: str, req: SellerReply, request: Request):
-    await _session(sid, request).seller_queue.put(req.text.strip())
+    s = _session(sid, request)
+    _cooldown(s)
+    category = s.refuse(req.text, where="seller")
+    if category:
+        return {"ok": True, "blocked": category}
+    await s.seller_queue.put(req.text.strip())
     return {"ok": True}
 
 

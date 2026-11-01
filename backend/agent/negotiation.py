@@ -5,7 +5,7 @@
 - ИИ-продавец не опускается ниже своей скрытой минимальной цены;
 - итоговая цена — только «согласована предварительно», финал подтверждает клиент.
 
-Если LLM недоступен или ответил мусором, ход делает сценарная стратегия.
+Если LLM недоступен или ответил мусором, после повторной попытки звонок завершается с ошибкой.
 Продавцом может быть ИИ (mode="auto") или человек: в браузере (mode="human")
 или на настоящем телефоне через МТС Exolve (mode="phone").
 """
@@ -19,7 +19,7 @@ from datetime import date
 from typing import AsyncIterator, Awaitable, Callable
 
 from ..llm import LLMClient, LLMError
-from . import prompts
+from . import guard, prompts
 from .features import FEATURES, feature_status
 from .numbers import fmt, parse_money, parse_price_near
 from .pricing import bargaining_arguments
@@ -95,9 +95,8 @@ class Negotiation:
 
 async def llm_buyer(llm: LLMClient, n: Negotiation, round_no: int, phase: str) -> dict:
     system = prompts.BUYER_SYSTEM.format(
-        client=n.client_name, authority=n.authority, target=n.target, listing=n.listing_title(),
+        authority=n.authority, target=n.target,
         price=n.listing["price"], fair=n.fair["fair"], low=n.fair["low"], high=n.fair["high"],
-        arguments="\n".join(f"- {x}" for x in n.args),
     )
     stage = prompts.CALL_PHASES[phase].format(questions=n.question_text(), slots=" или ".join(n.slots))
     user = (
@@ -105,7 +104,9 @@ async def llm_buyer(llm: LLMClient, n: Negotiation, round_no: int, phase: str) -
         f"{'Продавец назвал последнее слово. ' if n.seller_final else ''}"
         f"Разговор:\n{n.transcript()}\n\nТвоя следующая реплика (JSON):"
     )
-    data = await llm.chat_json([{"role": "system", "content": system}, {"role": "user", "content": user}],
+    data = await llm.chat_json([{"role": "system", "content": system + "\n" + guard.POLICY},
+                                guard.data_message("negotiation", {"listing": n.listing_title(), "arguments": n.args,
+                                                                  "conversation": user})],
                                temperature=0.6, tag="buyer_turn")
     return {"utterance": str(data.get("utterance") or "").strip(), "offer": _int_or_none(data.get("offer")),
             "accept": bool(data.get("accept"))}
@@ -114,13 +115,13 @@ async def llm_buyer(llm: LLMClient, n: Negotiation, round_no: int, phase: str) -
 async def llm_seller(llm: LLMClient, n: Negotiation, phase: str) -> dict:
     s = n.seller
     system = prompts.SELLER_SYSTEM.format(
-        name=s["name"], role=s["role"], motivation=s["motivation"], style=s["style"], listing=n.listing_title(),
-        price=n.listing["price"], facts="; ".join(s["facts"].values()), availability=s["availability"],
-        min_price=s["min_price"],
+        price=n.listing["price"], min_price=s["min_price"],
     )
     user = (f"Твоя текущая цена: {n.asking} ₽. Последнее предложение покупателя: {n.offer or 'не было'}.\n"
             f"Разговор:\n{n.transcript()}\n\nТвоя реплика (JSON):")
-    data = await llm.chat_json([{"role": "system", "content": system}, {"role": "user", "content": user}],
+    data = await llm.chat_json([{"role": "system", "content": system + "\n" + guard.POLICY},
+                                guard.data_message("seller_simulation", {"listing": n.listing_title(), "persona": s,
+                                                                        "conversation": user})],
                                temperature=0.7, tag="seller_turn")
     return {"utterance": str(data.get("utterance") or "").strip(), "ask": _int_or_none(data.get("ask")),
             "accept": bool(data.get("accept"))}
@@ -142,14 +143,14 @@ async def parse_human_seller(llm: LLMClient, n: Negotiation, text: str) -> dict:
         return {"utterance": text, "ask": None, "accept": True}
     try:
         data = await llm.chat_json(
-            [{"role": "system", "content": prompts.PARSE_SELLER.replace("{offer}", str(n.offer)).replace("{ask}", str(n.asking))},
-             {"role": "user", "content": text}],
+            [{"role": "system", "content": prompts.PARSE_SELLER.replace("{offer}", str(n.offer)).replace("{ask}", str(n.asking)) + "\n" + guard.POLICY},
+             guard.data_message("seller_utterance", text)],
             temperature=0.0, tag="parse_seller",
         )
         ask = normalize_price(data.get("ask"))
         accept = bool(data.get("accept"))
     except LLM_FAIL as exc:
-        raise CallError(f"модель не разобрала ответ продавца ({exc})") from exc
+        raise CallError("модель не разобрала ответ продавца") from exc
     if ask is not None and n.offer is not None and ask > n.offer:
         accept = False  # встречная цена, а не согласие
     return {"utterance": text, "ask": ask, "accept": accept}
@@ -201,14 +202,17 @@ def clean_corrections(raw: dict | None, x: dict) -> dict:
 async def extract_learned(llm: LLMClient, n: Negotiation) -> dict:
     """Что агент узнал за звонок, на какое время договорились и какие параметры продавец уточнил."""
     try:
-        system = (prompts.EXTRACT_CALL.replace("{labels}", ", ".join(f"«{q['label']}»" for q in n.questions))
-                  .replace("{listing}", _listing_brief(n.listing)))
-        data = await llm.chat_json([{"role": "system", "content": system}, {"role": "user", "content": n.transcript()}],
+        system = prompts.EXTRACT_CALL + "\n" + guard.POLICY
+        data = await llm.chat_json([{"role": "system", "content": system},
+                                    guard.data_message("call_transcript", {"labels": [q["label"] for q in n.questions],
+                                                                         "listing": _listing_brief(n.listing), "transcript": n.transcript()})],
                                    temperature=0.0, tag="extract_call")
     except LLM_FAIL as exc:  # итог звонка не разобран — расшифровка остаётся на экране, факты не выдумываем
-        log.warning("итог звонка не разобран: %s", exc)
+        log.warning("итог звонка не разобран: %s", type(exc).__name__)
         return {"facts": {}, "viewing": n.viewing, "corrections": {}}
-    facts = {str(k): str(v) for k, v in (data.get("facts") or {}).items() if v}
+    raw = data.get("facts")
+    labels = {q["label"] for q in n.questions}
+    facts = {k: guard.output(v) for k, v in raw.items() if k in labels and isinstance(v, str) and v} if isinstance(raw, dict) else {}
     corrections = clean_corrections(data.get("corrections") if isinstance(data.get("corrections"), dict) else None, n.listing)
     return {"facts": facts, "viewing": n.viewing or data.get("viewing"), "corrections": corrections}
 
@@ -309,7 +313,7 @@ async def _model(step, what: str):
         try:
             return await step()
         except LLM_FAIL as exc:
-            log.warning("%s: %s", what, exc)
+            log.warning("%s: %s", what, type(exc).__name__)
             if attempt:
                 raise CallError(f"модель не ответила ({what})") from exc
 
@@ -326,6 +330,7 @@ async def run(llm: LLMClient, n: Negotiation, human_input: SellerInput | None = 
             move = await llm_buyer(llm, n, round_no, phase)
             return move, guard_buyer(n, move, phase, first=not n.history)
         move, notes = await _model(step, "реплика ассистента")
+        move["utterance"] = guard.output(move["utterance"])
         if move["offer"] is not None:
             n.offer = move["offer"]
         n.history.append({"speaker": "agent", "text": move["utterance"], "offer": move["offer"]})
@@ -404,7 +409,7 @@ async def run(llm: LLMClient, n: Negotiation, human_input: SellerInput | None = 
                 yield {"type": "turn", "speaker": "agent", "text": text, "offer": n.asking, "phase": "bargain"}
                 break
             if n.offer == n.authority and n.asking == prev_ask and round_no >= 2:
-                text = (f"Понимаю. {fmt(n.authority)} — максимум, который клиент разрешил мне без согласования. "
+                text = (f"Понимаю. Моё предложение — {fmt(n.offer)}. "
                         f"Передам клиенту ваше предложение {fmt(n.asking)}.")
                 n.history.append({"speaker": "agent", "text": text, "offer": n.offer})
                 yield {"type": "turn", "speaker": "agent", "text": text, "offer": n.offer, "phase": "bargain"}

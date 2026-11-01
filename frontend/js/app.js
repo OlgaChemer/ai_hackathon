@@ -259,7 +259,17 @@ async function pump() {
 
 async function submitSeller(text) {
   setTyping(state.call, "agent");
-  try { await api.seller(state.sid, text); } catch (e) { addMsg("error", `Ответ продавца не отправлен: ${e.message}`); }
+  try {
+    const r = await api.seller(state.sid, text);
+    if (r?.blocked) { // реплику отклонил фильтр (попытка управлять агентом) — агент ждёт ответ продавца дальше
+      setTyping(state.call, null);
+      showSellerInput(state.call, submitSeller);
+    }
+  } catch (e) {
+    addMsg("error", `Ответ продавца не отправлен: ${e.message}`);
+    setTyping(state.call, null);
+    showSellerInput(state.call, submitSeller);
+  }
 }
 
 /** Агент остановился (ошибка): лента закрыта, сообщение поднимет его снова. */
@@ -389,6 +399,9 @@ async function sendText(text) {
       openStream(state.sid, state.lastSeq);
       return;
     }
+    // вопрос агенту («что такое СБР?») или отклонённое фильтром сообщение карточку не закрывают:
+    // подборка и подтверждение ждут дальше, их кнопки должны работать
+    if (r.handled_as === "question" || r.handled_as === "blocked") return;
     if (state.awaiting === "clarify") {
       chatLog.querySelectorAll(".confirm-clarify:not(.is-done)").forEach((c) => c.classList.add("is-done"));
     }

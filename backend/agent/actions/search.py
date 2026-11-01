@@ -2,16 +2,20 @@
 пожелания (только подтверждённые), честная проверка «а дороже есть?», подборка с отметками клиента."""
 from __future__ import annotations
 
+import time
+
 from ... import geo, sources
+from ...config import settings
+from .. import criteria as C
 from .. import mortgage as M
 from .. import preferences as P
-from ..features import FEATURE_WITH, FEATURES, feature_status, missing_info
+from ..features import FEATURE_WITH, FEATURES, feature_evidence, missing_info
 from ..numbers import fmt
 from ..pricing import fair_price, score_listing
 from ..profile import in_districts, passes_hard_filters, rooms_text
 from . import ActionError, action
 
-BATCH = 6       # квартир в подборке
+BATCH = 10       # квартир в подборке
 MAX_PAGES = 3   # страниц выдачи Циана на один поиск
 
 
@@ -30,9 +34,16 @@ def wishes_text(prefs: P.Prefs) -> str:
 
 def fits(x: dict, prefs: P.Prefs, map_ok: bool = True) -> bool:
     """Квартира выполняет все пожелания: удобства подтверждены (объявление или продавец), нужное — в 1 км по карте."""
-    if any(feature_status(x, k) is not True for k in prefs.features):
-        return False
-    return not map_ok or geo.has_all(x, prefs.poi)
+    profile = {**prefs.profile, "features": prefs.features, "poi": prefs.poi}
+    return C.evaluate(profile, x)['status'] == 'confirmed'
+
+
+def match(x, prefs):
+    return C.evaluate({**prefs.profile, "features": prefs.features, "poi": prefs.poi}, x)
+
+
+def selectable(x, prefs):
+    return match(x, prefs)['status'] != 'rejected'
 
 
 async def check_map(s, listings: list[dict], announce: bool = False) -> bool:
@@ -41,11 +52,14 @@ async def check_map(s, listings: list[dict], announce: bool = False) -> bool:
         return True
     if announce:
         await s.say("Проверяю по карте, что рядом: " + ", ".join(geo.POI[k][0] for k in s.prefs.poi) + ".")
-    ok = await geo.nearby(listings, s.prefs.poi)
+    if s.search is not None and s.search.get("map_revision") != s.client_revision:
+        s.search["map_revision"] = s.client_revision
+        s.search["map_deadline"] = time.monotonic() + settings.places_budget_s
+    deadline = (s.search or {}).get("map_deadline", time.monotonic() + settings.places_budget_s)
+    ok = await geo.nearby(listings, s.prefs.poi, budget_s=max(0, deadline - time.monotonic()))
     if not ok and not s.map_warned:
         s.map_warned = True
-        await s.say("Не смог проверить по карте, что рядом: сервис OpenStreetMap не ответил. Покажу квартиры без этой "
-                    "проверки — отмечу это на карточках.")
+        await s.say("Карта не успела проверить часть адресов или не ответила. Отмечу пробелы на карточках — близость нужных объектов пока не подтверждена.")
     return ok
 
 
@@ -64,15 +78,15 @@ def score_into(pool: list[dict], comps: list[dict], profile: dict, meta: dict) -
 
 def ranked(pool: list[dict], meta: dict, prefs: P.Prefs) -> list[dict]:
     for x in pool:
-        meta[x["id"]]["total"] = round(meta[x["id"]]["score"] + P.adjust(x, prefs), 1)
-    return sorted(pool, key=lambda x: meta[x["id"]]["total"], reverse=True)
+        meta[x["id"]]["total"] = round(meta[x["id"]]["score"] + P.adjust(x, prefs) + match(x, prefs)["preference_score"], 1)
+    return sorted(pool, key=lambda x: (match(x, prefs)["status"] == "confirmed", meta[x["id"]]["total"]), reverse=True)
 
 
 def card(x: dict, meta: dict, prefs: P.Prefs) -> dict:
     """Карточка квартиры для экрана."""
     m = meta[x["id"]]
-    return {**x, "fair": m["fair"], "score": m.get("total", m["score"]), "pay": m.get("pay"),
-            "features": [{"label": FEATURES[k][0], "status": feature_status(x, k)} for k in prefs.features],
+    return {**x, "fair": m["fair"], "score": m.get("total", m["score"]), "pay": m.get("pay"), "match": match(x, prefs),
+            "features": [{"label": FEATURES[k][0], **feature_evidence(x, k)} for k in prefs.features],
             "nearby": geo.summary(x, prefs.poi),
             "unchecked": [geo.POI[k][0] for k in prefs.poi if k not in (x.get("nearby") or {})],
             "missing": [q["label"] for q in missing_info(x, 4, prefs.features) if q["key"] != "owners"]}
@@ -140,7 +154,7 @@ async def search_listings(s) -> dict:
     pool = [x for x in listings if passes_hard_filters(x, p)]
     comps = list({x["id"]: x for x in [*sources.comparables(p), *listings]}.values())
     st = s.search = {"listings": listings, "pool": pool, "comps": comps, "report": report, "meta": {}, "pages": 1,
-                     "named": p.get("districts") or [], "strict": False, "map_ok": True, "shown_ids": set()}
+                     "named": p.get("districts") or [], "strict": False, "map_ok": True, "shown_ids": set(), "map_deadline": time.monotonic() + settings.places_budget_s, "map_revision": s.client_revision}
     if not pool:
         s.push("result", step=3, kind="search", data={"report": report, "total": len(listings), "matched": 0, "rows": []})
         if report and all(r["status"] == "unavailable" for r in report):
@@ -158,15 +172,14 @@ async def search_listings(s) -> dict:
         if len(inside) >= 3:
             st["pool"], st["strict"] = inside, True
         out["in_named_districts"] = len(inside)
-    if s.prefs.features or s.prefs.poi:
-        st["map_ok"] = await check_map(s, st["pool"], announce=True)
-        await _more_pages(s, lambda: sum(fits(x, s.prefs, st["map_ok"]) for x in st["pool"]) >= BATCH)
-        good = [x for x in st["pool"] if fits(x, s.prefs, st["map_ok"])]
-        out.update(wishes=wishes_text(s.prefs), fit_wishes=len(good), map_checked=st["map_ok"])
-    else:
-        good = st["pool"]
+    st["map_ok"] = await check_map(s, st["pool"], announce=True)
+    await _more_pages(s, lambda: sum(fits(x, s.prefs) for x in st["pool"]) >= BATCH)
+    good = [x for x in st["pool"] if selectable(x, s.prefs)]
+    confirmed = sum(fits(x, s.prefs) for x in good)
+    out.update(wishes=wishes_text(s.prefs), fit_wishes=confirmed, map_checked=st["map_ok"],
+               confirmed=confirmed, unverified=len(good) - confirmed, rejected=len(st["pool"]) - len(good))
     score_into(st["pool"], st["comps"], p, st["meta"])
-    order = ranked(good or st["pool"], st["meta"], s.prefs)
+    order = ranked(good, st["meta"], s.prefs)
     rows = [{"id": x["id"], "address": x["address"], "district": x.get("district"), "area": x["area"],
              "price": x["price"], **st["meta"][x["id"]]["fair"]} for x in order[:8]]
     for r in report:  # с учётом догруженных страниц; из базы — отдельной строкой
@@ -175,7 +188,7 @@ async def search_listings(s) -> dict:
         else:
             r["count"] = sum(1 for x in st["listings"] if not x.get("stored_at") and bool(x.get("is_new")) == r.get("new", False))
     s.push("result", step=3, kind="search", data={"report": report, "total": len(st["listings"]), "matched": len(good),
-                                                   "rows": rows, "store": sources.store.stats(p)})
+                                                   "rows": rows, "store": sources.store.stats(p), **out})
     over = sum(1 for x in good if st["meta"][x["id"]]["fair"]["overprice_pct"] > 1)
     await s.finish_step(3)
     return {"found": len(st["listings"]), "in_budget": len(st["pool"]), "selectable": len(good),
@@ -198,14 +211,15 @@ async def probe_budget(s, budget_max: int) -> dict:
     above = [x for x in listings if passes_hard_filters(x, richer) and x["price"] > p["budget_max"]
              and (not st["strict"] or in_districts(x, st["named"]))]
     await check_map(s, above)
-    above = sorted((x for x in above if fits(x, s.prefs, st["map_ok"])), key=lambda x: x["price"])
-    return {"checked_up_to": int(budget_max), "found_above_budget": len(above),
+    unverified = sum(match(x, s.prefs)["status"] == "unverified" for x in above)
+    above = sorted((x for x in above if fits(x, s.prefs)), key=lambda x: x["price"])
+    return {"checked_up_to": int(budget_max), "found_above_budget": len(above), "unverified_above_budget": unverified,
             "cheapest": above[0]["price"] if above else None,
             "over_budget_by": above[0]["price"] - p["budget_max"] if above else None, "wishes": wishes_text(s.prefs)}
 
 
 @action("show_selection", 4,
-        "Показать подборку (до 6 квартир, лучшие по цене и пожеланиям; уже отмеченные «нравится» остаются) и дождаться "
+        "Показать подборку (до 10 квартир, лучшие по цене и пожеланиям; уже отмеченные «нравится» остаются) и дождаться "
         "клиента. Возвращает: action = proceed (звонить по отмеченным) | more (подобрать ещё) | text (клиент написал — "
         "пойми и, если это пожелание, запиши update_request и покажи снова), отметки и номера карточек.")
 async def show_selection(s) -> dict:
@@ -215,9 +229,9 @@ async def show_selection(s) -> dict:
     p, prefs, meta = s.profile, s.prefs, st["meta"]
     new_poi = [k for k in prefs.poi if any(k not in (x.get("nearby") or {}) for x in st["pool"])]
     if new_poi:
-        st["map_ok"] = await check_map(s, st["pool"], announce=True) and st["map_ok"]
+        st["map_ok"] = await check_map(s, st["pool"], announce=True)
     pool = [x for x in st["pool"] if passes_hard_filters(x, p)
-            and x.get("district") not in prefs.districts_minus and (fits(x, prefs, st["map_ok"]) or x["id"] in prefs.liked)]
+            and x.get("district") not in prefs.districts_minus and selectable(x, prefs)]
     if not pool:
         return {"shown": 0, "no_fit": wishes_text(prefs) or "текущим условиям",
                 "in_budget_without_wishes": len(st["pool"]),
@@ -226,12 +240,12 @@ async def show_selection(s) -> dict:
     if len(unseen) < BATCH:  # новых мало — догружаем следующую страницу выдачи
         before = len(st["pool"])
         await _more_pages(s, lambda: len(st["pool"]) > before)
-        pool += [x for x in st["pool"][before:] if fits(x, prefs, st["map_ok"])]
+        pool += [x for x in st["pool"][before:] if selectable(x, prefs) and x.get("district") not in prefs.districts_minus]
     score_into(pool, st["comps"], p, meta)
     order = ranked(pool, meta, prefs)
     liked = [x for x in order if x["id"] in prefs.liked]
     fresh = [x for x in order if x["id"] not in st["shown_ids"] and x["id"] not in prefs.disliked and x["id"] not in prefs.liked]
-    batch = liked + fresh[:BATCH]
+    batch = liked[:BATCH] + fresh[:max(0, BATCH - len(liked))]
     if not batch:
         return {"shown": 0, "note": "новых вариантов нет — все подходящие уже показаны", "liked": prefs.liked}
     st["shown_ids"] |= {x["id"] for x in batch}
@@ -247,11 +261,11 @@ async def show_selection(s) -> dict:
     r = await s.ask("selection", "Подборка", "Отметьте квартиры на экране подбора.")
     d = r["data"]
     by_id = {x["id"]: x for x in st["pool"]}
-    prefs.liked = [i for i in d.get("liked", []) if i in by_id]
+    prefs.liked = [i for i in d.get("liked", []) if i in by_id and selectable(by_id[i], prefs)]
     prefs.disliked = [i for i in d.get("disliked", []) if i in by_id]
     P.learn(prefs, by_id)
     number = {x["id"]: i + 1 for i, x in enumerate(batch)}  # номера карточек на экране: «вторая нравится»
     return {"action": d.get("action") or "text", "client_said": d.get("text"),
-            "shown": [{"n": number[x["id"]], **brief(x, meta)} for x in batch],
+            "shown": [{"n": number[x["id"]], **brief(x, meta), "match": match(x, prefs)} for x in batch],
             "liked": [{"n": number.get(i), **brief(by_id[i], meta)} for i in prefs.liked],
             "disliked_count": len(prefs.disliked), "learned": prefs.learned(), "remaining": max(0, len(fresh) - BATCH)}

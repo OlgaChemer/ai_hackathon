@@ -4,17 +4,19 @@ from __future__ import annotations
 from ... import geo, sources
 from ..features import FEATURES
 from ..numbers import fmt
+from ..criteria import CRITERIA_KEYS
 from ..profile import merge_profile, missing_required, profile_summary
 from . import ActionError, action
 
-LIST_KEYS = ("districts", "avoid_districts", "features", "poi", "wishes")
+LIST_KEYS = ("districts", "avoid_districts", "features", "poi", "wishes", "material", "soft_criteria")
 CORE_KEYS = ("city", "rooms", "budget_max", "okrug", "housing")  # изменились — рамки и поиск надо подтвердить заново
 
 
 def profile_brief(p: dict) -> dict:
     """Профиль для модели: только то, что известно."""
     keys = ("city", "rooms", "budget_max", "okrug", "districts", "avoid_districts", "housing", "payment", "children",
-            "youngest_age", "matcap", "kitchen_min", "area_min", "not_first_floor", "metro_max_minutes", "wishes")
+            "youngest_age", "matcap", "kitchen_min", "area_min", "not_first_floor", "not_last_floor", "metro_max_minutes", "wishes",
+            "condition", "material", "year_min", "timeline", "soft_criteria")
     out = {k: p[k] for k in keys if p.get(k) not in (None, [], "", False)}
     if p.get("matcap") is False:
         out["matcap"] = False
@@ -38,30 +40,43 @@ def emit_profile(s) -> None:
     "списки (features, poi, districts, avoid_districts, wishes) передавай целиком — так можно и добавить, и снять условие. "
     "Возвращает профиль и чего не хватает для поиска.",
     city={"type": "string", "description": "город, именительный падеж"},
-    rooms={"type": "integer", "description": "комнат; студия = 0"},
-    budget_max={"type": "integer", "description": "максимальная цена, рубли"},
+    rooms={"minimum": 0, "maximum": 20, "type": "integer", "description": "комнат; студия = 0"},
+    budget_max={"minimum": 1, "maximum": 1000000000, "type": "integer", "description": "максимальная цена, рубли"},
     okrug={"type": "string", "description": "для Москвы: ЦАО, САО, СВАО, ВАО, ЮВАО, ЮАО, ЮЗАО, ЗАО, СЗАО; по названному району — его округ"},
     districts={"type": "array", "items": {"type": "string"}, "description": "районы, где искать (именительный падеж)"},
     avoid_districts={"type": "array", "items": {"type": "string"}, "description": "районы, которые не показывать"},
     housing={"type": "string", "enum": ["secondary", "new", "both"], "description": "вторичка, новостройки или и то и другое"},
     payment={"type": "string", "enum": ["cash", "mortgage_ready", "mortgage_saving"],
              "description": "наличные; ипотека и взнос есть; ипотека, взнос ещё копит"},
-    children={"type": "integer", "description": "детей в семье (0 — нет)"},
-    youngest_age={"type": "integer", "description": "возраст младшего ребёнка, лет"},
+    children={"minimum": 0, "maximum": 30, "type": "integer", "description": "детей в семье (0 — нет)"},
+    youngest_age={"minimum": 0, "maximum": 100, "type": "integer", "description": "возраст младшего ребёнка, лет"},
     matcap={"type": "boolean", "description": "есть неизрасходованный маткапитал"},
     features={"type": "array", "items": {"type": "string", "enum": list(FEATURES)},
               "description": "обязательные удобства: " + "; ".join(f"{k} — {v[0]}" for k, v in FEATURES.items())},
     poi={"type": "array", "items": {"type": "string", "enum": list(geo.POI)},
          "description": "что должно быть в 1 км (проверю по карте): " + "; ".join(f"{k} — {v[0]}" for k, v in geo.POI.items())},
-    kitchen_min={"type": "number", "description": "кухня от, м²"},
-    area_min={"type": "number", "description": "площадь от, м²"},
+    kitchen_min={"minimum": 0, "maximum": 500, "type": "number", "description": "кухня от, м²"},
+    area_min={"minimum": 0, "maximum": 2000, "type": "number", "description": "площадь от, м²"},
     not_first_floor={"type": "boolean"},
-    metro_max_minutes={"type": "integer", "description": "до метро не дольше, минут"},
+    not_last_floor={"type": "boolean"},
+    condition={"type": "string", "enum": ["ready", "cosmetic", "repair", "any"],
+               "description": "готова к заселению; косметический; под ремонт; не важно"},
+    material={"type": "array", "items": {"type": "string", "enum": ["кирпич", "монолит", "панель", "блочный", "дерево"]}},
+    year_min={"type": "integer", "minimum": 1800, "maximum": 2100},
+    timeline={"type": "string", "enum": ["month", "quarter", "exploring"]},
+    soft_criteria={"type": "array", "items": {"type": "string", "enum": CRITERIA_KEYS},
+                   "description": "Ключи условий, которые клиент назвал желательными, а не обязательными. Список целиком. "
+                                  "Например poi:park — желательно парк, feature:parking — желательно парковка. Остальные условия обязательны."},
+    clear_criteria={"type": "array", "items": {"type": "string", "enum": ["kitchen_min", "area_min", "metro_max_minutes", "year_min", "condition", "timeline"]},
+                    "description": "Снять названные ограничения по явному пожеланию клиента «не важно»."},
+    metro_max_minutes={"minimum": 0, "maximum": 300, "type": "integer", "description": "до метро не дольше, минут"},
     wishes={"type": "array", "items": {"type": "string"}, "description": "прочие пожелания коротко, которые не ложатся в поля"},
 )
 async def update_request(s, **changes) -> dict:
     before = {k: s.profile.get(k) for k in CORE_KEYS}
     p = merge_profile(changes, s.profile or None)
+    for key in changes.get("clear_criteria", []):
+        p[key] = None
     for key in LIST_KEYS:  # пустой список от модели — снять условие
         if key in changes and changes[key] == []:
             p[key] = []
@@ -78,10 +93,16 @@ async def update_request(s, **changes) -> dict:
     if any(p.get(k) != before[k] for k in CORE_KEYS):
         if s.red_lines_ok:
             notes.append("Город, комнаты, бюджет или рынок изменились — рамки нужно подтвердить заново, поиск — повторить.")
-        s.red_lines_ok, s.search = False, None
+        s.invalidate_deal()
         if p.get("city") != before["city"]:
             s.market = None
-    elif s.search and (changes.keys() & {"features", "poi", "kitchen_min", "area_min", "not_first_floor", "avoid_districts"}):
+    elif s.search and (changes.keys() & {"features", "poi", "kitchen_min", "area_min", "not_first_floor", "not_last_floor",
+                                         "condition", "material", "year_min", "metro_max_minutes", "soft_criteria", "clear_criteria", "avoid_districts"}):
+        s.search["shown_ids"].clear()
+        s.calls.clear()
+        s.agreed.clear()
+        s.chosen = s.current = None
+        s.journal.clear()
         notes.append("Пожелания учтены: при следующем показе подборки (show_selection) отфильтрую и пересортирую.")
     emit_profile(s)
     return {"profile": profile_brief(p), "missing": missing, "red_lines_confirmed": s.red_lines_ok, "notes": notes}
@@ -132,6 +153,7 @@ async def confirm_red_lines(s) -> dict:
     if not r["approved"]:
         return {"approved": False, "note": "клиент хочет поменять запрос — спроси, что именно"}
     if r["data"].get("budget_max") and int(r["data"]["budget_max"]) != p["budget_max"]:
+        s.invalidate_deal()
         p["budget_max"] = int(r["data"]["budget_max"])
         p["summary"] = profile_summary(p)
         emit_profile(s)

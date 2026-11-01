@@ -15,10 +15,13 @@ import logging
 import math
 import re
 import time
+from datetime import datetime, timezone
 
 import httpx
 
 from . import db
+from .config import settings
+from .sources import places
 from .db import repo
 
 log = logging.getLogger(__name__)
@@ -56,6 +59,7 @@ POI_TTL_DAYS = 30  # что рядом с домом: пересчитываем
 LIVE_TIMEOUT = 60  # с — главный сервер Overpass бывает задумчив
 
 _live_cache: dict[tuple[float, float, str], dict | None] = {}
+_cache_times: dict[tuple, float] = {}
 
 
 def distance_m(lat1: float, lng1: float, lat2: float, lng2: float) -> int:
@@ -189,7 +193,15 @@ def _nearest(lat: float, lng: float, rows: list[list]) -> dict | None:
 
 async def _live(listings: list[dict], kinds: list[str]) -> bool:
     """Спрашивает Overpass, что в 1 км от квартир (ответы кэшируются на время работы сервера)."""
-    todo = [x for x in listings if any((round(x["lat"], 4), round(x["lng"], 4), k) not in _live_cache for k in kinds)]
+    now = time.time()
+    for key in list(_live_cache):
+        if now - _cache_times.get(key, 0) >= POI_TTL_DAYS * 86400:
+            _live_cache.pop(key, None)
+            _cache_times.pop(key, None)
+    if len(_live_cache) > 20_000:
+        _live_cache.clear()
+        _cache_times.clear()
+    todo = [x for x in listings if any((round(x["lat"], 6), round(x["lng"], 6), k) not in _live_cache for k in kinds)]
     for i in range(0, len(todo), LIVE_CHUNK):
         chunk = todo[i:i + LIVE_CHUNK]
         around = [f"(around:{RADIUS},{x['lat']:.5f},{x['lng']:.5f})" for x in chunk]
@@ -203,11 +215,23 @@ async def _live(listings: list[dict], kinds: list[str]) -> bool:
         rows = _rows(elements, kinds)
         for x in chunk:
             for k in kinds:
-                _live_cache[(round(x["lat"], 4), round(x["lng"], 4), k)] = _nearest(x["lat"], x["lng"], rows[k])
+                cache_key = (round(x["lat"], 6), round(x["lng"], 6), k)
+                _live_cache[cache_key] = _nearest(x["lat"], x["lng"], rows[k])
+                _cache_times[cache_key] = time.time()
+            _apply_osm(x, kinds)
     for x in listings:
-        x["nearby"] = {**(x.get("nearby") or {}),
-                       **{k: _live_cache[(round(x["lat"], 4), round(x["lng"], 4), k)] for k in kinds}}
+        _apply_osm(x, kinds)
     return True
+
+
+def _apply_osm(x, kinds):
+    for k in kinds:
+        cache_key = (round(x["lat"], 6), round(x["lng"], 6), k)
+        if k not in (x.get("nearby") or {}) and cache_key in _live_cache:
+            x.setdefault("nearby", {})[k] = _live_cache[cache_key]
+            x.setdefault("nearby_evidence", {})[k] = {
+                "source": "osm", "checked_at": datetime.fromtimestamp(_cache_times[cache_key], timezone.utc).isoformat(timespec="seconds"),
+                "distance_kind": "edge" if k in AREAS else "straight_line", "radius": RADIUS}
 
 
 def _matches(tags: dict, kind: str) -> bool:
@@ -222,28 +246,58 @@ def _matches(tags: dict, kind: str) -> bool:
     return False
 
 
-async def nearby(listings: list[dict], kinds: list[str]) -> bool:
-    """Дописывает в объявления x["nearby"] = {kind: {name, dist, lat, lng} | None} (None — в 1 км нет).
+async def nearby(listings: list[dict], kinds: list[str], budget_s: float | None = None) -> bool:
+    """None в nearby — проверено, не найдено; отсутствующий ключ — неизвестно.
 
-    Возвращает False, если проверить не удалось (Overpass не ответил).
+    В БД сохраняем значение, источник, дату и координаты. Частичные результаты не теряются при таймауте.
     """
-    points = [x for x in listings if x.get("lat") and x.get("lng")]
-    if not kinds or not points:
+    kinds = [k for k in kinds if k in POI]
+    if not kinds:
         return True
-    # что уже проверяли по карте для этих квартир — из базы агента (школы и парки за месяц не переезжают)
+    budget = settings.places_budget_s if budget_s is None else max(0, budget_s)
+    points = [x for x in listings if x.get("lat") is not None and x.get("lng") is not None]
     known = db.safe(repo.load_features, [x["id"] for x in points], prefix="poi:", max_age_days=POI_TTL_DAYS, default={}) or {}
     todo = []
     for x in points:
-        have = {k: known[x["id"]][f"poi:{k}"] for k in kinds if f"poi:{k}" in known.get(x["id"], {})}
-        x["nearby"] = {**(x.get("nearby") or {}), **have}
-        if len(have) < len(kinds):
+        for k in kinds:
+            stored = known.get(x["id"], {})
+            if f"poi:{k}" not in stored:
+                continue
+            record = stored[f"poi:{k}"]
+            if isinstance(record, dict) and record.get("version") == 2:
+                if record.get("coords") != [x['lat'], x['lng']]:
+                    continue
+                x.setdefault("nearby", {})[k] = record['value']
+                x.setdefault("nearby_evidence", {})[k] = record['evidence']
+            else:  # прежний формат кеша
+                x.setdefault("nearby", {})[k] = record
+                x.setdefault("nearby_evidence", {})[k] = {"source": "osm", "checked_at": None}
+        if any(k not in (x.get("nearby") or {}) for k in kinds):
             todo.append(x)
-    if not todo:
-        return True
-    if not await _live(todo, kinds):
-        return False
-    db.safe(repo.save_features, [(x["id"], f"poi:{k}", x["nearby"][k], "map") for x in todo for k in kinds])
-    return True
+
+    async def fill():
+        if settings.twogis_api_key:
+            try:
+                await asyncio.wait_for(places.enrich(todo, kinds, RADIUS), timeout=min(6, budget * .6))
+            except asyncio.TimeoutError:
+                pass
+        missing = [x for x in todo if any(k not in (x.get("nearby") or {}) for k in kinds)]
+        if missing:
+            await _live(missing, kinds)
+    if todo and budget > 0:
+        try:
+            await asyncio.wait_for(fill(), timeout=budget)
+        except asyncio.TimeoutError:
+            log.info("бюджет карты исчерпан; сохраняю завершённые проверки")
+    rows = []
+    for x in todo:
+        for k in kinds:
+            if k in (x.get("nearby") or {}):
+                record = {"version": 2, "value": x['nearby'][k], "evidence": x.get('nearby_evidence', {}).get(k, {}),
+                          "coords": [x['lat'], x['lng']]}
+                rows.append((x['id'], f"poi:{k}", record, "map"))
+    db.safe(repo.save_features, rows)
+    return all(all(k in (x.get("nearby") or {}) for k in kinds) for x in listings)
 
 
 def has_all(x: dict, kinds: list[str]) -> bool:
@@ -266,7 +320,8 @@ def summary(x: dict, kinds: list[str]) -> list[dict]:
         if k in near:
             p = near[k] or {}
             out.append({"kind": k, "label": POI[k][0], "name": p.get("name"), "dist": p.get("dist"),
-                        "lat": p.get("lat"), "lng": p.get("lng")})
+                        "lat": p.get("lat"), "lng": p.get("lng"),
+                        **(x.get("nearby_evidence") or {}).get(k, {})})
     return out
 
 

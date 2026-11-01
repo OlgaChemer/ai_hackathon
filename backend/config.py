@@ -48,6 +48,10 @@ class Settings:
     auth_session_days: int = int(os.getenv("AUTH_SESSION_DAYS", "30") or 30)
     cookie_secure: bool = _bool("COOKIE_SECURE", False)  # true — за HTTPS
 
+    # Каталог 2GIS: без ключа используем OpenStreetMap. Общий бюджет на карту в одном поиске.
+    twogis_api_key: str = os.getenv("TWOGIS_API_KEY", "").strip()
+    places_budget_s: float = max(0.1, float(os.getenv("PLACES_BUDGET_S") or 12))
+
     # Ночной обход объявлений: время (ЧЧ:ММ, пусто — выключен), сколько страниц выдачи на поиск,
     # сколько пропавших объявлений проверить за раз
     refresh_at: str = os.getenv("REFRESH_AT", "").strip()

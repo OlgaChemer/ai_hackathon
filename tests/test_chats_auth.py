@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from backend import auth, db
+from backend import auth, db, ratelimit
 from backend import main as M
 from backend.agent import session as O
 from tests.fakes import ScriptedLLM, call, last_result, say
@@ -43,6 +43,7 @@ def read_until(client: TestClient, url: str, stop) -> list[dict]:
 
 class ChatsAndAuthTest(unittest.TestCase):
     def setUp(self):
+        ratelimit.reset()
         db.configure("sqlite://")
         auth._fails.clear()
         O.SESSIONS.clear()
@@ -140,7 +141,7 @@ class ChatsAndAuthTest(unittest.TestCase):
                               lambda e: e["type"] == "message" and e["role"] == "agent")
             self.assertIn("после регистрации", tail[-1]["text"])
             self.assertFalse(any(e["type"] == "confirm" for e in tail))  # ни рамок заново, ни поиска
-            self.assertEqual(seen[1]["content"], QUERY)  # модель видит прежний разговор
+            self.assertEqual(seen[2]["content"], QUERY)  # модель видит прежний разговор
             interrupted = last_result([m for m in seen if m["role"] != "user" or m["content"] == QUERY])
             self.assertIn("прервано", interrupted["error"])  # незавершённое действие — честный результат
 

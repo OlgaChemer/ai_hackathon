@@ -5,12 +5,11 @@
 """
 from __future__ import annotations
 
-import json
 import logging
 import re
 
 from ..llm import LLMError
-from . import prompts
+from . import guard, prompts
 from .numbers import fmt
 
 log = logging.getLogger(__name__)
@@ -45,7 +44,8 @@ def build_context(s) -> dict:
     if s.shown:
         ctx["подборка"] = [{"адрес": x.get("address"), "цена": fmt(x["price"]), "справедливая": fmt(x["fair"]["fair"]),
                             "коридор": f"{fmt(x['fair']['low'])}–{fmt(x['fair']['high'])}", "площадь": x.get("area"),
-                            "основа оценки": x["fair"]["basis"]} for x in s.shown[:6]]
+                            "основа оценки": x["fair"]["basis"], "что_рядом": x.get("nearby", []),
+                            "проверка_условий": x.get("match")} for x in s.shown[:10]]
     if s.current:
         x, fp = s.current["listing"], s.current["fair"]
         ctx["текущая квартира"] = {"адрес": x.get("address"), "цена в объявлении": fmt(x["price"]),
@@ -58,14 +58,15 @@ def build_context(s) -> dict:
 
 
 async def answer(s, text: str) -> None:
-    system = prompts.QA_SYSTEM.replace("{context}", json.dumps(build_context(s), ensure_ascii=False, indent=1))
+    system = prompts.QA_SYSTEM + "\n" + guard.POLICY
     try:
-        resp = await s.llm.chat([{"role": "system", "content": system}, {"role": "user", "content": text}],
+        resp = await s.llm.chat([{"role": "system", "content": system}, guard.data_message("session_context", build_context(s)),
+                                  {"role": "user", "content": text}],
                                 temperature=0.3, max_tokens=500, tag="answer")
         reply = resp.text.strip()
         if not reply:
             raise LLMError("пустой ответ")
     except LLMError as exc:
-        log.info("вопрос без ответа: %s", exc)
+        log.info("вопрос без ответа: %s", type(exc).__name__)
         reply = "Сейчас не могу ответить на вопрос: модель недоступна. Продолжаю работу — спросите чуть позже."
     await s.say(reply)

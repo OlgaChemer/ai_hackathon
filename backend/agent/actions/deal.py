@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import date
 
 from ... import economics, sources
+from .. import criteria as C
 from .. import finance as F
 from .. import mortgage as M
 from .. import negotiation as N
@@ -24,6 +25,9 @@ def _listing(s, listing_id: str) -> dict:
     x = next((x for x in (s.search or {}).get("listings", []) if x["id"] == listing_id), None)
     if x is None:
         raise ActionError(f"Квартиры {listing_id} нет в найденных — возьми id из подборки (show_selection).")
+    verdict = C.evaluate(s.profile, x)
+    if verdict['status'] == 'rejected':
+        raise ActionError("Квартира не выполняет обязательные условия: " + ", ".join(verdict['failed']))
     return x
 
 
@@ -82,6 +86,9 @@ async def call_seller(s, listing_id: str) -> dict:
             await s.say(f"Цена в объявлении изменилась: было {fmt(x['price'])}, стало {fmt(fresh['price'])}. Торгуюсь от новой.")
         x.update(fresh)
         s.search["meta"].pop(x["id"], None)
+    verdict = C.evaluate(s.profile, x)
+    if verdict['status'] == 'rejected':
+        raise ActionError("После обновления квартира не выполняет обязательные условия: " + ", ".join(verdict['failed']))
     fp = _meta(s, x)["fair"]
     authority = min(s.profile["budget_max"], x["price"], fp["high"])
     seller = seller_sim.build(x)
@@ -128,6 +135,8 @@ async def call_seller(s, listing_id: str) -> dict:
         "Карточка: клиент подтверждает цену, о которой агент договорился в звонке (или отказывается). Только после call_seller.",
         **ID)
 async def confirm_price(s, listing_id: str) -> dict:
+    if not s.red_lines_ok:
+        raise ActionError("Рамки изменились — сначала confirm_red_lines и повторный выбор квартиры.")
     call = s.calls.get(listing_id)
     if not call:
         raise ActionError("По этой квартире ещё не звонили — сначала call_seller.")
@@ -154,6 +163,8 @@ async def confirm_price(s, listing_id: str) -> dict:
         "Просмотр: показать время (из звонка) и чек-лист осмотра, затем карточка «выбираете эту квартиру?». "
         "Только после подтверждённой цены.", **ID)
 async def plan_viewing(s, listing_id: str) -> dict:
+    if not s.red_lines_ok:
+        raise ActionError("Рамки изменились — сначала confirm_red_lines и повторный выбор квартиры.")
     if listing_id not in s.agreed:
         raise ActionError("Цена не подтверждена клиентом — сначала confirm_price.")
     x = _listing(s, listing_id)
@@ -177,6 +188,8 @@ async def plan_viewing(s, listing_id: str) -> dict:
         "регистрация) и карточка подписания договора. После подписания — итог: экономия клиента и что получает Сбер. "
         "Только для квартиры, которую клиент выбрал (plan_viewing).", **ID)
 async def prepare_deal(s, listing_id: str) -> dict:
+    if not s.red_lines_ok:
+        raise ActionError("Рамки изменились — сначала confirm_red_lines и повторный выбор квартиры.")
     if s.chosen != listing_id:
         raise ActionError("Клиент ещё не выбрал эту квартиру — сначала plan_viewing.")
     x = _listing(s, listing_id)

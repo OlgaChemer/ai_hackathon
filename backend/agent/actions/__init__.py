@@ -6,11 +6,13 @@
 """
 from __future__ import annotations
 
+import inspect
 import logging
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
 from ...llm import Tool, ToolCall
+from .. import guard, validation
 
 log = logging.getLogger(__name__)
 
@@ -48,19 +50,28 @@ def tools() -> list[Tool]:
 async def execute(s, call: ToolCall) -> dict:
     """Выполнить действие, которое выбрала модель. Ошибки не роняют агента — модель получает объяснение."""
     _load()
-    a = REGISTRY.get(call.name)
+    a = REGISTRY.get(call.name) if isinstance(call.name, str) else None
     if a is None:
-        return {"error": f"Нет действия {call.name}. Доступны: {', '.join(REGISTRY)}"}
-    args = {k: v for k, v in (call.arguments or {}).items() if k in a.parameters["properties"]}
+        return {"error": f"Нет действия с таким именем. Доступны: {', '.join(REGISTRY)}"}
+    args = call.arguments
+    try:
+        validation.validate(args, a.parameters)
+        inspect.signature(a.run).bind(s, **args)
+    except (ValueError, TypeError):
+        return {"error": "Неверные параметры действия: проверь типы, диапазоны и обязательные поля."}
+    verdict = guard.input_verdict(args)
+    if not verdict.ok or guard.output(args, limit=False) != args:
+        guard.note(s, "tool", verdict.category or "unsafe_output", "")
+        return {"error": "Параметры действия отклонены проверкой безопасности."}
     if a.step:
         await s.step(a.step)
     try:
         return await a.run(s, **args)
     except ActionError as exc:
         return {"error": str(exc)}
-    except TypeError as exc:  # модель передала параметры не того вида
-        log.warning("действие %s: %s", call.name, exc)
-        return {"error": f"Неверные параметры для {call.name}: {exc}"}
+    except TypeError:  # модель передала параметры не того вида
+        log.warning("неверные параметры действия %s", call.name)
+        return {"error": "Неверные параметры действия."}
 
 
 def _load() -> None:
