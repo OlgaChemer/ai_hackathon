@@ -17,9 +17,10 @@ from pathlib import Path
 DATA = Path(__file__).resolve().parent / "data"
 
 
-def patch() -> None:
+def patch(*, live_map: bool = False) -> None:
     from backend import geo, main
     from backend.sources import cian
+    from backend.sources import places
     from backend.sources.base import SourceUnavailable
 
     from .policy_llm import PolicyLLM
@@ -45,14 +46,20 @@ def patch() -> None:
     cian._fetch_page = fetch_page
     cian.check_listing_page = check_page
     geo._overpass = no_overpass
+    async def no_places(*args, **kwargs):
+        return None
+    places.enrich = no_places
+    if not live_map:
+        main.maptiles.configuration = lambda: {'provider': 'osm'}
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8790)
+    ap.add_argument("--live-map", action="store_true", help="Разрешить настоящие плитки 2ГИС из .env (расходует квоту)")
     args = ap.parse_args()
     os.environ.setdefault("DATABASE_URL", f"sqlite:///{tempfile.mkdtemp()}/e2e.db")
-    patch()
+    patch(live_map=args.live_map)
     import uvicorn
 
     from backend.main import app

@@ -260,7 +260,7 @@ class HttpGuardTest(unittest.TestCase):
         session.SESSIONS.clear()
         self.model = patch.object(main, 'get_llm', lambda: ScriptedLLM())
         self.model.start()
-        self.c = TestClient(main.app)
+        self.c = TestClient(main.app, base_url='https://testserver')
 
     def tearDown(self):
         self.c.close()

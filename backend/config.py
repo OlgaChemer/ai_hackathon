@@ -30,9 +30,7 @@ class Settings:
     gigachat_auth_url: str = os.getenv(
         "GIGACHAT_AUTH_URL", "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
     )
-    gigachat_base_url: str = os.getenv(
-        "GIGACHAT_BASE_URL", "https://gigachat.devices.sberbank.ru/api/v1"
-    )
+    gigachat_base_url: str = os.getenv("GIGACHAT_BASE_URL") or "https://api.giga.chat/v1"
     gigachat_verify_ssl: bool = _bool("GIGACHAT_VERIFY_SSL", True)
     gigachat_ca_bundle: str = os.getenv("GIGACHAT_CA_BUNDLE", "")
 
@@ -48,7 +46,7 @@ class Settings:
     auth_session_days: int = int(os.getenv("AUTH_SESSION_DAYS", "30") or 30)
     cookie_secure: bool = _bool("COOKIE_SECURE", False)  # true — за HTTPS
 
-    # Каталог 2GIS: без ключа используем OpenStreetMap. Общий бюджет на карту в одном поиске.
+    # 2GIS: каталог инфраструктуры и растровая подложка. Без ключа — OpenStreetMap.
     twogis_api_key: str = os.getenv("TWOGIS_API_KEY", "").strip()
     places_budget_s: float = max(0.1, float(os.getenv("PLACES_BUDGET_S") or 12))
 

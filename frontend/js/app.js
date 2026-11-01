@@ -7,7 +7,8 @@ import { savingsChart } from "./chart.js";
 import { initChats, refreshChats } from "./chats.js";
 import { mountEconomics } from "./economics.js";
 import { el, html, sleep } from "./format.js";
-import { mountMap } from "./map.js";
+import { initShell, showAgent, refreshContext, setChatExpanded } from "./shell.js";
+import { mountMap, unmountMap } from "./map.js";
 import { $, addMsg, chatLog, config, resetState, stage, state } from "./state.js";
 import * as V from "./views.js";
 import { SELECTION_PROMPT, initVoiceChat, phoneActive, sayPrompt, talk } from "./voicechat.js";
@@ -53,6 +54,7 @@ function viewFor(n) {
 }
 
 function renderStage() {
+  unmountMap(stage.querySelector("[data-map]"));
   stage.innerHTML = "";
   if (state.view === 6) {
     stage.append(state.call ? renderCall(state.call, submitSeller) : el(V.waiting("Звонок", "Готовлю звонок продавцу.")));
@@ -117,6 +119,7 @@ async function handle(ev, myGen) {
     case "provider": setProvider(ev); break;
     case "message":
       addMsg(ev.role, ev.text);
+      if (ev.await_reply) setChatExpanded(true);
       if (!quiet && ev.role === "agent" && talk.on && !phoneActive()) talk.say(ev.text);
       await pause(ev.role === "agent" ? 300 : 0);
       break;
@@ -128,6 +131,8 @@ async function handle(ev, myGen) {
       break;
     case "result":
       state.results[ev.step] = ev.data;
+      if (ev.kind === "profile") refreshContext(ev.data);
+      if (ev.kind === "selection") setChatExpanded(false);
       if (ev.kind === "finance") state.strategy = ev.data.finance?.risk || null;
       if (ev.kind === "selection") {
         state.marks = { liked: new Set(ev.data.liked || []), disliked: new Set(ev.data.disliked || []) };
@@ -137,6 +142,7 @@ async function handle(ev, myGen) {
       await pause(ev.kind === "selection" ? 0 : 500);
       break;
     case "confirm":
+      setChatExpanded(ev.kind !== "selection");
       if (ev.kind === "call") {
         state.call = createCall(ev);
         state.view = 6;
@@ -150,7 +156,7 @@ async function handle(ev, myGen) {
       }
       confirmCard(ev);
       break;
-    case "resolved": resolved(ev); break;
+    case "resolved": resolved(ev); setChatExpanded(false); break;
     case "product_opened":
       state.opened[ev.product] = ev.amount;
       if (!quiet && state.view === 2) renderStage();
@@ -311,6 +317,8 @@ function leaveChat() {
   queue = [];
   resetState();
   chatLog.innerHTML = "";
+  $("chatPeek").textContent = "";
+  refreshContext(null);
   renderStage();
 }
 
@@ -347,6 +355,7 @@ function setHash(id) {
 }
 
 async function start(query) {
+  showAgent();
   if (!query.trim()) return;
   leaveChat();
   $("query").value = "";
@@ -364,6 +373,7 @@ async function start(query) {
 
 /** Открыть диалог из списка или по ссылке #chat-<id>. */
 async function openChat(id) {
+  showAgent();
   if (!id || id === state.sid) return;
   leaveChat();
   state.sid = id;
@@ -375,6 +385,7 @@ async function openChat(id) {
 
 /** Новый диалог: пустой экран, приветствие. */
 function newChat() {
+  showAgent();
   leaveChat();
   setHash(null);
   addMsg("agent", "Опишите, какую квартиру ищете: город, бюджет, комнаты и что для вас важно.");
@@ -508,6 +519,10 @@ stepper.addEventListener("click", (e) => {
   if (b && !b.disabled) show(Number(b.dataset.step));
 });
 
+$("resumeCallAudio").addEventListener("click", () => {
+  state.phone?.unlockAudio().catch(() => addMsg("error", "Не удалось возобновить звук. Вернитесь на страницу звонка и попробуйте ещё раз."));
+});
+
 const voiceBtn = $("voiceToggle");
 const syncVoice = () => voiceBtn.setAttribute("aria-pressed", String(voice.enabled));
 voiceBtn.hidden = !voice.supported;
@@ -526,6 +541,9 @@ document.querySelectorAll(".tab").forEach((tab) =>
     if (which === "economics") mountEconomics($("view-economics"));
   }),
 );
+
+initShell({ start });
+if (new URLSearchParams(location.search).has("agent")) { showAgent(); setChatExpanded(true); }
 
 const fromHash = () => location.hash.match(/^#chat-([0-9a-f]{12})$/)?.[1];
 window.addEventListener("hashchange", () => { const id = fromHash(); if (id) openChat(id); });

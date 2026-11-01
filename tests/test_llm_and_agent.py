@@ -70,13 +70,15 @@ class GigaChatAdapterTest(unittest.TestCase):
             body = json.loads(req.content)
             self.assertEqual(body["functions"][0]["name"], "search")
             return httpx.Response(200, json={"choices": [{"message": {
-                "role": "assistant", "content": "", "function_call": {"name": "search", "arguments": {"rooms": 2}}}}]})
+                "role": "assistant", "content": "", "functions_state_id": "test-state",
+                "function_call": {"name": "search", "arguments": {"rooms": 2}}}}]})
 
         c = self.make_client(handler)
         tool = Tool("search", "Поиск квартир", {"type": "object", "properties": {"rooms": {"type": "integer"}}})
         for _ in range(2):
             r = run(c.chat([{"role": "user", "content": "двушка"}], tools=[tool]))
             self.assertEqual(r.tool_calls[0].arguments, {"rooms": 2})
+            self.assertEqual(r.functions_state_id, "test-state")
         self.assertEqual(calls, {"oauth": 1, "chat": 2})
 
     def test_401_refreshes_token(self):
@@ -92,6 +94,28 @@ class GigaChatAdapterTest(unittest.TestCase):
 
         self.assertEqual(run(self.make_client(handler).chat([{"role": "user", "content": "hi"}])).text, "ok")
         self.assertEqual(state["oauth"], 2)
+
+    def test_concurrent_dialogues_queue_instead_of_exceeding_generation_limit(self):
+        active = 0
+        peak = 0
+        async def handler(req):
+            nonlocal active, peak
+            if req.url.path.endswith('/oauth'):
+                return httpx.Response(200, json={'access_token': 'tok', 'expires_at': 4102444800000})
+            active += 1
+            peak = max(peak, active)
+            await asyncio.sleep(.02)
+            active -= 1
+            return httpx.Response(200, json={'choices': [{'message': {'content': 'ok'}}]})
+        async def go():
+            c = self.make_client(handler)
+            try:
+                return await asyncio.gather(*(c.chat([{'role': 'user', 'content': 'Тест'}]) for _ in range(4)))
+            finally:
+                await c._http.aclose()
+        responses = run(go())
+        self.assertEqual(peak, 1)
+        self.assertEqual([r.text for r in responses], ['ok'] * 4)
 
     def test_json_mode_adds_instruction(self):
         msgs = to_gigachat_messages([{"role": "system", "content": "Ты агент"}], json_mode=True)

@@ -10,7 +10,7 @@ from collections import deque
 LIMITS = [("POST", "/api/session", 10, 600), ("POST", "/api/chat/", 30, 60),
           ("POST", "/api/session/", 60, 60), ("POST", "/api/stt", 40, 60),
           ("POST", "/api/tts", 40, 60), ("POST", "/api/auth/", 20, 600),
-          ("GET", "/api/phone", 30, 60)]
+          ("GET", "/api/phone", 30, 60), ("GET", "/api/map/tiles/", 300, 60)]
 MAX_BUCKETS = 10_000
 _hits: dict[tuple, tuple[deque, float]] = {}
 _last_cleanup = 0.0

@@ -6,11 +6,14 @@
 - инструменты передаются как `functions`, а вызов приходит в `function_call`
   (arguments — уже объект, а не строка);
 - нет response_format: JSON просим в системном промпте;
-- сертификат НУЦ Минцифры: укажите GIGACHAT_CA_BUNDLE или GIGACHAT_VERIFY_SSL=false.
+- сертификат НУЦ Минцифры включён в проект; альтернативный путь — GIGACHAT_CA_BUNDLE.
 """
 from __future__ import annotations
 
+import asyncio
 import json
+import ssl
+from pathlib import Path
 import time
 import uuid
 
@@ -28,19 +31,35 @@ def to_gigachat_functions(tools: list[Tool]) -> list[dict]:
 def to_gigachat_messages(messages: list[dict], json_mode: bool) -> list[dict]:
     """Формат OpenAI -> GigaChat: вызов действия — function_call у ассистента, результат — сообщение role=function."""
     out = []
-    names: dict[str, str] = {}  # id вызова -> имя функции (у GigaChat результат подписывается именем)
-    for m in messages:
+    consumed = set()
+    for index, m in enumerate(messages):
+        if index in consumed:
+            continue
         if m.get("role") == "assistant" and m.get("tool_calls"):
-            call = m["tool_calls"][0]  # GigaChat вызывает одну функцию за ход
-            names[call["id"]] = call["function"]["name"]
-            args = call["function"]["arguments"]
-            out.append({"role": "assistant", "content": m.get("content") or "",
-                        "function_call": {"name": call["function"]["name"],
-                                          "arguments": json.loads(args) if isinstance(args, str) else args}})
+            for call in m["tool_calls"]:
+                args = call["function"]["arguments"]
+                entry = {"role": "assistant", "content": m.get("content") or "",
+                         "function_call": {"name": call["function"]["name"],
+                                           "arguments": json.loads(args) if isinstance(args, str) else args}}
+                # Совместимость с историей раннего исправления на сервере.
+                state = m.get("functions_state_id") or m.get("provider_state")
+                if state:
+                    entry["functions_state_id"] = state
+                out.append(entry)
+                # Старые диалоги DeepSeek могут содержать несколько действий за один ход.
+                # Для GigaChat-2 превращаем их в последовательные пары вызов/результат.
+                for j in range(index + 1, len(messages)):
+                    result = messages[j]
+                    if result.get("role") != "tool":
+                        break
+                    if result.get("tool_call_id") == call["id"]:
+                        out.append({"role": "function", "name": call["function"]["name"], "content": result["content"]})
+                        consumed.add(j)
+                        break
         elif m.get("role") == "tool":
-            out.append({"role": "function", "name": names.get(m.get("tool_call_id"), m.get("name", "")), "content": m["content"]})
+            raise LLMError("Результат функции без соответствующего вызова")
         else:
-            out.append({k: v for k, v in m.items() if k in ("role", "content")})
+            out.append({k: v for k, v in m.items() if k in ("role", "content", "functions_state_id") and v is not None})
     if json_mode:
         if out and out[0]["role"] == "system":
             out[0]["content"] = f"{out[0]['content']}\n\n{JSON_HINT}"
@@ -79,13 +98,25 @@ class GigaChatClient(LLMClient):
         if not credentials:
             raise LLMError("GIGACHAT_CREDENTIALS не задан")
         self.model = model
-        self._credentials = credentials
+        self._credentials = credentials.strip().removeprefix("Basic ").strip()
         self._scope = scope
         self._auth_url = auth_url
-        verify: bool | str = ca_bundle or verify_ssl
+        verify = verify_ssl
+        if verify_ssl:
+            context = ssl.create_default_context()
+            bundled = Path(__file__).resolve().parents[1] / "certs" / "russian_trusted_root_ca_pem.crt"
+            path = Path(ca_bundle) if ca_bundle else bundled
+            if ca_bundle and not path.is_absolute():
+                path = Path(__file__).resolve().parents[2] / path
+            if ca_bundle or path.exists():
+                context.load_verify_locations(cafile=str(path))
+            verify = context
         self._http = httpx.AsyncClient(base_url=base_url.rstrip("/"), verify=verify, timeout=timeout)
         self._token: str | None = None
         self._token_expires_at: float = 0.0
+        # В текущем тарифе физлица доступен один запрос генерации одновременно.
+        # get_llm() общий для диалогов, Q&A и переговоров: они ждут очередь, а не получают 429.
+        self._generation_lock = asyncio.Lock()
 
     async def _get_token(self) -> str:
         if self._token and time.time() < self._token_expires_at - 60:
@@ -118,7 +149,11 @@ class GigaChatClient(LLMClient):
             raise LLMError(f"GigaChat /models {r.status_code}: {r.text[:300]}")
         return [m.get("id") for m in r.json().get("data", [])]
 
-    async def chat(
+    async def chat(self, messages, **kwargs) -> LLMResponse:
+        async with self._generation_lock:
+            return await self._chat(messages, **kwargs)
+
+    async def _chat(
         self,
         messages,
         *,
@@ -154,4 +189,5 @@ class GigaChatClient(LLMClient):
             tool_calls=parse_function_call(msg),
             provider=self.name,
             model=self.model,
+            functions_state_id=msg.get("functions_state_id"),
         )

@@ -36,7 +36,7 @@ async def page(browser, base: str, mobile: bool = False):
         pg.dialogs.append(d.message)
         asyncio.ensure_future(d.accept())
     pg.on("dialog", on_dialog)
-    await pg.goto(base)
+    await pg.goto(base.rstrip("/") + "/?agent=1")
     note = pg.locator(".cookie-note button")
     if await note.count():
         await note.first.click()
@@ -60,6 +60,8 @@ async def wait_text(pg, text: str, t: float = 40) -> bool:
 
 
 async def send(pg, text: str) -> None:
+    if not await pg.locator("#query").is_visible():
+        await pg.click("#chatToggle")
     await pg.fill("#query", text)
     await pg.click("#sendBtn")
 

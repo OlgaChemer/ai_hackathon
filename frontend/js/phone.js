@@ -74,18 +74,65 @@ export class PhoneCall {
   constructor() {
     this.ua = null;
     this.session = null;
-    this.ctx = new (window.AudioContext || window.webkitAudioContext)();
-    this.out = this.ctx.createMediaStreamDestination(); // то, что слышит собеседник
+    this.ctx = null; // создаётся только непосредственно в пользовательском жесте
+    this.out = null; // то, что слышит собеседник
     this.remote = null;
     this.player = null;
     this.ended = false;
     this.onEnded = () => {};
+    this.onAudioState = () => {};
+    this.audioAbort = new AbortController();
+    this.previousAudioType = null;
+    this.onVisibility = () => { if (!document.hidden && this.ctx && !this.ended) this.unlockAudio().catch(() => {}); };
+    document.addEventListener("visibilitychange", this.onVisibility);
     this.ready = null;      // регистрация в Exolve (делаем заранее, чтобы звонок шёл сразу)
     this.queue = Promise.resolve(); // фразы агента звучат строго по очереди
     this.playing = null;
     this.capture = null;
     this.fillers = [];
     this.fillerNo = 0;
+  }
+
+  /** Вызывается синхронно из click: до запросов, регистрации SIP и любых await. */
+  unlockAudio() {
+    if (this.ended) return Promise.reject(new Error("Звонок уже завершён."));
+    try {
+      if (navigator.audioSession) {
+        this.previousAudioType ??= navigator.audioSession.type;
+        navigator.audioSession.type = "play-and-record";
+      }
+    } catch { /* старые версии Safari и браузеры без Audio Session API */ }
+    if (!this.ctx) {
+      this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+      this.out = this.ctx.createMediaStreamDestination();
+      this.ctx.onstatechange = () => this.onAudioState(this.ctx.state);
+    }
+    const resumed = this.ctx.resume(); // важно вызвать внутри исходного пользовательского жеста
+    const silence = this.ctx.createBufferSource();
+    silence.buffer = this.ctx.createBuffer(1, 1, this.ctx.sampleRate);
+    silence.connect(this.out);
+    silence.start();
+    this.onAudioState(this.ctx.state);
+    return resumed.then(() => this.onAudioState(this.ctx.state));
+  }
+
+  async waitForAudio() {
+    if (this.ctx.state === "running") return;
+    // В Safari resume() может ждать нового жеста бесконечно; hangup должен прерывать ожидание.
+    this.ctx.resume().catch(() => {});
+    if (this.ctx.state === "running" || this.ended) return;
+    this.onAudioState(this.ctx.state);
+    await new Promise((resolve) => {
+      const finish = () => {
+        this.ctx.removeEventListener("statechange", check);
+        this.audioAbort.signal.removeEventListener("abort", finish);
+        resolve();
+      };
+      const check = () => { if (this.ctx.state === "running" || this.ended) finish(); };
+      this.ctx.addEventListener("statechange", check);
+      this.audioAbort.signal.addEventListener("abort", finish, { once: true });
+      check();
+    });
   }
 
   /** Регистрируется в Exolve. Можно вызвать заранее — dial() тогда начнёт звонок сразу. */
@@ -130,12 +177,15 @@ export class PhoneCall {
   async dial(number, onState = () => {}) {
     onState("connecting");
     try {
+      const audioReady = this.unlockAudio();
+      await audioReady;
+      if (this.ctx.state !== "running") throw new Error("Safari приостановил звук. Нажмите кнопку звонка ещё раз.");
       await this.connect();
+      if (this.ended) throw new Error("Звонок отменён.");
     } catch (e) {
       this.hangup();
       throw e;
     }
-    await this.ctx.resume(); // dial вызывается по клику — браузер разрешит звук
     onState("dialing");
     const t0 = performance.now();
     const mark = (what) => console.info(`[звонок] ${what}: ${Math.round(performance.now() - t0)} мс`);
@@ -182,21 +232,27 @@ export class PhoneCall {
   async #synth(text) {
     const res = await fetch("/api/tts", { method: "POST", headers: { "Content-Type": "application/json", ...pinHeaders() }, body: JSON.stringify({ text }) });
     if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `Синтез речи не удался (${res.status})`);
-    return this.ctx.decodeAudioData(await res.arrayBuffer());
+    return res.arrayBuffer(); // декодируем после создания AudioContext по нажатию клиента
   }
 
   // Ставит фразу в очередь: в линию уходит только собеседнику, на сайте не звучит.
   #play(buffer) {
-    this.queue = this.queue.then(() => new Promise((resolve) => {
+    this.queue = this.queue.catch(() => {}).then(async () => {
+      if (this.ended) return;
+      await this.waitForAudio();
+      if (this.ended) return;
+      const decoded = await this.ctx.decodeAudioData(buffer.slice(0));
+      return new Promise((resolve) => {
       if (this.ended) return resolve();
       const src = this.ctx.createBufferSource();
-      src.buffer = buffer;
+      src.buffer = decoded;
       src.connect(this.out);
       const done = () => { this.playing = null; resolve(); };
       src.onended = done;
       this.playing = { stop: () => { try { src.stop(); } catch { /* уже остановлен */ } done(); } };
       src.start();
-    }));
+      });
+    });
     return this.queue;
   }
 
@@ -220,8 +276,10 @@ export class PhoneCall {
   async listen(onState = () => {}) {
     for (let attempt = 0; attempt < 4 && !this.ended; attempt++) {
       if (!this.remote) return { text: "", error: "Нет звука от собеседника." };
+      await this.waitForAudio();
+      if (this.ended) break;
       onState("listening");
-      this.capture = capturePhrase(this.remote, { threshold: 0.01, silenceMs: 900, maxMs: 25000, waitMs: 12000 });
+      this.capture = capturePhrase(this.remote, { threshold: 0.01, silenceMs: 900, maxMs: 25000, waitMs: 12000, audioContext: this.ctx });
       const { blob, heard } = await this.capture.result;
       this.capture = null;
       if (this.ended) break;
@@ -237,11 +295,15 @@ export class PhoneCall {
   hangup() {
     if (this.ended) return;
     this.ended = true;
+    this.audioAbort.abort();
+    document.removeEventListener("visibilitychange", this.onVisibility);
+    this.onAudioState("closed");
+    try { if (navigator.audioSession && this.previousAudioType !== null) navigator.audioSession.type = this.previousAudioType; } catch {}
     this.playing?.stop();
     this.capture?.stop();
     try { if (this.session && !this.session.isEnded()) this.session.terminate(); } catch { /* уже завершён */ }
     try { this.ua?.stop(); } catch { /* уже остановлен */ }
     if (this.player) this.player.srcObject = null;
-    this.ctx.close().catch(() => {});
+    this.ctx?.close().catch(() => {});
   }
 }
