@@ -39,6 +39,13 @@ async def scenario(base: str, name: str, until: str, timeout: float) -> dict:
     summary = {'case': name, 'cards': [], 'results': [], 'sources': [], 'messages': []}
     selected = []
     counts = Counter()
+
+    def continuation():
+        if until == 'sign' and 'viewing' in summary['results']:
+            return 'Продолжайте оформление выбранной квартиры, подготовьте сделку и карточку для подтверждения подписания.'
+        if until == 'sign' and selected:
+            return 'Да, звоните продавцу отмеченной квартиры и продолжайте сделку. Продавца играет ИИ, без звонка на телефон.'
+        return CONTINUE[name]
     async with httpx.AsyncClient(base_url=base, timeout=httpx.Timeout(30, read=60), follow_redirects=True) as client:
         health = await client.get('/api/health')
         health.raise_for_status()
@@ -70,11 +77,12 @@ async def scenario(base: str, name: str, until: str, timeout: float) -> dict:
                         if 'Достигнут лимит действий' in text:
                             raise AssertionError('Цикл инструментов достиг лимита')
                         if event.get('await_reply'):
-                            counts['free_text'] += 1
-                            if counts['free_text'] > 3:
+                            phase = 'deal' if 'viewing' in summary['results'] else 'call' if selected else 'search'
+                            counts['free_text:' + phase] += 1
+                            if counts['free_text:' + phase] > 3:
                                 raise AssertionError('Повторные текстовые вопросы не продвигают поиск')
                             print(f'{name}: отвечаю на текстовый вопрос', flush=True)
-                            answer = await client.post(f'/api/chat/{sid}/message', json={'text': CONTINUE[name]})
+                            answer = await client.post(f'/api/chat/{sid}/message', json={'text': continuation()})
                             answer.raise_for_status()
                     if event['type'] == 'result':
                         summary['results'].append(kind)
@@ -100,7 +108,7 @@ async def scenario(base: str, name: str, until: str, timeout: float) -> dict:
                         # Модель вправе один раз уточнить пожелания или предложить пересмотр бюджета.
                         # Синтетический клиент сохраняет свои рамки и просит продолжить.
                         answer = await client.post(f'/api/chat/{sid}/message', json={
-                            'text': CONTINUE[name]})
+                            'text': continuation()})
                         answer.raise_for_status()
                         continue
                     if kind == 'selection':
