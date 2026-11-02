@@ -65,6 +65,8 @@ AUDIT_SYSTEM = """Ты аудитор понимания запроса, а не
 Прежние параметры сохраняются, если клиент не менял их; не требуй повторно записывать неизменённые.
 Неполное географическое название требует сравнения со ВСЕМИ supported_cities. Если оно подходит
 нескольким полным названиям, нужен вопрос с этими вариантами, даже если один вариант привычнее другого.
+ambiguous_catalog_names — индекс совпадающих частей названий справочника; сокращение из этого
+индекса без уточняющего слова не позволяет выбрать один город. Проверь это до остальных условий.
 Сначала перечисли атомарные условия клиента, каждое отдельно. Для каждого запиши expected —
 JSON-объект полей итогового профиля с машинными значениями (те же имена и типы, что в change_schema).
 Списки — полное ожидаемое значение с сохранением остальных условий. Для отмены запиши итоговое
@@ -139,6 +141,15 @@ def _literal(text):
     return ' '.join(text.split()).casefold()
 
 
+def catalog_ambiguities(cities):
+    """Индекс справочника, не разбор клиентского текста; новые города учитываются автоматически."""
+    parts = {}
+    for city in cities:
+        for word in city.split():
+            parts.setdefault(word, []).append(city)
+    return {word: names for word, names in parts.items() if len(names) > 1}
+
+
 def _validate(result, payload):
     validation.validate(result, {'type': 'object', 'required': ['intent', 'decision', 'changes', 'evidence', 'question', 'options'], 'properties': {
         'intent': {'type': 'string', 'enum': ['search', 'refine', 'question', 'continue', 'hold', 'other']},
@@ -188,6 +199,7 @@ async def prepare(s, proposal=None):
         return s.request_review
     from .. import sources
     payload = {'supported_cities': sources.SUPPORTED_CITIES, 'messages': inputs, 'profile': deepcopy(s.profile), 'proposed_changes': proposal or {},
+               'ambiguous_catalog_names': catalog_ambiguities(sources.SUPPORTED_CITIES),
                'change_schema': _schema(), 'workflow': {'has_search': s.search is not None, 'has_selection': bool(s.shown), 'has_calls': bool(s.calls), 'chosen': bool(s.chosen)}}
     revision = s.client_revision
     error = None
