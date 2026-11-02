@@ -93,6 +93,8 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
         payload = json.loads(s.llm.seen[1][1]['content'])['data']
         self.assertIn('audit_feedback', payload)
         self.assertNotIn('Не совпадают поля: payment', s.llm.seen[1][0]['content'])
+        audit_data = json.loads(s.llm.audit_seen[1][1]['content'])['data']
+        self.assertFalse({'review','proposed_changes','previous_review','audit_feedback'} & audit_data.keys())
 
     async def test_rejected_coverage_cannot_apply_even_a_well_formed_grounded_patch(self):
         text = 'Новгород'
@@ -290,6 +292,13 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
             self.assertIn('error',result)
             verify.assert_not_awaited()
         self.assertFalse(s.red_lines_ok)
+
+    async def test_invalid_planner_argument_types_do_not_block_a_valid_semantic_request(self):
+        text='Казань, однушка до пяти миллионов.'
+        s=self.agent(text,verdict(text,{'city':'Казань','rooms':1,'budget_max':5_000_000},intent='search'))
+        result=await actions.execute(s,ToolCall('update_request',{'city':123,'budget_max':'пять миллионов'}))
+        self.assertNotIn('error',result)
+        self.assertEqual((s.profile['city'],s.profile['rooms'],s.profile['budget_max']),('Казань',1,5_000_000))
 
     async def test_explicit_hold_prevents_work_even_with_a_complete_profile(self):
         text = 'Пока не ищи, мне надо подумать.'

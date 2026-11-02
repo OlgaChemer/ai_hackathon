@@ -87,11 +87,20 @@ async def execute(s, call: ToolCall) -> dict:
     if a is None:
         return {"error": f"Нет действия с таким именем. Доступны: {', '.join(REGISTRY)}"}
     # Семантический разбор выполняется до проверки допуска: новые условия могут отозвать согласия.
-    if call.name != "update_request" and s.request_inputs:
+    if s.request_inputs:
         from .. import understanding
-        checked = await understanding.ensure(s)
+        # Предложение планировщика — только данные. Неверный тип его аргумента
+        # не должен блокировать независимое понимание корректного сообщения клиента.
+        proposal = call.arguments if call.name == 'update_request' and isinstance(call.arguments, dict) else None
+        checked = await understanding.ensure(s, proposal)
         if checked and checked.get("needs_clarification"):
             return checked
+        if call.name == 'update_request':
+            if a.step:
+                await s.step(a.step)
+            if checked and checked.get('profile_result'):
+                return checked['profile_result']
+            return await a.run(s)  # уже проверенный ввод; повторная догадка не применяется
     if not available(s, call.name):
         names = ", ".join(a.name for a in REGISTRY.values() if available(s, a.name))
         hint = ""

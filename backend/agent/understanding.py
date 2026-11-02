@@ -97,6 +97,8 @@ async def audit(s, payload, review):
     expected_schema['properties'].pop('clear_criteria')
     for field in ('condition','timeline','year_min','area_min','kitchen_min','metro_max_minutes'):
         expected_schema['properties'][field]['type'] = [expected_schema['properties'][field]['type'], 'null']
+        if 'enum' in expected_schema['properties'][field]:
+            expected_schema['properties'][field]['enum'].append(None)
     output_schema = {'type':'object','required':['checks'],'additionalProperties':False,'properties':{
         'checks':{'type':'array','maxItems':40,'items':{
             'type':'object','required':['quote','expected','clarify'],'additionalProperties':False,'properties':{
@@ -139,7 +141,9 @@ async def audit(s, payload, review):
             different = [k for k,v in check['expected'].items() if _comparable(candidate.get(k)) != _comparable(v)]
             if different:
                 issues.append({**check,'problem':'Не совпадают поля: ' + ', '.join(different)})
-    record('request_audit', session=s.id, accepted=not issues, issues=len(issues))
+    record('request_audit', session=s.id, accepted=not issues, issues=len(issues),
+           fields=sorted({k for issue in issues for k in issue['expected']}),
+           needs_clarification=any(issue['clarify'] for issue in issues))
     return {'accepted':not issues, 'issues':issues}
 
 
@@ -267,6 +271,8 @@ async def prepare(s, proposal=None):
             continue
         except (ValueError, TypeError, KeyError) as exc:
             error = str(exc)[:160]
+            # Только диагностическое сообщение проверки; цитаты/значения условий не журналируем.
+            record('request_review_invalid', session=s.id, problem=guard.output(error), attempt=attempt + 1)
             continue
         except LLMError:
             raise
