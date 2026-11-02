@@ -5,7 +5,7 @@
   за минуту до истечения (живёт ~30 минут);
 - инструменты передаются как `functions`, а вызов приходит в `function_call`
   (arguments — уже объект, а не строка);
-- нет response_format: JSON просим в системном промпте;
+- структурированный вывод: response_format с JSON Schema и strict=true;
 - сертификат НУЦ Минцифры включён в проект; альтернативный путь — GIGACHAT_CA_BUNDLE.
 """
 from __future__ import annotations
@@ -194,16 +194,19 @@ class GigaChatClient(LLMClient):
         *,
         tools: list[Tool] | None = None,
         json_mode: bool = False,
+        json_schema: dict | None = None,
         temperature: float = 0.3,
         max_tokens: int = 800,
         tag: str = "",
     ) -> LLMResponse:
         body: dict = {
             "model": self.model,
-            "messages": to_gigachat_messages(messages, json_mode),
+            "messages": to_gigachat_messages(messages, json_mode and json_schema is None),
             "temperature": max(temperature, 0.01),  # GigaChat не принимает 0
             "max_tokens": max_tokens,
         }
+        if json_schema is not None:
+            body['response_format'] = {'type':'json_schema', 'schema':json_schema, 'strict':True}
         if tools:
             body["functions"] = to_gigachat_functions(tools)
             body["function_call"] = "auto"

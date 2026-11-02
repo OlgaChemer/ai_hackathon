@@ -37,6 +37,7 @@ class DeepSeekClient(LLMClient):
         *,
         tools: list[Tool] | None = None,
         json_mode: bool = False,
+        json_schema: dict | None = None,
         temperature: float = 0.3,
         max_tokens: int = 800,
         tag: str = "",
@@ -47,7 +48,7 @@ class DeepSeekClient(LLMClient):
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
-        if json_mode:
+        if json_mode or json_schema is not None:
             body["response_format"] = {"type": "json_object"}
         if tools:
             body["tools"] = [

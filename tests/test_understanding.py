@@ -114,6 +114,21 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
             await U.ensure(s)
         self.assertEqual(s.profile, before)
 
+    async def test_sparse_native_fields_are_decoded_and_compared_without_filling_other_fields(self):
+        text = 'Казань'
+        reply = verdict(text, {'city':'Казань'})
+        reply['changes'] = [{'field':'city','value':'Казань'}]
+        s=self.agent(text,reply)
+        s.llm.audits=[{'checks':[{'quote':text,'expected':[{'field':'city','value':'Казань'}],'clarify':False}]}]
+        await U.ensure(s)
+        self.assertEqual(s.profile['city'],'Казань')
+        self.assertIsNone(s.profile['budget_max'])
+        self.assertIsNone(s.profile['payment'])
+
+    def test_native_sparse_fields_reject_duplicate_updates(self):
+        with self.assertRaises(ValueError):
+            U._decode_patch([{'field':'city','value':'Москва'},{'field':'city','value':'Казань'}])
+
     async def test_ambiguity_does_not_mutate_until_actual_clarification(self):
         text = 'Двушка в Новгороде до 9 миллионов.'
         ambiguous = verdict(text, decision='clarify', intent='search')

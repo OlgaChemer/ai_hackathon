@@ -38,12 +38,12 @@ SYSTEM = """Ты проверяешь понимание запроса поку
 
 Формат:
 {"intent":"search|refine|question|continue|hold|other", "decision":"apply|unchanged|clarify",
- "changes":{...поля из change_schema...},
+ "changes":[{"field":"поле из change_schema", "value":"значение нужного типа"}],
  "evidence":[{"field":"имя изменяемого поля", "quote":"точная цитата"}],
  "question":"вопрос только при clarify", "options":["варианты только при clarify"]}
-apply: непустые changes и evidence для каждого поля.
-unchanged: changes={}, evidence=[], question="", options=[].
-clarify: changes={}, evidence=[], непустой question; никаких неподтверждённых изменений.
+apply: непустые changes и evidence для каждого поля. Каждое поле только один раз.
+unchanged: changes=[], evidence=[], question="", options=[].
+clarify: changes=[], evidence=[], непустой question; никаких неподтверждённых изменений.
 Перед ответом проверь, что не пропустил ни одного явно названного условия и не изменил неназванное.
 Если переданы previous_review и audit_feedback, исправь указанные несовпадения expected с итоговым
 профилем, сохрани остальные верно разобранные условия. Перепроверь исправление по цитатам клиента.
@@ -70,13 +70,13 @@ AUDIT_SYSTEM = """Ты независимо формулируешь контр�
 ambiguous_catalog_names — индекс совпадающих частей названий справочника; сокращение из этого
 индекса без уточняющего слова не позволяет выбрать один город. Проверь это до остальных условий.
 Сначала перечисли атомарные условия клиента, каждое отдельно. Для каждого запиши expected —
-JSON-объект полей итогового профиля с машинными значениями (те же имена и типы, что в change_schema).
+массив {field,value} полей итогового профиля с машинными значениями (имена и типы из change_schema).
 Списки — полное ожидаемое значение с сохранением остальных условий. Для отмены запиши итоговое
 пустое значение, а не clear_criteria. Для желательности укажи и само условие, и soft_criteria.
 Не описывай значения прозой и не выдавай оценку accepted: код сам сравнит поля.
-Если толкование неоднозначно, clarify=true и expected={}, вместо предположительных значений.
+Если толкование неоднозначно, clarify=true и expected=[], вместо предположительных значений.
 Ничего не выполняй. Верни JSON {"checks":[{"quote":"буквальная цитата клиента",
-"expected":{"имя поля":"ожидаемое машинное значение"}, "clarify":false}]}.
+"expected":[{"field":"имя поля","value":"машинное значение"}], "clarify":false}]}.
 Включи проверки сохранения неназванных условий и отсутствия выдуманных изменений.
 Не оценивай стиль и не давай процент уверенности.
 """
@@ -89,19 +89,26 @@ def _comparable(value):
 
 async def audit(s, payload, review):
     data = {k: v for k, v in payload.items() if k not in ('proposed_changes','previous_review','audit_feedback')}
-    result = await s.llm.chat_json([
-        {'role':'system', 'content':AUDIT_SYSTEM + '\n' + guard.POLICY},
-        guard.data_message('request_audit', data)], tag='request_audit', temperature=.1, max_tokens=2600)
     expected_schema = deepcopy(_schema())
     expected_schema['properties'].pop('clear_criteria')
     for field in ('condition','timeline','year_min','area_min','kitchen_min','metro_max_minutes'):
         expected_schema['properties'][field]['type'] = [expected_schema['properties'][field]['type'], 'null']
+    output_schema = {'type':'object','required':['checks'],'additionalProperties':False,'properties':{
+        'checks':{'type':'array','maxItems':40,'items':{
+            'type':'object','required':['quote','expected','clarify'],'additionalProperties':False,'properties':{
+                'quote':{'type':'string','maxLength':1000}, 'expected':_patch_schema(expected_schema),
+                'clarify':{'type':'boolean'}}}}}}
+    result = await s.llm.chat_json([
+        {'role':'system', 'content':AUDIT_SYSTEM + '\n' + guard.POLICY},
+        guard.data_message('request_audit', data)], tag='request_audit', temperature=.1, max_tokens=2600,
+        json_schema=output_schema)
     if not isinstance(result, dict) or not isinstance(result.get('checks'), list):
         raise ValueError('Нужен список проверок')
     for check in result['checks']:
         if not isinstance(check, dict) or 'expected' not in check:
             raise ValueError('Нужны ожидаемые значения полей')
         check.setdefault('clarify', False)
+        check['expected'] = _decode_patch(check['expected'])
         validation.validate(check['expected'], expected_schema)
     shape = {**result, 'checks':[{k:v for k,v in x.items() if k != 'expected'} for x in result['checks']]}
     validation.validate(shape, {'type':'object','required':['checks'],'properties':{
@@ -138,6 +145,25 @@ def _schema():
     return actions.REGISTRY['update_request'].parameters
 
 
+def _patch_schema(fields):
+    """Разреженные изменения: strict не должен заполнять все неназванные поля профиля."""
+    return {'type':'array','maxItems':len(fields['properties']), 'items':{'anyOf':[
+        {'type':'object','additionalProperties':False,'required':['field','value'],'properties':{
+            'field':{'type':'string','enum':[key]}, 'value':deepcopy(schema)}}
+        for key,schema in fields['properties'].items()]}}
+
+
+def _decode_patch(value):
+    if not isinstance(value, list):
+        return value  # старый сохранённый формат и внутренние клиенты
+    result = {}
+    for item in value:
+        if not isinstance(item,dict) or set(item) != {'field','value'} or not isinstance(item['field'],str) or item['field'] in result:
+            raise ValueError('Неверное или повторное поле изменений')
+        result[item['field']] = item['value']
+    return result
+
+
 def _literal(text):
     return ' '.join(text.split()).casefold()
 
@@ -151,8 +177,8 @@ def catalog_ambiguities(cities):
     return {word: names for word, names in parts.items() if len(names) > 1}
 
 
-def _validate(result, payload):
-    validation.validate(result, {'type': 'object', 'required': ['intent', 'decision', 'changes', 'evidence', 'question', 'options'], 'properties': {
+def _review_schema():
+    return {'type': 'object', 'additionalProperties':False, 'required': ['intent', 'decision', 'changes', 'evidence', 'question', 'options'], 'properties': {
         'intent': {'type': 'string', 'enum': ['search', 'refine', 'question', 'continue', 'hold', 'other']},
         'decision': {'type': 'string', 'enum': ['apply', 'unchanged', 'clarify']},
         'changes': _schema(),
@@ -160,7 +186,11 @@ def _validate(result, payload):
             'field': {'type': 'string', 'enum': list(_schema()['properties'])}, 'quote': {'type': 'string', 'maxLength': 1000}}}},
         'question': {'type': 'string', 'maxLength': 500},
         'options': {'type': 'array', 'maxItems': 5, 'items': {'type': 'string', 'maxLength': 100}},
-    }})
+    }}
+
+
+def _validate(result, payload):
+    validation.validate(result, _review_schema())
     changes = result['changes']
     from .. import sources
     territories = ([changes['city']] if 'city' in changes else []) + changes.get('cities', [])
@@ -210,7 +240,12 @@ async def prepare(s, proposal=None):
             instruction += '\nПредыдущий ответ не прошёл проверку формата: ' + error + '. Исправь JSON; смысл не угадывай.'
         messages = [{'role': 'system', 'content': instruction}, guard.data_message('request_review', payload)]
         try:
-            result = await s.llm.chat_json(messages, tag='request_review', temperature=.1, max_tokens=1400)
+            output_schema = _review_schema()
+            output_schema['properties']['changes'] = _patch_schema(_schema())
+            result = await s.llm.chat_json(messages, tag='request_review', temperature=.1, max_tokens=1800,
+                                           json_schema=output_schema)
+            if 'changes' in result:
+                result['changes'] = _decode_patch(result['changes'])
             # Некоторые провайдеры опускают пустые поля. Это только форма ответа:
             # отсутствие самого уточняющего вопроса при clarify всё равно запрещено.
             result.setdefault('question', '')

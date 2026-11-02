@@ -122,6 +122,18 @@ class GigaChatAdapterTest(unittest.TestCase):
         self.assertIn("JSON", msgs[0]["content"])
         self.assertEqual(to_gigachat_functions([Tool("a", "b", {})])[0], {"name": "a", "description": "b", "parameters": {}})
 
+    def test_native_json_schema_is_sent_to_gigachat(self):
+        schema = {'type':'object','properties':{'ok':{'type':'boolean'}},'required':['ok'],'additionalProperties':False}
+        def handler(req):
+            if req.url.path.endswith('/oauth'):
+                return httpx.Response(200,json={'access_token':'tok','expires_at':4102444800000})
+            body=json.loads(req.content)
+            self.assertEqual(body['response_format'], {'type':'json_schema','schema':schema,'strict':True})
+            self.assertEqual(body['messages'][0]['content'], 'Проверь')
+            return httpx.Response(200,json={'choices':[{'message':{'content':'{"ok":true}'}}]})
+        result=run(self.make_client(handler).chat_json([{'role':'system','content':'Проверь'}],json_schema=schema))
+        self.assertEqual(result, {'ok':True})
+
 
 class CianParsingTest(unittest.TestCase):
     PAGE = ('<title>Купить квартиру в Казани</title><script>x={"offers":[{"cianId":42,"totalArea":"51.2",'

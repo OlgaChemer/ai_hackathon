@@ -62,6 +62,7 @@ class LLMClient(ABC):
         *,
         tools: list[Tool] | None = None,
         json_mode: bool = False,
+        json_schema: dict | None = None,
         temperature: float = 0.3,
         max_tokens: int = 800,
         tag: str = "",
