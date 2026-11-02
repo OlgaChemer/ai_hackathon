@@ -28,7 +28,7 @@
 body[data-page="welcome"] .site-header { display:none; }
 .workspace.layout { display:grid; grid-template-columns:minmax(0,1fr) 380px; gap:28px; max-width:1600px; }
 .workspace.layout > .stage { grid-column:1; grid-row:1; }
-.workspace.layout > .chat { grid-column:2; grid-row:1; position:sticky; top:20px; height:calc(100dvh - 150px); min-height:480px; }
+.workspace.layout > .chat { grid-column:2; grid-row:1; position:sticky; top:20px; height:calc(100dvh - 245px); min-height:320px; }
 .stage-navigation { display:none; }
 .panel-lead,.lead,.hint { color:var(--ink); }
 .price-explanation { margin-top:16px; font-size:13px; }
