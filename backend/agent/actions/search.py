@@ -80,7 +80,7 @@ def ranked(pool: list[dict], meta: dict, prefs: P.Prefs) -> list[dict]:
     for x in pool:
         meta[x["id"]]["total"] = round(meta[x["id"]]["score"] + P.adjust(x, prefs) + match(x, prefs)["preference_score"], 1)
         meta[x["id"]]["ranking"] = value_rank(x, prefs.profile, meta[x["id"]]["fair"], match(x, prefs), P.adjust(x, prefs))
-    return sorted(pool, key=lambda x: (match(x, prefs)["status"] == "confirmed", meta[x["id"]]["ranking"]["value_score"], -x["price"], x["id"]), reverse=True)
+    return sorted(pool, key=lambda x: (match(x, prefs)["status"] == "confirmed", meta[x["id"]]["ranking"]["center_preferred"], meta[x["id"]]["ranking"]["value_score"], -x["price"], x["id"]), reverse=True)
 
 
 def card(x: dict, meta: dict, prefs: P.Prefs) -> dict:

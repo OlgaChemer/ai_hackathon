@@ -81,7 +81,18 @@ async def update_request(s, **changes) -> dict:
     old_profile = dict(s.profile)
     before = {k: s.profile.get(k) for k in CORE_KEYS}
     latest = next((e.get("text", "") for e in reversed(s.history) if e.get("type") == "message" and e.get("role") == "user"), "")
-    changes = explicit_search_fields(changes, latest, s.profile)
+    # Короткое «15 минут» может отвечать на явный вопрос про метро.
+    context = ""
+    seen_user = False
+    for event in reversed(s.history):
+        if event.get("type") == "message" and event.get("role") == "user":
+            if seen_user:
+                break
+            seen_user = True
+        elif seen_user and event.get("type") == "confirm" and event.get("kind") == "clarify":
+            context = event.get("text", "")
+            break
+    changes = explicit_search_fields(changes, latest, s.profile, context)
     p = merge_profile(changes, s.profile or None)
     for key in changes.get("clear_criteria", []):
         p[key] = None

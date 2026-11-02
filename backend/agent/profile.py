@@ -178,13 +178,19 @@ def passes_hard_filters(x: dict, p: dict) -> bool:
     return True
 
 
-def explicit_search_fields(changes: dict, text: str, base: dict | None = None) -> dict:
+def explicit_search_fields(changes: dict, text: str, base: dict | None = None, criteria_context: str = "") -> dict:
     """Preserve unambiguous search alternatives that a model may accidentally collapse.
 
     Uses only the latest client utterance. It never infers budget, children or financial authority.
     """
     out = dict(changes)
     text = (text or '').lower().replace('ё', 'е')
+    cue_text = text + " " + criteria_context.lower()
+    if text:
+        for key, cue in (("metro_max_minutes", r"метро|мцд|станци|пешком"),
+                         ("condition", r"ремонт|отделк|заех|засел|готов.{0,15}(?:квартир|жиль)")):
+            if key in out and not (base or {}).get(key) and not re.search(cue, cue_text):
+                out.pop(key)  # отсутствующие требования не становятся фильтрами из-за догадки модели
     rooms = re.search(r'\b([0-5])\s*(?:[-–—]|или)\s*([0-5])\s*(?:комнат|комн)', text)
     if rooms:
         lo, hi = sorted(map(int, rooms.groups()))

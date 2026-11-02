@@ -78,6 +78,11 @@ class QueryAndRankingTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(changes['poi'], ['park','hospital'])
         self.assertEqual(explicit_search_fields({'poi':[]}, 'Больница не нужна')['poi'], [])
         self.assertEqual(explicit_search_fields({'rooms':2}, 'Только две комнаты'), {'rooms':2})
+        extras = explicit_search_fields({'metro_max_minutes':15, 'condition':'ready'}, '1–2 комнаты в Самаре, желательно в центре')
+        self.assertNotIn('metro_max_minutes', extras)
+        self.assertNotIn('condition', extras)
+        self.assertEqual(explicit_search_fields({'metro_max_minutes':10}, 'Метро до 10 минут')['metro_max_minutes'], 10)
+        self.assertEqual(explicit_search_fields({'metro_max_minutes':10}, '10 минут', criteria_context='Как далеко от метро?')['metro_max_minutes'], 10)
 
     def test_room_and_city_variants_survive_normalization_and_filters(self):
         p = merge_profile({'city': 'Москва', 'cities': ['Подмосковье'], 'rooms_options': [2, 1, 1], 'budget_max': 10_000_000})
@@ -107,7 +112,7 @@ class QueryAndRankingTest(unittest.IsolatedAsyncioTestCase):
         profile = merge_profile({'city':'Самара','rooms_options':[1,2],'budget_max':10_000_000,'prefer_center':True})
         prefs = session.P.Prefs(); prefs.sync(profile)
         center = listing(id='center',city='Самара',rooms=1,price=8_500_000,lat=53.195,lng=50.11)
-        outer = listing(id='outer',city='Самара',rooms=2,price=8_000_000,lat=53.27,lng=50.29)
+        outer = listing(id='outer',city='Самара',rooms=2,price=3_000_000,lat=53.27,lng=50.29)
         meta = {x['id']:{'score':50,'fair':{'fair':x['price'],'comps_count':8}} for x in (center,outer)}
         self.assertEqual(search_actions.ranked([outer,center],meta,prefs)[0]['id'],'center')
         self.assertLess(meta['center']['ranking']['center_km'],1)

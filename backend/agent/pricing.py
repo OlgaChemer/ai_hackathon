@@ -187,7 +187,7 @@ def value_rank(x: dict, profile: dict, fp: dict, match: dict, learned: float = 0
     relative = max(.7, min(1.3, fp["fair"] / x["price"])) if supported else 1.0
     value = quality * relative / (x["price"] / 1_000_000)
     return {"value_score": round(value, 3), "fit_pct": round(fit * 100),
-            "center_km": distance, "center_requested": bool(profile.get("prefer_center")),
+            "center_km": distance, "center_preferred": distance is not None and distance <= 5, "center_requested": bool(profile.get("prefer_center")),
             "market_supported": supported,
             "discount_pct": round((fp["fair"] - x["price"]) / fp["fair"] * 100, 1) if supported else None,
             "basis": "Совпадение пожеланий на 1 млн ₽ с поправкой на цену аналогов"}
