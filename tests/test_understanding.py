@@ -114,6 +114,25 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(s.profile['city'],'Самара')
         self.assertEqual(len(s.llm.seen),2)
 
+    async def test_omitted_empty_question_metadata_needs_no_extra_generation(self):
+        text = 'Казань'
+        reply = verdict(text, {'city':'Казань'})
+        del reply['question'], reply['options']
+        s = self.agent(text, reply)
+        await U.ensure(s)
+        self.assertEqual(s.profile['city'], 'Казань')
+        self.assertEqual(len(s.llm.seen), 1)
+
+    async def test_missing_actual_clarification_question_still_fails_closed(self):
+        text = 'Новгород'
+        reply = verdict(text, decision='clarify')
+        del reply['question'], reply['options']
+        s = self.agent(text, reply, reply)
+        before = deepcopy(s.profile)
+        with self.assertRaises(U.UnderstandingError):
+            await U.ensure(s)
+        self.assertEqual(s.profile, before)
+
     async def test_confirmed_state_change_during_review_invalidates_the_pending_write(self):
         entered, release = asyncio.Event(), asyncio.Event()
         text = 'Казань'

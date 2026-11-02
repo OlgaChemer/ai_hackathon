@@ -121,6 +121,10 @@ async def prepare(s, proposal=None):
         messages = [{'role': 'system', 'content': instruction}, guard.data_message('request_review', payload)]
         try:
             result = await s.llm.chat_json(messages, tag='request_review', temperature=.1, max_tokens=1400)
+            # Некоторые провайдеры опускают пустые поля. Это только форма ответа:
+            # отсутствие самого уточняющего вопроса при clarify всё равно запрещено.
+            result.setdefault('question', '')
+            result.setdefault('options', [])
             _validate(result, payload)
         except StructuredOutputError:
             error = 'Некорректный JSON'
