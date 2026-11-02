@@ -5,9 +5,8 @@ import { addGuard, addLine, createCall, renderCall, setPhase, setStatus, setTypi
 import { confirmCard, initCards, resolved, staleCards } from "./cards.js";
 import { savingsChart } from "./chart.js";
 import { initChats, refreshChats } from "./chats.js";
-import { mountEconomics } from "./economics.js";
 import { el, html, sleep } from "./format.js";
-import { initShell, showAgent, refreshContext, setChatExpanded } from "./shell.js";
+import { initShell, navigate, showAgent, showPage, syncShell, refreshContext, setChatExpanded } from "./shell.js";
 import { mountMap, unmountMap } from "./map.js";
 import { $, addMsg, chatLog, config, resetState, stage, state } from "./state.js";
 import * as V from "./views.js";
@@ -311,6 +310,7 @@ function setComposer() {
     ? "Ответ агенту или пожелание: «кухня побольше», «не первый этаж»…"
     : inChat ? "Продолжить диалог: «а если трёшку?», «покажи дешевле»…" : "Например: ищу 2-комнатную в Казани до 9 млн рядом со школой";
   $("resetBtn").hidden = !inChat;
+  syncShell();
 }
 
 /** Закрыть текущий диалог на экране: звук, звонок, поток событий. */
@@ -358,7 +358,7 @@ function openStream(id, after) {
 }
 
 function setHash(id) {
-  const want = id ? `#chat-${id}` : "";
+  const want = id ? `#chat-${id}` : "#agent";
   if (location.hash !== want) history.replaceState(null, "", want || location.pathname + location.search);
 }
 
@@ -375,6 +375,9 @@ async function start(query) {
     setComposer();
     openStream(id, 0);
   } catch (e) {
+    $("query").value = query;
+    setComposer();
+    setChatExpanded(true);
     addMsg("error", `Агент не запустился: ${e.message}`);
   }
 }
@@ -393,7 +396,7 @@ async function openChat(id) {
 
 /** Новый диалог: пустой экран, приветствие. */
 function newChat() {
-  showAgent();
+  navigate('agent', {fresh:true});
   leaveChat();
   setHash(null);
   addMsg("agent", "Опишите, какую квартиру ищете: город, бюджет, комнаты и что для вас важно.");
@@ -539,22 +542,22 @@ syncVoice();
 
 document.querySelectorAll(".tab").forEach((tab) =>
   tab.addEventListener("click", () => {
-    const which = tab.dataset.tab;
-    document.querySelectorAll(".tab").forEach((t) => {
-      t.classList.toggle("is-active", t === tab);
-      t.setAttribute("aria-selected", String(t === tab));
-    });
-    $("view-deal").hidden = which !== "deal";
-    $("view-economics").hidden = which !== "economics";
-    if (which === "economics") mountEconomics($("view-economics"));
+    navigate(tab.dataset.tab === "economics" ? "economics" : "agent");
   }),
 );
 
-initShell({ start });
-if (new URLSearchParams(location.search).has("agent")) { showAgent(); setChatExpanded(true); }
-
 const fromHash = () => location.hash.match(/^#chat-([0-9a-f]{12})$/)?.[1];
-window.addEventListener("hashchange", () => { const id = fromHash(); if (id) openChat(id); });
+const route = () => {
+  const id = fromHash();
+  if (id) { openChat(id); return; }
+  const page = {'#history':'history', '#economics':'economics', '#agent':'agent', '#apartments':'apartments'}[location.hash]
+    || (new URLSearchParams(location.search).has('agent') ? 'agent' : 'apartments');
+  showPage(page);
+  if (page === 'agent') setChatExpanded(true);
+};
+initShell({ start });
+window.addEventListener("hashchange", route);
+window.addEventListener("popstate", route);
 initChats({ open: openChat, create: newChat, current: () => state.sid });
 initAccount({ onChange: () => refreshChats() });
 if (fromHash()) openChat(fromHash());
@@ -562,6 +565,7 @@ else {
   addMsg("agent", "Здравствуйте! Я агент покупки квартиры. Расскажите текстом или голосом, что ищете: город, бюджет, комнаты и что для вас важно.");
   setComposer();
   renderStage();
+  route();
 }
 api.health().then((h) => {
   config.cities = { featured: h.featured_cities || [], total: (h.cities || []).length };

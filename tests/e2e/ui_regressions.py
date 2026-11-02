@@ -30,6 +30,8 @@ async def main(base):
             await page.locator('[data-action=portal-search]').click()
         query = (await sent.value).post_data_json['query']
         assert 'Казань' in query and '9 млн' in query and 'только вторичка' in query, query
+        await page.wait_for_function('query => document.getElementById("query").value === query', arg=query)
+        assert await page.locator('#sendBtn').is_enabled()
         await page.unroute('**/api/session')
         await page.goto(base, wait_until='domcontentloaded')
         await page.locator('.agent-launcher').click()
