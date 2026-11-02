@@ -8,7 +8,7 @@ from backend import db, sources
 from backend.agent import actions, session
 from backend.agent.actions import search as search_actions
 from backend.agent.pricing import fair_price, value_rank
-from backend.agent.profile import explicit_search_fields, merge_profile, passes_hard_filters
+from backend.agent.profile import merge_profile, passes_hard_filters
 from backend.llm.gigachat import to_gigachat_messages
 from backend.sources.base import normalize_city
 from tests.fakes import ScriptedLLM, call, drive, say
@@ -29,6 +29,7 @@ class FlexibleSearchTest(unittest.IsolatedAsyncioTestCase):
         s = session.create_session('Подберите квартиру', ScriptedLLM(*steps))
         s.profile = merge_profile({'city': 'Казань', 'rooms': 2, 'budget_max': 9_000_000})
         s.prefs.sync(s.profile)
+        s.llm.review_intent = 'search'
         return s
 
     async def test_narration_without_tool_runs_search_and_selection(self):
@@ -72,25 +73,12 @@ class FlexibleSearchTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_knowledge_answer_does_not_start_a_new_search(self):
         s = self.agent(say('Эскроу — специальный счёт для безопасной сделки.'))
+        s.query = 'Что такое эскроу?'
         await drive(s)
         self.collect_mock.assert_not_awaited()
 
 
 class QueryAndRankingTest(unittest.IsolatedAsyncioTestCase):
-    def test_explicit_latest_words_repair_dropped_variants_and_hospital(self):
-        changes = explicit_search_fields({'rooms':2, 'poi':['park']}, 'Хочу 1–2 комнаты в Москве или Подмосковье, желательно в центре, важны рядом парк и больница')
-        self.assertEqual(changes['rooms_options'], [1,2])
-        self.assertEqual(changes['cities'], ['Московская область'])
-        self.assertEqual(changes['city'], 'Москва')
-        self.assertTrue(changes['prefer_center'])
-        self.assertEqual(changes['poi'], ['park','hospital'])
-        self.assertEqual(explicit_search_fields({'poi':[]}, 'Больница не нужна')['poi'], [])
-        self.assertEqual(explicit_search_fields({'rooms':2}, 'Только две комнаты'), {'rooms':2})
-        extras = explicit_search_fields({'metro_max_minutes':15, 'condition':'ready'}, '1–2 комнаты в Самаре, желательно в центре')
-        self.assertNotIn('metro_max_minutes', extras)
-        self.assertNotIn('condition', extras)
-        self.assertEqual(explicit_search_fields({'metro_max_minutes':10}, 'Метро до 10 минут')['metro_max_minutes'], 10)
-        self.assertEqual(explicit_search_fields({'metro_max_minutes':10}, '10 минут', criteria_context='Как далеко от метро?')['metro_max_minutes'], 10)
 
     def test_room_and_city_variants_survive_normalization_and_filters(self):
         p = merge_profile({'city': 'Москва', 'cities': ['Подмосковье'], 'rooms_options': [2, 1, 1], 'budget_max': 10_000_000})
@@ -104,38 +92,9 @@ class QueryAndRankingTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(normalize_city('Подмосковье'), 'Московская область')
         self.assertIn('region=4593', sources.cian.build_url('Московская область', 1, 10_000_000))
 
-    def test_refinements_preserve_rooms_but_explicit_city_change_clears_old_regions(self):
-        base = merge_profile({'city':'Москва','cities':['Московская область'],'rooms_options':[1,2],'budget_max':10_000_000})
-        change = explicit_search_fields({'rooms':2,'poi':['park']}, 'Парк рядом желателен', base)
-        self.assertEqual(merge_profile(change, base)['rooms_options'], [1,2])
-        self.assertEqual(merge_profile({'city':'Казань'},base)['cities'], [])
-        self.assertEqual(explicit_search_fields({'city':'Москва'}, 'Только Москва', base)['cities'], [])
-        no_region = explicit_search_fields({'city':'Московская область'}, 'Не Подмосковье', base)
-        self.assertNotIn('city', no_region)
-        self.assertEqual(no_region['cities'], [])
 
-    def test_only_scopes_the_new_city_not_a_negated_old_city(self):
-        base = merge_profile({'city':'Москва','cities':['Московская область'],'rooms':1,'budget_max':8_000_000})
-        raw = {'city':'Казань'}
-        change = explicit_search_fields(raw, 'Передумал: только Казань. Москву и область больше не ищи.', base)
-        final = merge_profile(change, base)
-        self.assertEqual(final['city'], 'Казань')
-        self.assertEqual(final['cities'], [])
-        self.assertEqual(final['budget_max'], 8_000_000)
-        self.assertEqual(explicit_search_fields({'cities':['Казань']}, 'Не только Москва, но и Казань')['cities'], ['Казань'])
 
-    def test_cash_slang_is_explicit_payment_but_mixed_funding_is_not(self):
-        self.assertEqual(explicit_search_fields({}, 'Казань, наличка, вторичка')['payment'], 'cash')
-        self.assertNotIn('payment', explicit_search_fields({}, 'Часть наличкой, остальное ипотека'))
-        self.assertNotIn('payment', explicit_search_fields({}, 'Не наличными, беру кредит'))
 
-    def test_explicit_single_market_is_recorded_without_widening_conditional_alternatives(self):
-        self.assertEqual(explicit_search_fields({}, 'Самара, наличными, вторичка')['housing'], 'secondary')
-        self.assertEqual(explicit_search_fields({}, 'Мне вторичку')['housing'], 'secondary')
-        self.assertEqual(explicit_search_fields({'housing':'both'}, 'Только новостройку')['housing'], 'new')
-        self.assertNotIn('housing', explicit_search_fields({}, 'Не хочу вторичку'))
-        self.assertNotIn('housing', explicit_search_fields({}, 'Вторичка не обязательна'))
-        self.assertNotIn('housing', explicit_search_fields({}, 'Хочу вторичку, если нет — предложи новостройки'))
 
     async def test_all_variants_are_queried_and_deduplicated(self):
         p = {'city': 'Москва', 'cities': ['Московская область'], 'rooms': 1, 'rooms_options': [1, 2], 'budget_max': 10_000_000}

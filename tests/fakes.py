@@ -16,6 +16,23 @@ def say(text: str) -> LLMResponse:
     return LLMResponse(text=text)
 
 
+def review_reply(payload, changes=None, intent=None):
+    """Тестовый дублёр рецензента; качество NLU проверяется отдельными живыми сценариями."""
+    from tests.e2e.policy_llm import parse_request, is_question
+    text = payload['messages'][-1]['text']
+    question = is_question(text)
+    if changes is None:
+        changes = payload.get('proposed_changes') or parse_request(text)
+    if question:
+        changes = {}
+    if question:
+        intent = 'question'
+    elif intent is None:
+        intent = ('refine' if payload.get('profile') else 'search') if changes else 'other'
+    return {'intent': intent, 'decision': 'apply' if changes else 'unchanged', 'changes': changes,
+            'evidence': [{'field': k, 'quote': text[:1000]} for k in changes], 'question': '', 'options': []}
+
+
 class ScriptedLLM(LLMClient):
     """Модель агента по сценарию: каждый ход — следующий шаг сценария (действие или текст клиенту).
     Шаг может быть функцией от сообщений (видит результаты действий). Сценарий кончился — короткий текст."""
@@ -25,11 +42,17 @@ class ScriptedLLM(LLMClient):
     def __init__(self, *steps: LLMResponse | Callable[[list[dict]], LLMResponse], fail: bool = False):
         self.steps = list(steps)
         self.fail = fail
+        self.review_intent = None
+        self.reviews = []
         self.seen: list[list[dict]] = []  # что модель видела на каждом ходу
 
     async def chat(self, messages: list[dict[str, Any]], **kw) -> LLMResponse:
         if self.fail:
             raise LLMError("сеть недоступна")
+        if kw.get('tag') == 'request_review':
+            payload = json.loads(next(m['content'] for m in messages if m['role'] == 'user'))['data']
+            self.reviews.append(payload)
+            return say(json.dumps(review_reply(payload, intent=self.review_intent), ensure_ascii=False))
         self.seen.append(messages)
         if kw.get("tools") is None or not self.steps:  # лимит действий подряд или сценарий кончился
             return say("Готово, жду вас.")

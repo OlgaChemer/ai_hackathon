@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .. import db
-from ..runtime import human_wait
+from ..runtime import TurnStopped, human_wait
 from ..db import repo
 from ..llm import LLMClient
 from . import finance as F
@@ -38,6 +38,10 @@ class Session:
     llm: LLMClient
     visitor_id: str | None = None
     user_id: int | None = None
+    request_inputs: list[dict] = field(default_factory=list)
+    request_review_seq: int = 0
+    request_review: dict | None = None
+    request_intent: str | None = None
     client_revision: int = 0  # только принятые сообщения/решения клиента
     seq: int = 0                      # номер последнего события диалога
     history: list[dict] = field(default_factory=list)  # события этого запуска (если база недоступна)
@@ -167,6 +171,11 @@ class Session:
             raise guard.InputRejected(str(exc)) from exc
         if self.refuse(data, "confirmation"):
             raise guard.InputRejected("Ответ отклонён. Карточка остаётся открытой — измените текст.")
+        if data.get("text") and (approved is None or kind == "clarify"):
+            # /confirm тоже может передать текстовый ответ; receive_text уже записал его сам.
+            if not self.request_inputs or self.request_inputs[-1]['text'] != data['text'] or self.request_inputs[-1]['seq'] <= self.request_review_seq:
+                event = self.push("message", role="user", text=data['text'])
+                self.accept_request(event['text'], event['seq'])
         self.client_revision += 1
         label, said = data.pop("_label", None), data.pop("_said", None)
         if said:
@@ -175,24 +184,39 @@ class Session:
         fut.set_result({"approved": approved, "data": data})
         return True
 
+    def accept_request(self, text, seq):
+        question = next((e.get("text", "") for e in reversed(self.history)
+                         if e.get("type") == "confirm" and e.get("kind") in self.pending), "")
+        self.request_inputs.append({"seq": seq, "text": text, "question": question})
+        self.request_review = None
+
     async def receive_text(self, text: str, marks: dict | None = None) -> str:
-        """Сообщение клиента. Ждёт карточка — вопрос («что такое СБР?») получает ответ сбоку, а другой текст
-        закрывает карточку (агент сам поймёт, что клиент имел в виду). Карточек нет — сообщение агенту."""
-        self.push("message", role="user", text=text)
+        ev = self.push("message", role="user", text=text)
         if self.refuse(text):
             return "blocked"
-        self.client_revision += 1
+        self.accept_request(ev["text"], ev["seq"])
         if self.pending:
-            if qa.is_question(text):
+            from . import understanding
+            from ..llm import LLMError
+            try:
+                review = await understanding.prepare_from_http(self)
+            except (LLMError, TurnStopped):
+                await self.say("Не удалось надёжно разобрать сообщение. Попробуйте ещё раз — текущая карточка и условия сохранены.")
+                return "unresolved"
+            if review and review['intent'] == 'question' and review['decision'] != 'clarify':
+                self.request_review_seq = review['seq']
                 if self.qa_task is None or self.qa_task.done():
                     self.qa_task = asyncio.create_task(qa.answer(self, text))
                 return "question"
-            kind = next(iter(self.pending))
-            data = {"text": text}
-            if kind == "selection":
-                data.update(action="text", liked=(marks or {}).get("liked", []), disliked=(marks or {}).get("disliked", []))
-            self.resolve(kind, None, data)
-            return "answer"
+            self.client_revision += 1
+            kind = next(iter(self.pending), None)
+            if kind:
+                data = {"text": text}
+                if kind == "selection":
+                    data.update(action="text", liked=(marks or {}).get("liked", []), disliked=(marks or {}).get("disliked", []))
+                if self.resolve(kind, None, data):
+                    return "answer"
+        self.client_revision += 1
         self.inbox.put_nowait(text)
         return "message"
 

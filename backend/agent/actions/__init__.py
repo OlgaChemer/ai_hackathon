@@ -50,6 +50,9 @@ def tools(s=None) -> list[Tool]:
 def available(s, name: str) -> bool:
     """Модель выбирает действия среди разрешённых текущим состоянием, порядок не диктуется."""
     p = s.profile
+    if s.request_intent == "hold" and name not in ("update_request", "ask_client"):
+        return False
+    work_intent = s.request_intent in (None, "search", "refine", "continue")
     ready = bool(p.get("city") and p.get("rooms") is not None and p.get("budget_max"))
     finance_ready = p.get("payment") == "cash" or (s.mortgage is not None and
                     (p.get("payment") != "mortgage_saving" or s.finance is not None))
@@ -65,11 +68,11 @@ def available(s, name: str) -> bool:
         "mortgage_programs": ready and bool(p.get("payment")) and
                              (p.get("payment") == "cash" or p.get("children") is not None),
         "savings_plan": ready and p.get("payment") == "mortgage_saving",
-        "search_listings": ready,
+        "search_listings": ready and work_intent,
         "show_selection": s.search is not None,
         "offer_search_alternatives": s.search is not None,
         "probe_budget": s.search is not None,
-        "call_seller": s.search is not None and s.red_lines_ok,
+        "call_seller": s.search is not None and s.red_lines_ok and work_intent,
         "confirm_price": bool(s.calls) and s.red_lines_ok,
         "plan_viewing": bool(s.agreed) and s.red_lines_ok,
         "prepare_deal": bool(s.chosen) and s.red_lines_ok and finance_ready and s.status.get(8) != "done",
@@ -83,6 +86,12 @@ async def execute(s, call: ToolCall) -> dict:
     a = REGISTRY.get(call.name) if isinstance(call.name, str) else None
     if a is None:
         return {"error": f"Нет действия с таким именем. Доступны: {', '.join(REGISTRY)}"}
+    # Семантический разбор выполняется до проверки допуска: новые условия могут отозвать согласия.
+    if call.name != "update_request" and s.request_inputs:
+        from .. import understanding
+        checked = await understanding.ensure(s)
+        if checked and checked.get("needs_clarification"):
+            return checked
     if not available(s, call.name):
         names = ", ".join(a.name for a in REGISTRY.values() if available(s, a.name))
         hint = ""

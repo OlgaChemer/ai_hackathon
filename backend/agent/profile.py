@@ -85,8 +85,6 @@ def merge_profile(raw: dict, base: dict | None = None) -> dict:
             p[key] = cast(p[key]) if p[key] is not None else None
         except (TypeError, ValueError):
             p[key] = None
-    if p["budget_max"] is not None and p["budget_max"] < 100_000:  # «9» -> 9 млн
-        p["budget_max"] = int(p["budget_max"] * 1_000_000)
     p["districts"] = [str(d) for d in p.get("districts") or []]
     p["avoid_districts"] = [str(d) for d in p.get("avoid_districts") or []]
     if p.get("okrug"):  # «юго-запад» -> ЮЗАО; не Москва — округов нет
@@ -178,55 +176,3 @@ def passes_hard_filters(x: dict, p: dict) -> bool:
     if p.get("not_first_floor") and "not_first_floor" not in p.get("soft_criteria", []) and x.get("floor") == 1:
         return False
     return True
-
-
-def explicit_search_fields(changes: dict, text: str, base: dict | None = None, criteria_context: str = "") -> dict:
-    """Preserve unambiguous search alternatives that a model may accidentally collapse.
-
-    Uses only the latest client utterance. It never infers budget, children or financial authority.
-    """
-    out = dict(changes)
-    text = (text or '').lower().replace('ё', 'е')
-    cue_text = text + " " + criteria_context.lower()
-    if text:
-        for key, cue in (("metro_max_minutes", r"метро|мцд|станци|пешком"),
-                         ("condition", r"ремонт|отделк|заех|засел|готов.{0,15}(?:квартир|жиль)")):
-            if key in out and not (base or {}).get(key) and not re.search(cue, cue_text):
-                out.pop(key)  # отсутствующие требования не становятся фильтрами из-за догадки модели
-    if re.search(r'\b(?:наличк(?:а|ой)|наличными)\b', text) and not re.search(r'ипотек|кредит|взнос|часть|коплю|копим|(?:не|без)\s+налич', text):
-        out['payment'] = 'cash'  # явный способ оплаты, без согласия на какие-либо операции
-    # Один явно названный рынок нельзя потерять и заменить поиском по умолчанию на обоих.
-    secondary = re.search(r'\bвторич\w*', text)
-    new_build = re.search(r'\bновостро\w*', text)
-    if bool(secondary) != bool(new_build):
-        mention = secondary or new_build
-        before, after = text[:mention.start()], text[mention.end():]
-        negated = re.search(r'\bне(?:\s+хочу|\s+нужна|\s+ищу|\s+нужен)?\s*$', before) or re.match(r'\s+не\b', after)
-        if not negated:
-            out['housing'] = 'secondary' if secondary else 'new'
-    rooms = re.search(r'\b([0-5])\s*(?:[-–—]|или)\s*([0-5])\s*(?:комнат|комн)', text)
-    if rooms:
-        lo, hi = sorted(map(int, rooms.groups()))
-        out['rooms_options'] = list(range(lo, hi + 1)) if 'или' not in rooms.group() else [lo, hi]
-    if (base or {}).get('rooms_options') and 'rooms' in out and 'rooms_options' not in out and not re.search(r'комнат|однуш|двуш|треш|студи', cue_text):
-        out.pop('rooms')  # пересказ одной комнатности не сужает согласованный диапазон
-    region = bool(re.search(r'подмосков|московск\w* обл', text))
-    moscow = bool(re.search(r'\bмоскв[аеуы]\b|\bмск\b', text))
-    region_negated = bool(re.search(r'(?:не|без)\s+подмосков|подмосков\w*\s+(?:не хочу|не нужно|не подходит)', text))
-    if region_negated:
-        region = False
-        out['cities'] = [c for c in out.get('cities', (base or {}).get('cities')) or [] if c != 'Московская область']
-        if out.get('city') == 'Московская область':
-            out.pop('city')
-    if re.search(r'(?<!не )\bтолько\s+(?:в\s+)?москв[аеуы]\b', text) and not region:
-        out['city'], out['cities'] = 'Москва', []
-    if region and moscow and re.search(r'\bили\b|\bи\b', text):
-        out['city'], out['cities'] = 'Москва', ['Московская область']
-    elif region and not moscow:
-        out['city'] = 'Московская область'
-    if re.search(r'желательно.{0,25}(?:центр|центре)|ближе к центру', text):
-        out['prefer_center'] = True
-    # A hospital is a distinct map category, not an unstructured wish or a clinic.
-    if re.search(r'(?:рядом|важ\w*|нуж\w*).{0,60}больниц|больниц\w*.{0,12}рядом', text) and not re.search(r'не нуж\w*.{0,15}больниц|больниц\w*.{0,15}не нуж|без больниц', text):
-        out['poi'] = list(dict.fromkeys([*(out.get('poi', (base or {}).get('poi')) or []), 'hospital']))
-    return out

@@ -18,6 +18,10 @@ class LLMError(RuntimeError):
     """Ошибка обращения к модели (сеть, авторизация, формат)."""
 
 
+class StructuredOutputError(LLMError):
+    """Модель ответила, но не вернула допустимый JSON."""
+
+
 class LLMBusy(LLMError):
     """Очередь модели заполнена или истекло время ожидания."""
 
@@ -83,13 +87,13 @@ def parse_json_loose(text: str) -> dict[str, Any]:
     except json.JSONDecodeError:
         start, end = text.find("{"), text.rfind("}")
         if start == -1 or end <= start:
-            raise LLMError(f"Модель вернула не JSON: {text[:200]}")
+            raise StructuredOutputError(f"Модель вернула не JSON: {text[:200]}")
         try:
             data = json.loads(text[start : end + 1])
         except json.JSONDecodeError as exc:
-            raise LLMError(f"Модель вернула не JSON: {text[:200]}") from exc
+            raise StructuredOutputError(f"Модель вернула не JSON: {text[:200]}") from exc
     if not isinstance(data, dict):
-        raise LLMError("Ожидался JSON-объект")
+        raise StructuredOutputError("Ожидался JSON-объект")
     return data
 
 

@@ -5,7 +5,7 @@ from ... import geo, sources
 from ..features import FEATURES
 from ..numbers import fmt
 from ..criteria import CRITERIA_KEYS
-from ..profile import explicit_search_fields, in_districts, merge_profile, missing_required, passes_hard_filters, profile_summary
+from ..profile import in_districts, merge_profile, missing_required, passes_hard_filters, profile_summary
 from . import ActionError, action
 
 LIST_KEYS = ("districts", "avoid_districts", "features", "poi", "wishes", "material", "soft_criteria", "rooms_options", "cities")
@@ -78,21 +78,22 @@ def emit_profile(s) -> None:
     wishes={"type": "array", "items": {"type": "string"}, "description": "прочие пожелания коротко, которые не ложатся в поля"},
 )
 async def update_request(s, **changes) -> dict:
+    from .. import understanding
+    if s.request_inputs:
+        checked = await understanding.ensure(s, changes)
+        if checked and checked.get("needs_clarification"):
+            return checked
+        if checked and checked.get("profile_result"):
+            return checked["profile_result"]
+        return {"profile": profile_brief(s.profile), "missing": missing_required(s.profile),
+                "red_lines_confirmed": s.red_lines_ok, "already_reviewed": True, "notes": ["Новый ввод уже проверен; повторные изменения по нему не применяются."]}
+    return apply_request(s, changes)
+
+
+def apply_request(s, changes):
+    """Только структурированные, проверенные изменения. Естественный язык здесь не читается."""
     old_profile = dict(s.profile)
     before = {k: s.profile.get(k) for k in CORE_KEYS}
-    latest = next((e.get("text", "") for e in reversed(s.history) if e.get("type") == "message" and e.get("role") == "user"), "")
-    # Короткое «15 минут» может отвечать на явный вопрос про метро.
-    context = ""
-    seen_user = False
-    for event in reversed(s.history):
-        if event.get("type") == "message" and event.get("role") == "user":
-            if seen_user:
-                break
-            seen_user = True
-        elif seen_user and event.get("type") == "confirm" and event.get("kind") == "clarify":
-            context = event.get("text", "")
-            break
-    changes = explicit_search_fields(changes, latest, s.profile, context)
     p = merge_profile(changes, s.profile or None)
     for key in changes.get("clear_criteria", []):
         if key.startswith("poi:"):
@@ -172,7 +173,7 @@ async def ask_client(s, question: str, options: list[str] | None = None) -> dict
 
 @action("confirm_red_lines", 1,
         "Показать клиенту рамки (город, комнаты, бюджет — выше которого агент не пойдёт) и получить подтверждение. "
-        "Без подтверждённых рамок поиск и звонки не выполняются. Клиент может поправить бюджет на карточке.")
+        "Подтверждение нужно перед звонками и торгом; просмотр объявлений его не требует. Клиент может поправить бюджет на карточке.")
 async def confirm_red_lines(s) -> dict:
     p = s.profile
     if missing_required(p):
@@ -188,6 +189,7 @@ async def confirm_red_lines(s) -> dict:
     if r["approved"] is None:
         return {"approved": False, "client_said": r["data"].get("text", "")}
     if not r["approved"]:
+        s.request_intent = "hold"
         return {"approved": False, "note": "клиент хочет поменять запрос — спроси, что именно"}
     if r["data"].get("budget_max") and int(r["data"]["budget_max"]) != p["budget_max"]:
         s.invalidate_deal()

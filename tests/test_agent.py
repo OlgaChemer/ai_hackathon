@@ -34,11 +34,15 @@ class AgentLoopTest(unittest.TestCase):
             return say("Сначала подтвердим рамки звонка.")
         s = O.create_session("двушка в Казани до 9 млн", ScriptedLLM(
             call("update_request", city="Казань", rooms=2, budget_max=9_000_000), call("call_seller", listing_id="cian-1"), after_call_refused))
-        asyncio.run(drive(s))
-        profile, refused = tool_results(s)
+        from backend import sources
+        from tests.test_llm_and_agent import listing
+        with patch.object(sources, 'collect', AsyncMock(return_value=([listing()], []))), patch.object(sources, 'more', AsyncMock(return_value=[])):
+            asyncio.run(drive(s))
+        profile, refused, *_ = tool_results(s)
         self.assertEqual(profile["missing"], [])
         self.assertIn("error", refused)
-        self.assertEqual(s.messages[-1], {"role": "assistant", "content": "Сначала подтвердим рамки звонка."})
+        self.assertFalse(s.calls)
+        self.assertFalse(s.red_lines_ok)
 
     def test_unknown_action_and_bad_arguments_do_not_crash(self):
         s = O.create_session("x", ScriptedLLM(call("fly_to_mars"), call("probe_budget"), say("Ок.")))

@@ -20,7 +20,10 @@ class GigaChatStateTest(unittest.TestCase):
             reply = LLMResponse('', [ToolCall('update_request', {'city': 'Казань', 'rooms': 2, 'budget_max': 9_000_000}, 'c1')],
                                 functions_state_id=STATE)
             s = session.create_session('Казань, двушка до 9 млн', ScriptedLLM(reply, say('Записал')))
-            await drive(s)
+            from backend import sources
+            from tests.test_llm_and_agent import listing
+            with patch.object(sources, 'collect', AsyncMock(return_value=([listing()], []))), patch.object(sources, 'more', AsyncMock(return_value=[])):
+                await drive(s)
             return session.restore_session(s.id, 'Продолжим', ScriptedLLM())
         restored = asyncio.run(go())
         converted = to_gigachat_messages(restored.messages, False)

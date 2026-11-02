@@ -151,7 +151,7 @@ class AgentToolsTest(unittest.TestCase):
         p = PF.merge_profile({"rooms": 2, "poi": ["school", "unknown"], "features": ["balcony", "balcony_loggia"]})
         self.assertEqual(PF.missing_required(p), ["city", "budget_max"])
         self.assertEqual((p["poi"], p["features"]), (["school"], ["balcony_loggia"]))  # неизвестное — прочь, «оба» включает «любой»
-        p = PF.merge_profile({"city": "в Казани", "budget_max": 9, "rooms": None}, p)
+        p = PF.merge_profile({"city": "в Казани", "budget_max": 9_000_000, "rooms": None}, p)
         self.assertEqual((p["city"], p["budget_max"], p["rooms"]), ("Казань", 9_000_000, 2))  # пустое не стирает сказанное
         self.assertEqual(PF.missing_required(p), [])
 

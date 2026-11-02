@@ -3,7 +3,7 @@ import asyncio
 import dataclasses
 import json
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import httpx
 
@@ -198,9 +198,15 @@ class TurnTest(unittest.IsolatedAsyncioTestCase):
             to_gigachat_messages(s.messages, False)  # нет потерянных/непарных результатов
             self.assertEqual(s.profile['budget_max'], 9_000_000)
             self.assertTrue(s.red_lines_ok)
+        from backend import sources
+        from tests.test_llm_and_agent import listing
+        with patch.object(sources, 'collect', AsyncMock(return_value=([listing()], []))), patch.object(sources, 'more', AsyncMock(return_value=[])):
+            s.llm.review_intent = 'continue'
             await s.receive_text('Продолжить')
-            event = await self.until(queue, lambda e: e.get('text') == 'Продолжаю')
-            self.assertTrue(event['await_reply'])
+            event = await self.until(queue, lambda e: e.get('kind') == 'selection' and e['type'] == 'confirm')
+            self.assertEqual(s.profile['budget_max'], 9_000_000)
+            self.assertTrue(s.shown)
+            to_gigachat_messages(s.messages, False)
 
     async def test_repeated_identical_action_stops_before_third_execution(self):
         replies = [LLMResponse('', [ToolCall('update_request', {'city': 'Казань'}, f'c{i}')]) for i in range(3)]

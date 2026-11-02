@@ -443,7 +443,7 @@ async function sendText(text) {
     }
     // вопрос агенту («что такое СБР?») или отклонённое фильтром сообщение карточку не закрывают:
     // подборка и подтверждение ждут дальше, их кнопки должны работать
-    if (r.handled_as === "question" || r.handled_as === "blocked") return;
+    if (["question", "blocked", "unresolved"].includes(r.handled_as)) return;
     if (state.awaiting === "clarify") {
       $("chatLog").querySelectorAll(".confirm-clarify:not(.is-done)").forEach((c) => c.classList.add("is-done"));
     }

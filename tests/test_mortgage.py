@@ -104,6 +104,13 @@ class FinanceActionsTest(unittest.TestCase):
 
     def setUp(self):
         db.configure("sqlite://")
+        from backend import sources
+        from tests.test_llm_and_agent import listing
+        for name, result in [('collect', ([listing()], [])), ('more', [])]:
+            mocked = patch.object(sources, name, AsyncMock(return_value=result))
+            mocked.start()
+            self.addCleanup(mocked.stop)
+
 
     def agent(self, *steps):
         s = O.create_session("Двушка в Казани до 9 млн", ScriptedLLM(*steps))
@@ -139,14 +146,6 @@ class FinanceActionsTest(unittest.TestCase):
         events = asyncio.run(drive(s, {"payment": (True, {"payment": "cash"})}))
         self.assertEqual([e["data"]["mode"] for e in events if e["type"] == "result" and e["kind"] == "finance"], ["cash"])
 
-
-class QuestionsTest(unittest.TestCase):
-    def test_questions_vs_new_conditions(self):
-        from backend.agent import qa
-        self.assertTrue(qa.is_question("Сколько я переплачу?"))
-        self.assertTrue(qa.is_question("что такое СБР"))
-        self.assertFalse(qa.is_question("а если трёшку?"))  # новое условие поиска, а не вопрос
-        self.assertFalse(qa.is_question("можно с балконом?"))
 
 
 if __name__ == "__main__":

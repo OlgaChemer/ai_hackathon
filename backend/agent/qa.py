@@ -5,7 +5,6 @@
 """
 from __future__ import annotations
 
-import re
 
 from ..llm import LLMError
 from ..llm.base import LLMBusy
@@ -13,14 +12,6 @@ from ..config import settings
 from ..runtime import Turn, TurnStopped
 from . import guard, prompts
 from .numbers import fmt
-
-# вопрос — фраза с вопросительного слова; «а если трёшку?» — не вопрос, а новое условие поиска
-QUESTION = re.compile(r"^\s*(?:а\s+|и\s+|скажи(?:те)?,?\s+)?(?:что|как|почему|зачем|сколько|когда|где|какой|какая|какое|какие|"
-                      r"кто|чем|чего|откуда|можно ли|нужно ли|надо ли|правда ли|объясни|расскажи|подскажи)\b", re.I)
-
-
-def is_question(text: str) -> bool:
-    return bool(QUESTION.search(text.replace("ё", "е")))
 
 
 def build_context(s) -> dict:
