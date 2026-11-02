@@ -102,3 +102,38 @@ body:not([data-page=agent]) .site-tools #voiceToggle { display:none; }
   .entry-dialog .entry-content { padding:24px 18px; }
   .entry-dialog .entry-content h2 { font-size:26px; }
 }
+
+/* Решения и параметры — рядом с разговором, квартиры — в основной области. */
+.workspace.layout { grid-template-columns:minmax(360px, 420px) minmax(0, 1fr); }
+.chat-log .confirm { margin:10px 0; padding:18px; border:1px solid var(--line); border-radius:16px; background:#fff; }
+.chat-log .confirm h4 { font-size:18px; line-height:1.35; }
+.chat-log .confirm .actions { display:flex; flex-wrap:wrap; gap:8px; }
+.chat-log .confirm .btn { padding:10px 12px; font-size:12px; white-space:normal; }
+.chat-log .confirm .fin-form { display:grid; grid-template-columns:minmax(0,1fr); gap:12px; }
+.chat-log .confirm input:not([type=radio]):not([type=checkbox]), .chat-log .confirm select { width:100%; min-width:0; font-size:16px; padding:10px; }
+.chat-result .panel { padding:18px; border-radius:16px; margin:12px 0; }
+.chat-result .panel-title { font-size:20px; }
+.chat-result .panel-lead { font-size:12px; line-height:1.65; }
+.chat-result .facts { grid-template-columns:minmax(0,1fr); }
+.chat-result .facts > div { display:flex; justify-content:space-between; gap:14px; padding:8px 0; }
+.chat-result .facts dd { font-size:13px; margin:0; text-align:right; }
+.chat-result .scenarios,.chat-result .fin-kpis,.chat-result .kpis { grid-template-columns:minmax(0,1fr); }
+.chat-result .alloc-row { display:flex; flex-wrap:wrap; gap:12px; }
+.chat-result .alloc-row > * { min-width:0; }
+.chat-result .loan-option { padding:15px; }
+.chat-result .loan-option dl { grid-template-columns:1fr 1fr; }
+.chat-call { margin:12px 0; }
+.stage-navigation { display:none; }
+.search-progress { display:flex; align-items:center; gap:14px; padding:20px; margin-bottom:16px; border:1px solid #b9ddc3; border-radius:18px; background:#edf9f0; color:var(--ink); }
+.search-spinner { display:inline-block; flex-shrink:0; width:26px; height:26px; border:3px solid #c1dfca; border-top-color:var(--green); border-radius:50%; animation:search-spin .8s linear infinite; }
+@keyframes search-spin { to { transform:rotate(360deg); } }
+.ranking-note { font-size:12px; line-height:1.6; background:#f0f8f2; padding:10px 12px; border-radius:10px; }
+.entry-actions { display:flex; gap:10px; align-items:center; }
+.entry-actions .btn { flex:1; }
+.home-voice { background:var(--soft); color:var(--ink); padding:12px 16px; margin:15px 20px 0; border-radius:10px; font-size:13px; }
+@media(max-width:860px) {
+  .workspace.layout { grid-template-columns:minmax(0,1fr); }
+  .chat.expanded .chat-log { max-height:60dvh; }
+  .chat-log .confirm { padding:15px; }
+}
+@media(prefers-reduced-motion:reduce) { .search-spinner { animation-duration:2s; } }

@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import json
 import unittest
+from unittest.mock import patch, AsyncMock
 
 from backend import db
 from backend.agent import actions, loop
@@ -27,17 +28,17 @@ class AgentLoopTest(unittest.TestCase):
             self.assertTrue(t.description and t.parameters["type"] == "object", t.name)
             json.dumps(t.parameters)  # схема уходит модели как JSON
 
-    def test_model_reads_results_and_order_is_enforced(self):
-        def after_search_refused(messages):
-            self.assertIn("confirm_red_lines", last_result(messages)["error"])  # модель видит, что сделать сначала
-            return say("Сначала подтвердим рамки.")
+    def test_model_reads_results_and_call_authority_is_enforced(self):
+        def after_call_refused(messages):
+            self.assertIn("confirm_red_lines", last_result(messages)["error"])
+            return say("Сначала подтвердим рамки звонка.")
         s = O.create_session("двушка в Казани до 9 млн", ScriptedLLM(
-            call("update_request", city="Казань", rooms=2, budget_max=9_000_000), call("search_listings"), after_search_refused))
+            call("update_request", city="Казань", rooms=2, budget_max=9_000_000), call("call_seller", listing_id="cian-1"), after_call_refused))
         asyncio.run(drive(s))
         profile, refused = tool_results(s)
         self.assertEqual(profile["missing"], [])
         self.assertIn("error", refused)
-        self.assertEqual(s.messages[-1], {"role": "assistant", "content": "Сначала подтвердим рамки."})
+        self.assertEqual(s.messages[-1], {"role": "assistant", "content": "Сначала подтвердим рамки звонка."})
 
     def test_unknown_action_and_bad_arguments_do_not_crash(self):
         s = O.create_session("x", ScriptedLLM(call("fly_to_mars"), call("probe_budget"), say("Ок.")))

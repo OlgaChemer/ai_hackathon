@@ -55,17 +55,27 @@ function viewFor(n) {
 function renderStage() {
   unmountMap(stage.querySelector("[data-map]"));
   stage.innerHTML = "";
-  if (state.view === 6) {
-    stage.append(state.call ? renderCall(state.call, submitSeller) : el(V.waiting("Звонок", "Готовлю звонок продавцу.")));
-  } else {
-    stage.innerHTML = viewFor(state.view);
-    const chart = stage.querySelector("[data-chart]");
-    if (chart && state.results[2]?.finance) savingsChart(chart, state.results[2].finance, chart.dataset.selected);
-    const map = stage.querySelector("[data-map]");
-    if (map && state.results[4]?.cards) mountMap(map, state.results[4].cards);
-    syncSelectionButtons();
-  }
+  stage.innerHTML = state.results[4] ? V.selection(state.results[4], state.marks)
+    : state.searching ? V.waiting("Ищу квартиры", state.searching)
+    : V.waiting("Здесь появятся квартиры", "Расскажите агенту о бюджете, городе и пожеланиях. Профиль и решения останутся в чате.");
+  if (state.searching) {
+    stage.setAttribute("aria-busy", "true");
+    stage.prepend(el(html`<div class="search-progress" role="status"><span class="search-spinner" aria-hidden="true"></span>${state.searching}</div>`));
+  } else stage.removeAttribute("aria-busy");
+  const map = stage.querySelector("[data-map]");
+  if (map && state.results[4]?.cards) mountMap(map, state.results[4].cards);
+  syncSelectionButtons();
   renderStepper();
+}
+
+function renderChatResult(step) {
+  const markup = viewFor(step);
+  let node = chatLog.querySelector(`[data-chat-result="${step}"]`);
+  if (!node) { node = document.createElement("div"); node.dataset.chatResult = step; node.className = "chat-result"; chatLog.append(node); }
+  node.innerHTML = markup;
+  const chart = node.querySelector("[data-chart]");
+  if (chart && state.results[2]?.finance) savingsChart(chart, state.results[2].finance, chart.dataset.selected);
+  chatLog.scrollTop = chatLog.scrollHeight;
 }
 
 /** Кнопки подборки активны, только пока агент ждёт выбора. */
@@ -116,6 +126,10 @@ async function handle(ev, myGen) {
   if (ev.seq) state.lastSeq = Math.max(state.lastSeq, ev.seq);
   switch (ev.type) {
     case "provider": setProvider(ev); break;
+    case "search_progress":
+      state.searching = ev.on ? ev.text || "Ищу и сравниваю квартиры…" : null;
+      if (!quiet) renderStage();
+      break;
     case "message":
       addMsg(ev.role, ev.text);
       if (ev.await_reply) setChatExpanded(true);
@@ -131,6 +145,7 @@ async function handle(ev, myGen) {
     case "result":
       state.results[ev.step] = ev.data;
       if (ev.kind === "profile") refreshContext(ev.data);
+      if (![3, 4, 6].includes(ev.step)) renderChatResult(ev.step);
       if (ev.kind === "selection") setChatExpanded(false);
       if (ev.kind === "finance") state.strategy = ev.data.finance?.risk || null;
       if (ev.kind === "selection") {
@@ -141,10 +156,13 @@ async function handle(ev, myGen) {
       await pause(ev.kind === "selection" ? 0 : 500);
       break;
     case "confirm":
-      setChatExpanded(false);
+      if (ev.kind !== "selection") setChatExpanded(true);
       if (ev.kind === "call") {
         state.call = createCall(ev);
         state.view = 6;
+        const callNode = renderCall(state.call, submitSeller);
+        callNode.classList.add("chat-call");
+        chatLog.append(callNode);
         if (!quiet) renderStage();
       }
       if (ev.kind !== "clarify") state.awaiting = ev.kind === "selection" ? "selection" : null;
@@ -155,10 +173,10 @@ async function handle(ev, myGen) {
       }
       confirmCard(ev);
       break;
-    case "resolved": resolved(ev); setChatExpanded(false); break;
+    case "resolved": resolved(ev); break;
     case "product_opened":
       state.opened[ev.product] = ev.amount;
-      if (!quiet && state.view === 2) renderStage();
+      if (!quiet && state.results[2]) renderChatResult(2);
       break;
     case "call_start":
       if (!call) break;
@@ -287,6 +305,8 @@ function finish() {
   state.streamEnded = true;
   state.es?.close();
   showThinking(false);
+  state.searching = null;
+  renderStage();
   setComposer();
   refreshChats();
 }
@@ -323,7 +343,7 @@ function leaveChat() {
   queue = [];
   resetState();
   chatLog.innerHTML = "";
-  $("decisionHost").replaceChildren();
+
   document.querySelector("section.stage").classList.remove("has-decision");
   $("chatPeek").textContent = "";
   refreshContext(null);
@@ -425,7 +445,7 @@ async function sendText(text) {
     // подборка и подтверждение ждут дальше, их кнопки должны работать
     if (r.handled_as === "question" || r.handled_as === "blocked") return;
     if (state.awaiting === "clarify") {
-      $("decisionHost").querySelectorAll(".confirm-clarify:not(.is-done)").forEach((c) => c.classList.add("is-done"));
+      $("chatLog").querySelectorAll(".confirm-clarify:not(.is-done)").forEach((c) => c.classList.add("is-done"));
     }
     state.awaiting = null;
   } catch (e) {
@@ -483,7 +503,7 @@ bindMic($("micBtn"), $("query"), {
 });
 $("micBtn").hidden = false;
 
-stage.addEventListener("click", async (e) => {
+async function handleResultClick(e) {
   const ex = e.target.closest("[data-example]");
   if (ex) return start(ex.dataset.example);
 
@@ -495,7 +515,7 @@ stage.addEventListener("click", async (e) => {
   const strat = e.target.closest("[data-strategy]");
   if (strat) {
     state.strategy = strat.dataset.strategy;
-    return renderStage();
+    return renderChatResult(2);
   }
   const open = e.target.closest("[data-open]");
   if (open && state.sid) {
@@ -503,7 +523,9 @@ stage.addEventListener("click", async (e) => {
     try { await api.product(state.sid, open.dataset.open, Number(open.dataset.amount)); }
     catch (err) { open.disabled = false; addMsg("error", `Не удалось: ${err.message}`); }
   }
-});
+ }
+stage.addEventListener("click", handleResultClick);
+chatLog.addEventListener("click", handleResultClick);
 /** Отметка «нравится / не то». toggle — повторное нажатие снимает отметку (клик); голосом — просто ставим. */
 function setVote(id, dir, toggle) {
   const { liked, disliked } = state.marks;

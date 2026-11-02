@@ -9,14 +9,15 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
+import re
 import uuid
 
 from .. import geo
-from ..llm import LLMError
+from ..llm import LLMError, LLMResponse, ToolCall
 from ..llm.base import LLMBusy
 from ..config import settings
 from ..runtime import Turn, TurnStopped, record
-from . import actions, guard, prompts
+from . import actions, guard, prompts, qa
 from .features import FEATURES
 from .numbers import fmt
 from .profile import missing_required
@@ -64,6 +65,18 @@ async def think(s, with_actions: bool):
                             tag="agent")
 
 
+
+def pending_search_action(s):
+    """Read-only progress has no financial authority; never auto-call or auto-confirm."""
+    if not missing_required(s.profile):
+        if s.search is None:
+            return "search_listings"
+        if not s.shown:
+            from .actions.search import selectable
+            return "show_selection" if any(selectable(x, s.prefs) for x in s.search["pool"]) else "offer_search_alternatives"
+    return None
+
+
 async def run(s) -> None:
     """Агент работает, пока открыт диалог: отвечает, действует, ждёт клиента. Остановить — отменить задачу."""
     s.push("provider", provider=s.llm.name, model=s.llm.model, degraded=False)
@@ -74,12 +87,29 @@ async def run(s) -> None:
         else:
             s.messages.append({"role": "user", "content": s.query})
     turn = Turn(s.id, settings.agent_turn_timeout_s, s.signal)
+    forced = None
+    auto_progress = set()
     while True:
         s.signal("typing", on=True)
         interrupted_call = None
         try:
-            resp = await turn.run(lambda: think(s, with_actions=turn.tool_calls < MAX_ACTIONS_IN_ROW),
-                                  kind="llm", name="agent")
+            if forced:
+                resp = LLMResponse("", [ToolCall(forced, {}, f"progress_{uuid.uuid4().hex[:8]}")])
+                record("search_recovery", session=s.id, action=forced)
+                forced = None
+            else:
+                resp = await turn.run(lambda: think(s, with_actions=turn.tool_calls < MAX_ACTIONS_IN_ROW),
+                                      kind="llm", name="agent")
+            next_action = pending_search_action(s)
+            latest_user = next((m.get("content", "") for m in reversed(s.messages) if m.get("role") == "user"), "")
+            promises_search = not qa.is_question(latest_user) and bool(re.search(r"поиск|подбер|подбор|ищу|ищем|начн[уе]м|приступ|покаж.{0,30}вариант", resp.text or "", re.I))
+            if not resp.tool_calls and next_action and (promises_search or s.search is not None) and next_action not in auto_progress and turn.tool_calls < MAX_ACTIONS_IN_ROW:
+                # Store the provider state, but never display an unexecuted promise as completed work.
+                s.messages.append({"role": "assistant", "content": guard.output(resp.text or "", s),
+                    **({"functions_state_id": resp.functions_state_id} if resp.functions_state_id else {})})
+                auto_progress.add(next_action)
+                forced = next_action
+                continue
             if resp.tool_calls:
                 if len(resp.tool_calls) > MAX_ACTIONS_IN_ROW - turn.tool_calls:
                     raise TurnStopped("tool_limit")
@@ -93,6 +123,7 @@ async def run(s) -> None:
                 if resp.text.strip():
                     await s.say(resp.text.strip())
                 s.signal("typing", on=False)
+                searched = False
                 for call in calls:
                     interrupted_call = call.name
                     turn.check_repeat(call.name, call.arguments)
@@ -100,11 +131,18 @@ async def run(s) -> None:
                     # В логе только известное имя действия, без аргументов модели.
                     name = call.name if call.name in actions.REGISTRY else "unknown"
                     result = await turn.run(lambda: actions.execute(s, call), kind="tool", name=name)
+                    if call.name == "search_listings" and not result.get("error"):
+                        searched = True
                     s.messages.append({"role": "tool", "tool_call_id": call.id, "content": json.dumps(guard.output(guard.sanitize(result), limit=False), ensure_ascii=False, default=str)})
                     if s.client_revision != revision:
                         turn.finish("client_answer")
+                        auto_progress.clear()
                         turn = Turn(s.id, settings.agent_turn_timeout_s, s.signal)
                 s.remember()
+                if searched:
+                    forced = pending_search_action(s)
+                    if forced:
+                        auto_progress.add(forced)
                 continue
             s.signal("typing", on=False)
             text = guard.output(resp.text.strip(), s)
@@ -119,6 +157,14 @@ async def run(s) -> None:
             turn.finish(reason)
             s.signal("typing", on=False)
             s.signal("model_wait", on=False)
+            s.push("search_progress", on=False)
+            recovery = pending_search_action(s)
+            if reason == "repeated_tool" and recovery and recovery not in auto_progress:
+                s.messages = close_dangling_calls(s.messages, "повтор без прогресса; продолжаю безопасный поиск")
+                auto_progress.add(recovery)
+                forced = recovery
+                turn = Turn(s.id, settings.agent_turn_timeout_s, s.signal)
+                continue
             if isinstance(exc, LLMBusy):
                 text = "Сейчас много обращений, модель занята. Напишите чуть позже — продолжу с сохранёнными условиями."
             elif isinstance(exc, LLMError):
@@ -140,6 +186,7 @@ async def run(s) -> None:
             s.remember()
         s.messages.append({"role": "user", "content": await s.inbox.get()})
         turn = Turn(s.id, settings.agent_turn_timeout_s, s.signal)
+        auto_progress.clear()
         s.push("provider", provider=s.llm.name, model=s.llm.model, degraded=False)
 
 

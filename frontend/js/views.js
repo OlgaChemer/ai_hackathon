@@ -47,17 +47,17 @@ function marketBlock(p) {
 }
 
 export function profile(p) {
-  const rooms = p.rooms === 0 ? "студия" : p.rooms;
+  const rooms = p.rooms_options?.length > 1 ? p.rooms_options.join("–") : p.rooms === 0 ? "студия" : p.rooms ?? "уточню";
   return html`
   <section class="panel">
     <h2 class="panel-title">Задача понята</h2>
-    <p class="panel-lead">${p.summary}</p>
+    <p class="panel-lead">${p.summary || "Уточняю параметры — известные пожелания уже сохранены."}</p>
     <dl class="facts">
-      <div><dt>Город</dt><dd>${p.city}${p.okrug ? `, ${p.okrug}` : ""}</dd></div>
+      <div><dt>Город</dt><dd>${[p.city, ...(p.cities || []).filter(c => c !== p.city)].filter(Boolean).join(", ") || "уточню"}${p.okrug ? `, ${p.okrug}` : ""}</dd></div>
       <div><dt>Комнат</dt><dd>${rooms}</dd></div>
-      <div><dt>Бюджет до</dt><dd class="num">${rub(p.budget_max)}${html.raw(p.budget_source ? html`<small class="dd-note">${p.budget_source}</small>` : "")}</dd></div>
+      <div><dt>Бюджет до</dt><dd class="num">${p.budget_max ? rub(p.budget_max) : "уточню"}${html.raw(p.budget_source ? html`<small class="dd-note">${p.budget_source}</small>` : "")}</dd></div>
       <div><dt>Районы</dt><dd>${p.districts?.length ? p.districts.join(", ") : "любые"}</dd></div>
-      <div><dt>Школа рядом</dt><dd>${p.near_school ? "важно" : "не важно"}</dd></div>
+      <div><dt>Расположение</dt><dd>${p.prefer_center ? "желательно ближе к центру" : "по вашим пожеланиям"}</dd></div>
       <div><dt>Кухня</dt><dd>${p.kitchen_min ? `от ${p.kitchen_min} м²` : "любая"}</dd></div>
       <div><dt>Рынок</dt><dd>${{ new: "новостройки", both: "новостройки и вторичка", secondary: "вторичный" }[p.housing] || "уточню"}</dd></div>
     </dl>
@@ -241,6 +241,7 @@ export function search(d) {
 // ------------------------------------------------------------------ подбор
 
 function priceTag(c) {
+  if (c.fair?.value_supported === false) return html`<span class="tag">Мало сопоставимых местных аналогов</span>`;
   const f = c.fair;
   if (c.price > f.high) return html`<span class="tag tag-amber" title="${f.basis}">дороже аналогов на ${pct((c.price - f.fair) / f.fair)}</span>`;
   if (c.price < f.low) return html`<span class="tag tag-green" title="${f.basis}">дешевле аналогов на ${pct((f.fair - c.price) / f.fair)}</span>`;
@@ -302,6 +303,7 @@ function offerCard(c, vote, no) {
       <p class="meta">${meta}</p>
       ${html.raw(params ? html`<p class="meta">${params}</p>` : "")}
       ${html.raw(correctedLine(c))}
+      ${html.raw(c.ranking ? html`<p class="ranking-note">Совпадение проверяемых пожеланий: ${c.ranking.fit_pct}% · ${c.ranking.value_score.toFixed(1)} балла/млн ₽${c.ranking.center_requested ? c.ranking.center_km != null ? ` · ~${c.ranking.center_km} км по прямой до опорной точки центра` : " · близость к центру не проверена" : ""}${c.ranking.discount_pct != null && c.ranking.discount_pct > 0 ? ` · на ${c.ranking.discount_pct}% ниже оценки по аналогам` : ""}</p>` : "")}
       ${html.raw(c.match ? html`<p class="meta ${c.match.status === "confirmed" ? "" : "missing"}">${c.match.status === "confirmed" ? "Обязательные условия подтверждены" : c.match.status === "rejected" ? "Есть несоответствия условиям" : `Нужно проверить: ${c.match.unknown.join(", ")}`}</p>` : "")}
       ${html.raw(c.match?.checks?.filter((r) => r.source === "cian_description" && r.key.startsWith("poi:")).map((r) => html`<p class="hint">В описании упомянуто: ${r.label}. Расстояние по карте не подтверждено.</p>`).join("") || "")}
 
@@ -337,7 +339,7 @@ export function selection(d, marks) {
       <div>
         <div class="eyebrow">Подборка${d.round > 1 ? ` · раунд ${d.round}` : " · первые результаты"}</div>
         <h2 class="panel-title">Квартиры под ваши пожелания</h2>
-        <p class="panel-lead">Отметьте, что нравится и что нет, — агент учтёт это в следующей подборке. Пожелание можно написать в чат или сказать голосом.</p>
+        <p class="panel-lead">Сначала подтверждённые обязательные условия; внутри группы — совпадение пожеланий на миллион рублей с поправкой на цену аналогов. Отметьте, что нравится и что нет. Пожелание можно написать в чат или сказать голосом.</p>
       </div>
     </div>
     ${html.raw(d.learned?.length ? html`<div class="learned"><span>Учёл:</span>${html.raw(d.learned.map((l) => html`<span class="chip">${l}</span>`).join(""))}</div>` : "")}

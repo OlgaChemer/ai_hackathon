@@ -44,9 +44,9 @@ def listing_factor(x: dict) -> float:
 def fair_price(listing: dict, pool: list[dict]) -> dict:
     """Медиана приведённой цены м² по аналогам из выдачи × поправки объекта × поправка на торг.
     Новостройку сравниваем с новостройками, вторичку — со вторичкой (если аналогов хватает)."""
+    pool = [x for x in pool if x.get("city") == listing.get("city")]
     market = [x for x in pool if bool(x.get("is_new")) == bool(listing.get("is_new"))]
-    if len(market) >= 4:
-        pool = market
+    pool = market
     same = [x for x in pool if x["id"] != listing["id"] and x["rooms"] == listing["rooms"]
             and 0.7 <= x["area"] / listing["area"] <= 1.4]
     near = []
@@ -54,6 +54,7 @@ def fair_price(listing: dict, pool: list[dict]) -> dict:
         dist = {x["id"]: km(listing, x) for x in same if x.get("lat")}
         near = sorted((x for x in same if x["id"] in dist and dist[x["id"]] <= 4), key=lambda x: dist[x["id"]])[:8]
     district = [x for x in same if listing.get("district") and x.get("district") == listing["district"]]
+    local_basis = len(near) >= 4 or len(district) >= 4
     if len(near) >= 4:
         comps, basis = near, f"{len(near)} похожих квартир в радиусе {max(1, round(dist[near[-1]['id']]))} км"
     elif len(district) >= 4:
@@ -83,6 +84,7 @@ def fair_price(listing: dict, pool: list[dict]) -> dict:
         "overprice_pct": round((listing["price"] - fair) / fair * 100, 1),
         "ppm2": int(base_ppm2 * listing_factor(listing)),
         "comps_count": len(comps),
+        "value_supported": len(comps) >= 4 and (listing.get("city") != "Московская область" or local_basis),
         "cheaper_comps": len(cheaper),
         "basis": basis + ", поправка на торг −3%",
     }
@@ -149,3 +151,43 @@ def score_listing(x: dict, p: dict, fp: dict) -> float:
     if x.get("is_apartments"):
         s -= 10
     return round(s, 1)
+
+
+# Опорные точки исторического центра, а не геометрические центроиды границ города.
+# Расстояние — по прямой; не выдаётся за пеший маршрут или официальную границу центра.
+CITY_CENTERS = {
+    "Москва": (55.7539, 37.6208), "Санкт-Петербург": (59.9390, 30.3158),
+    "Самара": (53.1950, 50.1069), "Казань": (55.7986, 49.1053),
+    "Екатеринбург": (56.8389, 60.6057), "Нижний Новгород": (56.3287, 44.0020),
+    "Новосибирск": (55.0302, 82.9204), "Краснодар": (45.0355, 38.9753),
+}
+
+
+def center_distance(x: dict) -> float | None:
+    point = CITY_CENTERS.get(x.get("city"))
+    if not point or x.get("lat") is None or x.get("lng") is None:
+        return None
+    return round(km(x, {"lat": point[0], "lng": point[1]}), 1)
+
+
+def value_rank(x: dict, profile: dict, fp: dict, match: dict, learned: float = 0) -> dict:
+    """Confirmed fit per million rubles, adjusted for supported relative market value.
+
+    Mandatory failures are excluded before ranking; missing facts never count as matches.
+    An appraisal based on fewer than four independent comparables gets no discount bonus.
+    """
+    checks = match["checks"]
+    fit = (sum(r["status"] is True for r in checks) / len(checks)) if checks else 1.0
+    quality = 20 + 80 * fit + max(-10, min(10, learned))
+    distance = center_distance(x) if profile.get("prefer_center") else None
+    if profile.get("prefer_center"):
+        # A compact central flat can beat a larger distant one within an accepted room range.
+        quality += 80 / (1 + distance / 3) if distance is not None else 0
+    supported = fp.get("value_supported", fp.get("comps_count", 0) >= 4)
+    relative = max(.7, min(1.3, fp["fair"] / x["price"])) if supported else 1.0
+    value = quality * relative / (x["price"] / 1_000_000)
+    return {"value_score": round(value, 3), "fit_pct": round(fit * 100),
+            "center_km": distance, "center_requested": bool(profile.get("prefer_center")),
+            "market_supported": supported,
+            "discount_pct": round((fp["fair"] - x["price"]) / fp["fair"] * 100, 1) if supported else None,
+            "basis": "Совпадение пожеланий на 1 млн ₽ с поправкой на цену аналогов"}

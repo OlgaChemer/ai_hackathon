@@ -113,7 +113,7 @@ async function routeVoice(text) {
     c.root?.querySelector("[data-seller-slot]")?.replaceChildren();
     return handlers.submitSeller(text);
   }
-  const card = [...$("decisionHost").querySelectorAll(".confirm:not(.is-done):not(.confirm-clarify)")].pop();
+  const card = [...$("chatLog").querySelectorAll(".confirm:not(.is-done):not(.confirm-clarify)")].pop();
   if (card && card.querySelector(".actions button:not(:disabled)")) {
     const b = voiceButton(card, t);
     if (!b) return talk.say(`Не понял. ${card.dataset.hint || ""}`);
@@ -157,7 +157,7 @@ async function startTalk() {
   $("composer").hidden = true;
   $("talkPanel").hidden = false;
   $("talkBtn").setAttribute("aria-pressed", "true");
-  const card = [...$("decisionHost").querySelectorAll(".confirm:not(.is-done)")].pop();
+  const card = [...$("chatLog").querySelectorAll(".confirm:not(.is-done)")].pop();
   if (card && state.lastPrompt) talk.say(state.lastPrompt);
   else if (state.awaiting === "selection") talk.say(SELECTION_PROMPT);
   else if (!state.running) talk.say("Слушаю. Расскажите, какую квартиру ищете: город, бюджет, комнаты и что для вас важно.");

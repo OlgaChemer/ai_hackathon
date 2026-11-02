@@ -39,9 +39,8 @@
 <div class="site-subbar">
 <span class="site-section" id="pageLabel">Поиск квартиры</span>
 <button data-action="focus-city">Город поиска</button>
-<nav class="tabs" aria-label="Текущий подбор и экономика">
+<nav class="tabs" aria-label="Текущий подбор">
   <button class="tab" id="currentSearchLink" data-tab="deal" hidden>Продолжить подбор</button>
-  <button class="tab" data-tab="economics">Экономика для Сбера</button>
 </nav>
 </div>
 </header>
@@ -70,6 +69,7 @@
 </label>
 <button type="submit" class="btn" data-action="portal-search">Найти квартиры</button>
 </form>
+<button type="button" class="home-voice" data-action="voice-search">🎙 Рассказать о квартире голосом</button>
 <div class="agg-sources">
 <span>Данные для подбора</span>
 <span class="agg-source">Циан</span>
@@ -124,7 +124,7 @@
 <form id="entryForm">
 <textarea id="entryQuery" aria-label="Первый запрос агенту" required minlength="3" maxlength="500" placeholder="Например: ищу квартиру для семьи в Москве…">
 </textarea>
-<button class="btn" type="submit">Начать подбор</button>
+<div class="entry-actions"><button class="mic" id="entryMicBtn" type="button" aria-label="Продиктовать пожелания" title="Сказать голосом">🎙</button><button class="btn" type="submit">Начать подбор</button></div><p id="entryVoiceStatus" class="small muted" role="status"></p>
 </form>
 <p class="small muted">Начнётся новый подбор. К предыдущим можно вернуться в истории.</p>
 </div>
@@ -180,7 +180,6 @@
         <summary>Этапы сделки</summary>
         <ol class="stepper" id="stepper" aria-label="Перейти к этапу сделки"></ol>
       </details>
-      <div id="decisionHost" class="decision-host" aria-live="polite"></div>
       <div class="stage-body" id="stage"></div>
     </section>
   </main>

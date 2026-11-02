@@ -47,7 +47,7 @@ async def check(browser, base, width, folder):
     await page.fill('#portalCity', 'Казань')
     await page.fill('#portalBudget', '9.25')
     await page.evaluate("document.getElementById('portalForm').requestSubmit(); document.getElementById('portalForm').requestSubmit()")
-    await page.wait_for_selector('#decisionHost .confirm-red_lines')
+    await page.wait_for_selector('#chatLog .confirm-red_lines')
     assert len(starts) == 1
     sid = await page.evaluate("location.hash.slice(6)")
     assert starts[0]['query'].endswith('новостройки и вторичка')
@@ -83,7 +83,7 @@ async def check(browser, base, width, folder):
     await page.reload(wait_until='domcontentloaded')
     await page.wait_for_selector(f'[data-history-chat="{sid}"]')
     await page.locator(f'[data-history-chat="{sid}"]').click()
-    await page.wait_for_selector('#decisionHost .confirm-red_lines')
+    await page.wait_for_selector('#chatLog .confirm-red_lines')
     assert await page.evaluate('location.hash') == '#chat-' + sid
     assert len(starts) == 1
     await nav.locator('[data-action=apartments]').click()
@@ -112,12 +112,12 @@ async def check(browser, base, width, folder):
     await page.fill('#entryQuery', 'Двушка в Москве до 12 млн, наличными')
     await page.locator('#entryForm [type=submit]').click()
     await page.wait_for_function('(old) => location.hash.startsWith("#chat-") && location.hash !== old', arg='#chat-' + sid)
-    await page.wait_for_selector('#decisionHost .confirm-red_lines')
+    await page.wait_for_selector('#chatLog .confirm-red_lines')
     new_sid = await page.evaluate('location.hash')
     assert len(starts) == 2
     await page.go_back()
     await page.wait_for_function('(expected) => location.hash === expected', arg='#chat-' + sid)
-    await page.wait_for_selector('#decisionHost .confirm-red_lines')
+    await page.wait_for_selector('#chatLog .confirm-red_lines')
     await page.go_forward()
     await page.wait_for_function('(expected) => location.hash === expected', arg=new_sid)
     assert len(starts) == 2 and not errors, errors

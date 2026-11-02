@@ -44,7 +44,7 @@ async def page(browser, base: str, mobile: bool = False):
 
 
 async def click(pg, name: str, t: int = 40000) -> None:
-    await pg.get_by_role("button", name=name).last.click(timeout=t)
+    await pg.get_by_role("button", name=name).and_(pg.locator("button:enabled")).last.click(timeout=t)
 
 
 async def chat_text(pg) -> str:

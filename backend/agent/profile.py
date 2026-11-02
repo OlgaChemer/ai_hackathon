@@ -15,6 +15,9 @@ REQUIRED = {"city": "город", "budget_max": "бюджет", "rooms": "чис
 EMPTY_PROFILE = {
     "city": None,
     "rooms": None,
+    "rooms_options": [],       # все допустимые варианты, например [1, 2]
+    "cities": [],              # дополнительные явно названные территории
+    "prefer_center": False,    # близость к центру — пожелание, если не указано иначе
     "budget_max": None,
     "payment": None,          # cash | mortgage_ready | mortgage_saving
     "okrug": None,
@@ -67,6 +70,12 @@ def merge_profile(raw: dict, base: dict | None = None) -> dict:
                 p[key] = None
             continue
         p[key] = v
+    if "rooms" in raw and "rooms_options" not in raw:
+        p["rooms_options"] = []
+    p["rooms_options"] = sorted(set(int(n) for n in p.get("rooms_options") or [] if type(n) is int and 0 <= n <= 5))
+    if p["rooms_options"]:
+        p["rooms"] = p["rooms_options"][0]
+    p["cities"] = list(dict.fromkeys(normalize_city(c) or c for c in p.get("cities") or []))[:3]
     p["city"] = normalize_city(p["city"]) or p["city"]
     for key, cast in (("rooms", int), ("budget_max", int), ("kitchen_min", float), ("area_min", float), ("metro_max_minutes", int),
                       ("children", int), ("youngest_age", int), ("year_min", int)):
@@ -80,6 +89,8 @@ def merge_profile(raw: dict, base: dict | None = None) -> dict:
     p["avoid_districts"] = [str(d) for d in p.get("avoid_districts") or []]
     if p.get("okrug"):  # «юго-запад» -> ЮЗАО; не Москва — округов нет
         p["okrug"] = okrug_from_text(p["okrug"]) or (p["okrug"] if p["okrug"] in ("ЦАО", "САО", "СВАО", "ВАО", "ЮВАО", "ЮАО", "ЮЗАО", "ЗАО", "СЗАО") else None)
+    if p.get("prefer_center") and p.get("okrug") == "ЦАО":
+        p["okrug"] = None
     if p.get("city") != "Москва":
         p["okrug"] = None
     if p.get("payment") not in (None, "cash", "mortgage_ready", "mortgage_saving"):
@@ -109,10 +120,12 @@ def rooms_text(rooms: int | None) -> str:
 
 def profile_summary(p: dict) -> str:
     rooms = "студию" if p["rooms"] == 0 else f"{p['rooms']}-комнатную квартиру"
-    where = f"г. {p['city']}" + (f", {p['okrug']}" if p.get("okrug") else "")
+    if len(p.get("rooms_options") or []) > 1:
+        rooms = "/".join(map(str, p["rooms_options"])) + "-комнатную квартиру"
+    where = ", ".join([p["city"], *(c for c in p.get("cities") or [] if c != p["city"])]) + (f", {p['okrug']}" if p.get("okrug") else "")
     if p.get("districts"):
         where += f" (район {', '.join(p['districts'])})"
-    extra = []
+    extra = ["желательно ближе к центру"] if p.get("prefer_center") else []
     if p.get("features"):
         extra.append("с " + ", ".join(FEATURE_WITH[k] for k in p["features"]))
     near = [geo.POI[k][0] for k in p.get("poi") or [] if k in geo.POI]
@@ -154,12 +167,37 @@ def in_districts(x: dict, districts: list[str] | None) -> bool:
 
 
 def passes_hard_filters(x: dict, p: dict) -> bool:
-    if p.get("city") and x.get("city") != p["city"]:
+    if p.get("city") and x.get("city") not in [p["city"], *(p.get("cities") or [])]:
         return False
-    if p.get("rooms") is not None and x["rooms"] != p["rooms"]:
+    if p.get("rooms") is not None and x["rooms"] not in (p.get("rooms_options") or [p["rooms"]]):
         return False
     if x["price"] > p["budget_max"] * 1.05:  # чуть дороже бюджета оставляем: можно сторговать
         return False
     if p.get("not_first_floor") and "not_first_floor" not in p.get("soft_criteria", []) and x.get("floor") == 1:
         return False
     return True
+
+
+def explicit_search_fields(changes: dict, text: str, base: dict | None = None) -> dict:
+    """Preserve unambiguous search alternatives that a model may accidentally collapse.
+
+    Uses only the latest client utterance. It never infers budget, children or financial authority.
+    """
+    out = dict(changes)
+    text = (text or '').lower().replace('ё', 'е')
+    rooms = re.search(r'\b([0-5])\s*(?:[-–—]|или)\s*([0-5])\s*(?:комнат|комн)', text)
+    if rooms:
+        lo, hi = sorted(map(int, rooms.groups()))
+        out['rooms_options'] = list(range(lo, hi + 1)) if 'или' not in rooms.group() else [lo, hi]
+    region = bool(re.search(r'подмосков|московск\w* обл', text))
+    moscow = bool(re.search(r'\bмоскв[аеуы]\b|\bмск\b', text))
+    if region and moscow and re.search(r'\bили\b|\bи\b', text):
+        out['city'], out['cities'] = 'Москва', ['Московская область']
+    elif region and not moscow:
+        out['city'] = 'Московская область'
+    if re.search(r'желательно.{0,25}(?:центр|центре)|ближе к центру', text):
+        out['prefer_center'] = True
+    # A hospital is a distinct map category, not an unstructured wish or a clinic.
+    if re.search(r'(?:рядом|важ\w*|нуж\w*).{0,60}больниц|больниц\w*.{0,12}рядом', text) and not re.search(r'не нуж\w*.{0,15}больниц|больниц\w*.{0,15}не нуж|без больниц', text):
+        out['poi'] = list(dict.fromkeys([*(out.get('poi', (base or {}).get('poi')) or []), 'hospital']))
+    return out

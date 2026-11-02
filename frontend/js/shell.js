@@ -1,4 +1,5 @@
 // Общая оболочка: страницы меняются без перезапуска диалога и дополнительных команд агенту.
+import { bindMic } from './voice.js';
 import { $, state } from './state.js';
 import { html, rub } from './format.js';
 import { mountEconomics } from './economics.js';
@@ -59,7 +60,7 @@ export function setChatExpanded(expanded) {
 }
 
 export function refreshContext(profile) {
-  const labels = profile ? [profile.city, profile.rooms != null ? `${profile.rooms === 0 ? 'Студия' : `${profile.rooms} комн.`}` : '',
+  const labels = profile ? [profile.city, profile.rooms != null ? `${profile.rooms === 0 ? 'Студия' : `${profile.rooms_options?.length ? profile.rooms_options.join('–') : profile.rooms} комн.`}` : '',
     profile.budget_max ? `до ${rub(profile.budget_max)}` : '',
     { new: 'Новостройки', secondary: 'Вторичка', both: 'Новостройки и вторичка' }[profile.housing]] : [];
   $('searchContext').innerHTML = labels.filter(Boolean).map(t => html`<span>${t}</span>`).join('');
@@ -67,6 +68,10 @@ export function refreshContext(profile) {
 
 export function initShell({ start }) {
   let launching = false;
+  bindMic($('entryMicBtn'), $('entryQuery'), {
+    onFinal: () => { $('entryVoiceStatus').textContent = 'Проверьте текст и нажмите «Начать подбор».'; },
+    onError: message => { $('entryVoiceStatus').textContent = message; },
+  });
   const selectMarket = (value) => {
     market = value;
     document.querySelectorAll('[data-market]').forEach(button => {
@@ -100,6 +105,7 @@ export function initShell({ start }) {
     const button = event.target.closest('[data-action]');
     if (!button) return;
     const action = button.dataset.action;
+    if (action === 'voice-search') { openEntry(); $('entryMicBtn').click(); }
     if (action === 'open-agent' || action === 'smart-search') openEntry();
     if (action === 'market') selectMarket(button.dataset.market);
     if (action === 'apartments') { selectMarket('both'); navigate('apartments'); }

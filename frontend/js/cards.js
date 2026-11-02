@@ -101,14 +101,14 @@ function collectForm(card) {
 }
 
 function updateDecisionLayout() {
-  document.querySelector("section.stage").classList.toggle("has-decision",
-    Boolean($("decisionHost").querySelector(".confirm:not(.is-done)")));
+  $("chatPanel").classList.toggle("has-decision",
+    Boolean($("chatLog").querySelector(".confirm:not(.is-done)")));
 }
 
 function presentDecision(card, live) {
-  $("decisionHost").append(card);
+  $("chatLog").append(card);
   updateDecisionLayout();
-  if (live) card.scrollIntoView({ block: "start", behavior: "smooth" });
+  if (live) { setChatExpanded(true); chatLog.scrollTop = chatLog.scrollHeight; }
 }
 
 function archiveDecision(card) {
@@ -154,8 +154,8 @@ export function confirmCard(ev) {
     const p = ev.payload;
     extra.innerHTML = html`
       <dl class="redlines">
-        <dt>Город</dt><dd>${p.city}</dd>
-        <dt>Комнат</dt><dd>${p.rooms === 0 ? "студия" : p.rooms}</dd>
+        <dt>Территория</dt><dd>${[p.city, ...(p.cities || []).filter(c => c !== p.city)].join(", ")}</dd>
+        <dt>Комнат</dt><dd>${p.rooms_options?.length > 1 ? p.rooms_options.join("–") : p.rooms === 0 ? "студия" : p.rooms}</dd>
         <dt>Агент соглашается сам</dt><dd>${p.authority_rule}</dd>
       </dl>
       <label style="margin-top:8px">Бюджет, ₽ — выше агент не пойдёт
@@ -200,7 +200,7 @@ export function confirmCard(ev) {
   const hint = voiceHint(ev);
   card.dataset.hint = hint;
   const spoken = {
-    red_lines: () => `Проверим рамки: ${ev.payload.city}, ${ev.payload.rooms === 0 ? "студия" : `${ev.payload.rooms}-комнатная`}, бюджет до ${rub(ev.payload.budget_max)}. ${ev.text}`,
+    red_lines: () => `Проверим рамки: ${[ev.payload.city, ...(ev.payload.cities || [])].join(", ")}, ${ev.payload.rooms_options?.length > 1 ? `${ev.payload.rooms_options.join("–")}-комнатная` : ev.payload.rooms === 0 ? "студия" : `${ev.payload.rooms}-комнатная`}, бюджет до ${rub(ev.payload.budget_max)}. ${ev.text}`,
     finance: () => `${ev.title}.`,
     payment: () => `${ev.title}`,
     family: () => `${ev.title}. ${ev.text}`,

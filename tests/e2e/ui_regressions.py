@@ -22,6 +22,20 @@ async def main(base):
         await page.goto(base, wait_until='domcontentloaded')
         await page.locator('.cookie-note button').click()
         assert await page.locator('#aggregatorHome').is_visible()
+        assert await page.locator('[data-tab=economics]').count() == 0
+        # Главная использует тот же настоящий bindMic, распознавание в тесте подменено.
+        await page.evaluate("""async () => {
+          const {recorder} = await import('/js/voice.js');
+          window.savedListen = recorder.listen;
+          recorder.available = recorder.supported = true;
+          recorder.listen = () => ({stop(){}, result:Promise.resolve({text:'Хочу квартиру в Самаре до 10 млн'})});
+        }""")
+        await page.locator('[data-action=voice-search]').click()
+        await page.wait_for_function("document.getElementById('entryQuery').value.includes('Самаре')")
+        assert await page.locator('#entryMicBtn').is_visible()
+        assert 'Проверьте текст' in await page.locator('#entryVoiceStatus').inner_text()
+        await page.locator('[data-action=close-entry]').click()
+        await page.evaluate("""async () => { const {recorder} = await import('/js/voice.js'); recorder.listen = window.savedListen; }""")
         await page.locator('[data-market=secondary]').click()
         await page.fill('#portalCity', 'Казань')
         await page.fill('#portalBudget', '9')
@@ -43,6 +57,19 @@ async def main(base):
         assert not await page.locator('#chatPanel').evaluate("node => node.classList.contains('expanded')")
         assert await page.evaluate('document.documentElement.scrollWidth <= innerWidth')
         assert 'CARTO' not in await page.locator('.leaflet-control-attribution').inner_text()
+        assert await page.locator('.leaflet-control-attribution svg').count() == 0
+        # Реальный сигнал поиска меняет правую область, даже если старая подборка ещё видна.
+        await page.evaluate("""async () => {
+          const {state}=await import('/js/state.js');
+          state.es.onmessage(new MessageEvent('message',{data:JSON.stringify({type:'search_progress',on:true,text:'Проверяю квартиры…'})}));
+        }""")
+        await page.wait_for_selector('#stage .search-spinner')
+        assert await page.locator('#stage').get_attribute('aria-busy') == 'true'
+        await page.evaluate("""async () => {
+          const {state}=await import('/js/state.js');
+          state.es.onmessage(new MessageEvent('message',{data:JSON.stringify({type:'search_progress',on:false})}));
+        }""")
+        await page.wait_for_selector('#stage .search-spinner', state='detached')
         await page.screenshot(path='/tmp/ui-mobile-selection.png', full_page=True)
         # Обычный текстовый вопрос модели должен снова открыть свёрнутый мобильный чат.
         await page.evaluate("""async () => {

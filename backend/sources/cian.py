@@ -41,7 +41,7 @@ REDIRECTS = (301, 302, 303, 307, 308)
 # Поддомены семи городов проверены; остальные Циан называет сам редиректом — запоминаем (SUBS_FILE).
 SUBDOMAINS = {"Москва": "www", "Санкт-Петербург": "spb", "Казань": "kazan", "Новосибирск": "novosibirsk",
               "Екатеринбург": "ekb", "Нижний Новгород": "nn", "Краснодар": "krasnodar"}
-TITLE_STEMS = {"Москва": "москв", "Нижний Новгород": "нижн"}
+TITLE_STEMS = {"Московская область": "московск","Москва": "москв", "Нижний Новгород": "нижн"}
 REGIONS = {city: (region, SUBDOMAINS.get(city, "www"), TITLE_STEMS.get(city) or city_stem(city))
            for city, region in CIAN_REGIONS.items()}
 FEATURED_CITIES = list(SUBDOMAINS)  # проверены на живом Циане — их предлагаем кнопками

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import unittest
+from unittest.mock import patch, AsyncMock
 
 from backend import db
 from backend.agent import deal as D
@@ -122,13 +123,16 @@ class FinanceActionsTest(unittest.TestCase):
         self.assertEqual(s.profile["payment"], "mortgage_saving")
 
     def test_order_is_enforced_by_code(self):
-        """Модель торопится: ипотека без семьи и поиск без финансов не выполняются — она получает объяснение."""
+        """Ипотека требует данных семьи; просмотр объявлений их не требует."""
         s = self.agent(call("mortgage_programs"), call("search_listings"), say("Сначала уточню семью."))
         s.profile["payment"] = "mortgage_ready"
-        asyncio.run(drive(s))
+        from backend import sources
+        from tests.test_llm_and_agent import listing
+        with patch.object(sources, 'collect', AsyncMock(return_value=([listing()], []))), patch.object(sources, 'more', AsyncMock(return_value=[])):
+            asyncio.run(drive(s))
         results = [json.loads(m["content"]) for m in s.messages if m["role"] == "tool"]
         self.assertIn("ask_family", results[0]["error"])
-        self.assertIn("mortgage_programs", results[1]["error"])
+        self.assertGreater(results[1]["in_budget"], 0)
 
     def test_cash_needs_no_programs(self):
         s = self.agent(call("ask_payment"), call("mortgage_programs"), say("Ипотека не нужна."))

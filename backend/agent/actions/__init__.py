@@ -51,8 +51,6 @@ def available(s, name: str) -> bool:
     """Модель выбирает действия среди разрешённых текущим состоянием, порядок не диктуется."""
     p = s.profile
     ready = bool(p.get("city") and p.get("rooms") is not None and p.get("budget_max"))
-    finance = p.get("payment") == "cash" or (s.mortgage is not None and
-               (p.get("payment") != "mortgage_saving" or s.finance is not None))
     rules = {
         # Подтверждение рамок завершает вводную анкету. Если поиск ничего не даст,
         # снова разрешаем обсудить изменение условий.
@@ -65,8 +63,9 @@ def available(s, name: str) -> bool:
         "mortgage_programs": ready and bool(p.get("payment")) and
                              (p.get("payment") == "cash" or p.get("children") is not None),
         "savings_plan": ready and p.get("payment") == "mortgage_saving",
-        "search_listings": ready and s.red_lines_ok and finance,
-        "show_selection": s.search is not None and s.red_lines_ok,
+        "search_listings": ready,
+        "show_selection": s.search is not None,
+        "offer_search_alternatives": s.search is not None,
         "probe_budget": s.search is not None,
         "call_seller": s.search is not None and s.red_lines_ok,
         "confirm_price": bool(s.calls) and s.red_lines_ok,
@@ -86,7 +85,7 @@ async def execute(s, call: ToolCall) -> dict:
         names = ", ".join(a.name for a in REGISTRY.values() if available(s, a.name))
         hint = ""
         if call.name == "search_listings":
-            hint = "Для поиска нужны confirm_red_lines, ask_payment и, при ипотеке, ask_family, mortgage_programs (savings_plan, если взнос ещё копят). "
+            hint = "Для поиска нужны город, допустимые комнаты и бюджет (update_request). "
         return {"error": f"{hint}Действие недоступно в текущем состоянии. Доступны: {names}"}
     args = call.arguments
     try:
