@@ -115,9 +115,10 @@ async def prepare(s, proposal=None):
     revision = s.client_revision
     error = None
     for attempt in range(2):
-        messages = [{'role': 'system', 'content': SYSTEM + '\n' + guard.POLICY}, guard.data_message('request_review', payload)]
+        instruction = SYSTEM + '\n' + guard.POLICY
         if error:
-            messages.append({'role': 'system', 'content': 'Предыдущий ответ не прошёл проверку формата: ' + error + '. Исправь JSON; смысл не угадывай.'})
+            instruction += '\nПредыдущий ответ не прошёл проверку формата: ' + error + '. Исправь JSON; смысл не угадывай.'
+        messages = [{'role': 'system', 'content': instruction}, guard.data_message('request_review', payload)]
         try:
             result = await s.llm.chat_json(messages, tag='request_review', temperature=.1, max_tokens=1400)
             _validate(result, payload)

@@ -94,6 +94,8 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
         await U.ensure(s)
         self.assertEqual(s.profile['city'],'Казань')
         self.assertEqual(len(s.llm.seen),2)
+        # GigaChat допускает system только первым сообщением, включая исправление формата.
+        self.assertEqual([m['role'] for m in s.llm.seen[1]], ['system', 'user'])
 
     async def test_two_invalid_reviews_leave_profile_unchanged(self):
         text = 'Условия прежние.'
