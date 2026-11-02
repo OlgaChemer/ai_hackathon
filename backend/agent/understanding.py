@@ -45,6 +45,8 @@ apply: непустые changes и evidence для каждого поля.
 unchanged: changes={}, evidence=[], question="", options=[].
 clarify: changes={}, evidence=[], непустой question; никаких неподтверждённых изменений.
 Перед ответом проверь, что не пропустил ни одного явно названного условия и не изменил неназванное.
+Если переданы previous_review и audit_feedback, исправь указанные несовпадения expected с итоговым
+профилем, сохрани остальные верно разобранные условия. Перепроверь исправление по цитатам клиента.
 """
 
 
@@ -220,6 +222,7 @@ async def prepare(s, proposal=None):
             if not checked['accepted']:
                 # Замечания аудитора не становятся инструкциями system и не применяются как изменения.
                 payload['audit_feedback'] = checked['issues']
+                payload['previous_review'] = result
                 error = 'Нужно исправить конкретные смысловые замечания из audit_feedback'
                 continue
         except StructuredOutputError:
