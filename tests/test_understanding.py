@@ -41,9 +41,8 @@ def verdict(text, changes=None, intent='refine', decision=None):
             'evidence': [{'field': k, 'quote': text} for k in changes], 'question': '', 'options': []}
 
 
-def audit_verdict(quote, problem=''):
-    return {'checks':[{'quote':quote,'expected':'нужное условие','actual':'разобранное условие',
-                       'status':'missing' if problem else 'covered','problem':problem}]}
+def audit_verdict(quote, expected=None, clarify=False):
+    return {'checks':[{'quote':quote,'expected':expected or {}, 'clarify':clarify}]}
 
 
 class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
@@ -87,19 +86,19 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
         incomplete = verdict(text, {'city':'Казань','budget_max':9_000_000})
         complete = verdict(text, {'city':'Казань','budget_max':9_000_000,'payment':'cash'})
         s = self.agent(text, incomplete, complete)
-        s.llm.audits = [audit_verdict('плачу своими','Пропущен способ оплаты cash'), audit_verdict(text)]
+        s.llm.audits = [audit_verdict('плачу своими',{'payment':'cash'}), audit_verdict(text)]
         await U.ensure(s)
         self.assertEqual(s.profile['payment'], 'cash')
         self.assertEqual(len(s.llm.seen), 2)
         payload = json.loads(s.llm.seen[1][1]['content'])['data']
         self.assertIn('audit_feedback', payload)
-        self.assertNotIn('Пропущен способ оплаты', s.llm.seen[1][0]['content'])
+        self.assertNotIn('Не совпадают поля: payment', s.llm.seen[1][0]['content'])
 
     async def test_rejected_coverage_cannot_apply_even_a_well_formed_grounded_patch(self):
         text = 'Новгород'
         guess = verdict(text, {'city':'Великий Новгород'})
         s = self.agent(text, guess, guess)
-        problem = audit_verdict(text,'Неоднозначная территория: нужно уточнить.')
+        problem = audit_verdict(text,clarify=True)
         s.llm.audits = [problem, problem]
         before = deepcopy(s.profile)
         with self.assertRaises(U.UnderstandingError):

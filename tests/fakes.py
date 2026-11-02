@@ -35,8 +35,7 @@ def review_reply(payload, changes=None, intent=None):
 
 def audit_reply(messages):
     payload = json.loads(messages[1]['content'])['data']
-    return {'checks':[{'quote':payload['messages'][-1]['text'][:1000], 'expected':'fixture',
-                      'actual':'fixture', 'status':'covered', 'problem':''}]}
+    return {'checks':[{'quote':payload['messages'][-1]['text'][:1000], 'expected':{}, 'clarify':False}]}
 
 
 class ScriptedLLM(LLMClient):

@@ -90,11 +90,9 @@ async def update_request(s, **changes) -> dict:
     return apply_request(s, changes)
 
 
-def apply_request(s, changes):
-    """Только структурированные, проверенные изменения. Естественный язык здесь не читается."""
-    old_profile = dict(s.profile)
-    before = {k: s.profile.get(k) for k in CORE_KEYS}
-    p = merge_profile(changes, s.profile or None)
+def updated_profile(profile, changes):
+    """Чистое преобразование: одинаково для проверки кандидата и его применения."""
+    p = merge_profile(changes, profile or None)
     for key in changes.get("clear_criteria", []):
         if key.startswith("poi:"):
             p["poi"] = [v for v in p["poi"] if v != key[4:]]
@@ -110,6 +108,14 @@ def apply_request(s, changes):
     for key in LIST_KEYS:  # пустой список от модели — снять условие
         if key in changes and changes[key] == []:
             p[key] = []
+    return p
+
+
+def apply_request(s, changes):
+    """Только структурированные, проверенные изменения. Естественный язык здесь не читается."""
+    old_profile = dict(s.profile)
+    before = {k: s.profile.get(k) for k in CORE_KEYS}
+    p = updated_profile(s.profile, changes)
     notes = []
     if p.get("city") and p["city"] not in sources.SUPPORTED_CITIES:
         notes.append(f"Города «{p['city']}» нет среди {len(sources.SUPPORTED_CITIES)} городов Циана, которые я знаю. "

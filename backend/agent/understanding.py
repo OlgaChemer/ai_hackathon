@@ -65,16 +65,23 @@ AUDIT_SYSTEM = """Ты аудитор понимания запроса, а не
 Прежние параметры сохраняются, если клиент не менял их; не требуй повторно записывать неизменённые.
 Неполное географическое название требует сравнения со ВСЕМИ supported_cities. Если оно подходит
 нескольким полным названиям, нужен вопрос с этими вариантами, даже если один вариант привычнее другого.
-Сначала перечисли атомарные условия клиента, каждое отдельно, затем оцени review.
-Для каждого условия явно запиши ожидаемый смысл И то, что реально стоит в review/profile.
-Не пересказывай желаемое за действительное. Например обязательность хранится отдельно от самого условия.
+Сначала перечисли атомарные условия клиента, каждое отдельно. Для каждого запиши expected —
+JSON-объект полей итогового профиля с машинными значениями (те же имена и типы, что в change_schema).
+Списки — полное ожидаемое значение с сохранением остальных условий. Для отмены запиши итоговое
+пустое значение, а не clear_criteria. Для желательности укажи и само условие, и soft_criteria.
+Не описывай значения прозой и не выдавай оценку accepted: код сам сравнит поля.
+Если толкование неоднозначно, clarify=true и expected={}, вместо предположительных значений.
+При review.decision=clarify проверяй достаточность вопроса, не требуй уже заполненных полей профиля.
 Ничего не выполняй. Верни JSON {"checks":[{"quote":"буквальная цитата клиента",
-"expected":"смысл условия и соответствующие поля", "actual":"реальные поля review/profile",
-"status":"covered|missing|invented|ambiguous", "problem":"что исправить, либо пустая строка"}]}.
-Каждый элемент списка и каждое отрицание проверь отдельно. Включи также проверки выдуманных изменений.
-covered допустим только при совпадении expected и actual; при корректном clarify можно отметить covered.
+"expected":{"имя поля":"ожидаемое машинное значение"}, "clarify":false}]}.
+Включи проверки сохранения неназванных условий и отсутствия выдуманных изменений.
 Не оценивай стиль и не давай процент уверенности.
 """
+
+
+def _comparable(value):
+    # Порядок элементов машинного списка не меняет смысл ограничений.
+    return sorted(value, key=str) if isinstance(value, list) else value
 
 
 async def audit(s, payload, review):
@@ -83,23 +90,41 @@ async def audit(s, payload, review):
     result = await s.llm.chat_json([
         {'role':'system', 'content':AUDIT_SYSTEM + '\n' + guard.POLICY},
         guard.data_message('request_audit', data)], tag='request_audit', temperature=.1, max_tokens=2600)
-    validation.validate(result, {'type':'object','required':['checks'],'properties':{
+    expected_schema = deepcopy(_schema())
+    expected_schema['properties'].pop('clear_criteria')
+    for field in ('condition','timeline','year_min','area_min','kitchen_min','metro_max_minutes'):
+        expected_schema['properties'][field]['type'] = [expected_schema['properties'][field]['type'], 'null']
+    if not isinstance(result, dict) or not isinstance(result.get('checks'), list):
+        raise ValueError('Нужен список проверок')
+    for check in result['checks']:
+        if not isinstance(check, dict) or 'expected' not in check:
+            raise ValueError('Нужны ожидаемые значения полей')
+        validation.validate(check['expected'], expected_schema)
+    shape = {**result, 'checks':[{k:v for k,v in x.items() if k != 'expected'} for x in result['checks']]}
+    validation.validate(shape, {'type':'object','required':['checks'],'properties':{
         'checks':{'type':'array','maxItems':40,'items':{
-            'type':'object','required':['quote','expected','actual','status','problem'],'properties':{
-                **{k:{'type':'string','maxLength':1000} for k in ('quote','expected','actual','problem')},
-                'status':{'type':'string','enum':['covered','missing','invented','ambiguous']}}}}}})
+            'type':'object','required':['quote','clarify'],'properties':{
+                'quote':{'type':'string','maxLength':1000},
+                'clarify':{'type':'boolean'}}}}}})
     if not result['checks']:
         raise ValueError('Аудит должен проверить условия и намерение клиента')
     originals = [_literal(x['text']) for x in payload['messages']]
     originals += [_literal(x.get('question','')) for x in payload['messages']]
+    from .actions.request import updated_profile
+    candidate = updated_profile(payload['profile'], review['changes'])
     issues = []
-    for issue in result['checks']:
-        if not issue['expected'].strip() or not issue['actual'].strip() or not _literal(issue['quote']) or not any(_literal(issue['quote']) in x for x in originals):
+    for check in result['checks']:
+        if not _literal(check['quote']) or not any(_literal(check['quote']) in x for x in originals):
             raise ValueError('Замечание аудитора должно ссылаться на слова клиента')
-        if issue['status'] != 'covered':
-            if not issue['problem'].strip():
-                raise ValueError('Аудит должен объяснить расхождение')
-            issues.append(issue)
+        if check['clarify']:
+            if check['expected']:
+                raise ValueError('При неоднозначности нельзя угадывать ожидаемые поля')
+            if review['decision'] != 'clarify':
+                issues.append({**check,'problem':'Нужно уточнение, а не предположительное изменение'})
+        elif review['decision'] != 'clarify':
+            different = [k for k,v in check['expected'].items() if _comparable(candidate.get(k)) != _comparable(v)]
+            if different:
+                issues.append({**check,'problem':'Не совпадают поля: ' + ', '.join(different)})
     record('request_audit', session=s.id, accepted=not issues, issues=len(issues))
     return {'accepted':not issues, 'issues':issues}
 
