@@ -9,37 +9,54 @@
   <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
   <link rel="stylesheet" href="appearance.css">
+  <link rel="stylesheet" href="approved-design.css">
+  <link rel="stylesheet" href="shell.css">
 </head>
-<body>
-<div id="aggregatorHome" class="dc-home">
-<nav class="dc-nav" aria-label="Главное меню Место">
-<div class="agg-brand">
+<body data-page="apartments">
+<header class="site-header">
+<div class="site-bar">
+<button class="agg-brand site-brand" data-action="home" aria-label="Место — на главную">
 <span class="agg-mark" aria-hidden="true">м</span>
 <span class="dc-logo">место<span class="agg-brand-sub">агрегатор недвижимости</span>
 </span>
-</div>
-<button data-action="open-agent">Купить</button>
+</button>
+<nav class="site-nav" aria-label="Главное меню">
+<button data-action="apartments" aria-current="page">Квартиры</button>
 <button data-action="new-buildings">Новостройки</button>
-<button data-action="open-chats">Диалоги</button>
-<button class="dc-account" data-action="open-account">Личный кабинет</button>
-</nav>
-<div class="dc-subnav">
-<button data-action="focus-city">Город поиска</button>
-<button data-action="open-agent">Квартиры</button>
+<button data-action="smart-search">Умный поиск <span aria-hidden="true">✦</span></button>
 <button data-action="open-chats">История подбора</button>
-<button data-action="open-agent">Умный подбор</button>
+</nav>
+<div class="site-tools">
+  <button class="btn btn-small" id="resumeCallAudio" type="button" hidden>Включить звук звонка</button>
+  <span class="provider" id="provider" title="Какая модель ведёт агента">…</span>
+  <div class="account" id="account"></div>
+  <button class="voice-toggle" id="voiceToggle" aria-pressed="true" title="Озвучивать звонок">
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4z" fill="currentColor"/><path class="wave" d="M16 8.5a5 5 0 0 1 0 7M18.5 6a8.5 8.5 0 0 1 0 12" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg>
+    <span>Голос</span>
+  </button>
 </div>
+</div>
+<div class="site-subbar">
+<span class="site-section" id="pageLabel">Поиск квартиры</span>
+<button data-action="focus-city">Город поиска</button>
+<nav class="tabs" aria-label="Текущий подбор и экономика">
+  <button class="tab" id="currentSearchLink" data-tab="deal" hidden>Продолжить подбор</button>
+  <button class="tab" data-tab="economics">Экономика для Сбера</button>
+</nav>
+</div>
+</header>
+<div id="aggregatorHome" class="dc-home">
 <main class="dc-main">
 <h1>Найдём квартиру,<br>которая подходит именно вам</h1>
 <p class="lead">Реальные объявления, ваши пожелания и агент на вашей стороне.<br>От первого запроса до разговора с продавцом.</p>
 <section class="dc-search" aria-label="Начало подбора">
 <div class="dc-tabs">
-<button class="on" data-action="market" data-market="both" aria-pressed="true">Все квартиры</button>
-<button data-action="market" data-market="new" aria-pressed="false">Новостройки</button>
-<button data-action="market" data-market="secondary" aria-pressed="false">Вторичка</button>
+<button type="button" class="on" data-action="market" data-market="both" aria-pressed="true">Все квартиры</button>
+<button type="button" data-action="market" data-market="new" aria-pressed="false">Новостройки</button>
+<button type="button" data-action="market" data-market="secondary" aria-pressed="false">Вторичка</button>
 </div>
-<div class="dc-fields">
-<label>Город или адрес<input id="portalCity" value="Москва" aria-label="Город поиска">
+<form class="dc-fields" id="portalForm">
+<label>Город или адрес<input id="portalCity" value="Москва" maxlength="160" aria-label="Город поиска">
 </label>
 <label>Комнаты<select id="portalRooms" aria-label="Комнаты для поиска">
 <option value="0">Студия</option>
@@ -49,10 +66,10 @@
 <option value="4">4 комнаты</option>
 </select>
 </label>
-<label>Бюджет, млн ₽<input id="portalBudget" type="number" min="0" step="0.5" placeholder="Пока не знаю">
+<label>Бюджет, млн ₽<input id="portalBudget" type="number" min="0" step="any" placeholder="Пока не знаю">
 </label>
-<button class="btn" data-action="portal-search">Подобрать с агентом</button>
-</div>
+<button type="submit" class="btn" data-action="portal-search">Найти квартиры</button>
+</form>
 <div class="agg-sources">
 <span>Данные для подбора</span>
 <span class="agg-source">Циан</span>
@@ -65,13 +82,13 @@
 <span class="agg-number">01 / Единая подборка</span>
 <h2>Все подходящие варианты рядом</h2>
 <p>Сравнивайте цену и характеристики в одном интерфейсе. Справедливая цена и проверка пожеланий — в каждой подборке.</p>
-<button class="switchlink" data-action="open-agent">Начать подбор ↗</button>
+<button class="switchlink" data-action="apartments">Настроить поиск ↗</button>
 </section>
 <section>
 <span class="agg-number">02 / Агент на вашей стороне</span>
 <h2>Расскажите, что важно</h2>
 <p>Район, школа, бюджет и ваши отметки помогут агенту уточнить подборку и подготовить вопросы собственнику.</p>
-<button class="switchlink" data-action="open-agent">Обсудить пожелания ↗</button>
+<button class="switchlink" data-action="smart-search">Обсудить пожелания ↗</button>
 </section>
 </div>
 <p class="dc-note">Агент ищет объявления на Циане и в своей базе. Решения о цене, выборе квартиры и сделке принимаете вы.</p>
@@ -79,6 +96,19 @@
 <button class="agent-launcher" data-action="open-agent" aria-label="Открыть агента">
 <span class="agent-symbol" aria-hidden="true">✦</span>Агент по недвижимости</button>
 </div>
+<main id="historyPage" class="history-page" hidden aria-labelledby="historyTitle">
+  <div class="page-heading">
+    <div><span class="eyebrow">Ваше пространство</span><h1 id="historyTitle">История подбора</h1>
+      <p class="lead">Возвращайтесь к квартирам, расчётам и договорённостям. Каждый подбор — отдельный диалог.</p></div>
+    <button class="btn" data-action="smart-search">✦ Новый умный поиск</button>
+  </div>
+  <div class="history-toolbar">
+    <label>Найти подбор<input id="historyQuery" type="search" placeholder="Город или слова из запроса"></label>
+    <label>Показать<select id="historyStatus"><option value="all">Все подборы</option><option value="active">В работе</option><option value="completed">Завершённые сделки</option></select></label>
+    <span id="historyCount" class="muted" role="status"></span>
+  </div>
+  <div id="historyList" class="history-list" aria-live="polite"></div>
+</main>
 <dialog id="entryDialog" class="entry-dialog" aria-labelledby="entryTitle">
 <div class="modal-head">
 <h3 id="entryTitle">
@@ -87,42 +117,22 @@
 <button class="close" data-action="close-entry" aria-label="Закрыть агента">✕</button>
 </div>
 <div class="entry-content">
-<h2>Какую квартиру ищем?</h2>
-<p class="muted">Расскажите своими словами. Помогу с пожеланиями, бюджетом и подборкой.</p>
+<span class="eyebrow">Умный поиск</span><h2>Расскажите о квартире,<br>в которой хочется жить</h2>
+<p class="muted">Парк для прогулок, школа рядом или тихий двор — начните с того, что важно. Агент уточнит недостающие параметры.</p>
 <button class="example" data-entry-example="Хочу двушку в Москве, бюджет пока не знаю">Хочу двушку в Москве, бюджет пока не знаю ↗</button>
 <button class="example" data-entry-example="2-комнатная в Москве до 15 млн ₽">2-комнатная в Москве до 15 млн ₽ ↗</button>
 <form id="entryForm">
-<textarea id="entryQuery" aria-label="Первый запрос агенту" required minlength="3" placeholder="Например: ищу квартиру для семьи в Москве…">
+<textarea id="entryQuery" aria-label="Первый запрос агенту" required minlength="3" maxlength="500" placeholder="Например: ищу квартиру для семьи в Москве…">
 </textarea>
 <button class="btn" type="submit">Начать подбор</button>
 </form>
-<p class="small muted">После запроса откроется окно подбора. В окне подбора доступны чат, голос и история диалогов.</p>
+<p class="small muted">Начнётся новый подбор. К предыдущим можно вернуться в истории.</p>
 </div>
 </dialog>
 
 <div id="agentApp" hidden>
-<div class="dc-window-label">Место · Окно агента по недвижимости <button class="switchlink home-link" data-action="home">Свернуть на главную ↘</button></div>
-  <header class="topbar">
-    <div class="brand">
-      <span class="brand-mark" aria-hidden="true"></span>
-      <span class="brand-name">Агент сделки</span>
-      <span class="brand-sub">платформа «Место»</span>
-    </div>
-    <nav class="tabs" role="tablist">
-      <button class="tab is-active" role="tab" data-tab="deal" aria-selected="true">Покупка квартиры</button>
-      <button class="tab" role="tab" data-tab="economics" aria-selected="false">Экономика для Сбера</button>
-    </nav>
-    <div class="topbar-tools">
-      <button class="btn btn-small" id="resumeCallAudio" type="button" hidden>Включить звук звонка</button>
-      <span class="provider" id="provider" title="Какая модель ведёт агента">…</span>
-      <div class="account" id="account"></div>
-      <button class="voice-toggle" id="voiceToggle" aria-pressed="true" title="Озвучивать звонок">
-        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9H4z" fill="currentColor"/><path class="wave" d="M16 8.5a5 5 0 0 1 0 7M18.5 6a8.5 8.5 0 0 1 0 12" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg>
-        <span>Голос</span>
-      </button>
-    </div>
-  </header>
-
+  <div class="workspace-heading"><div><span class="eyebrow">Личный агент по недвижимости</span><h1>Ваш подбор</h1></div>
+    <button class="btn btn-ghost" data-action="open-chats">Все подборы ↗</button></div>
   <main id="view-deal" class="workspace layout">
     <aside id="chatPanel" class="chat" aria-label="Диалог с агентом">
       <div class="chat-head">
@@ -166,7 +176,11 @@
 
     <section class="stage" aria-label="Ход сделки">
       <div class="context" id="searchContext"></div>
-      <ol class="stepper" id="stepper"></ol>
+      <details class="stage-navigation">
+        <summary>Этапы сделки</summary>
+        <ol class="stepper" id="stepper" aria-label="Перейти к этапу сделки"></ol>
+      </details>
+      <div id="decisionHost" class="decision-host" aria-live="polite"></div>
       <div class="stage-body" id="stage"></div>
     </section>
   </main>

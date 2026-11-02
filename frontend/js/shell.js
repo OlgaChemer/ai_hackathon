@@ -1,11 +1,55 @@
-// Оболочка согласованного дизайна; все данные и действия поступают от рабочего агента.
+// Общая оболочка: страницы меняются без перезапуска диалога и дополнительных команд агенту.
 import { $, state } from './state.js';
 import { html, rub } from './format.js';
+import { mountEconomics } from './economics.js';
+
+let market = 'both';
+
+export function syncShell() {
+  const page = document.body.dataset.page;
+  $('currentSearchLink').hidden = !state.sid && page !== 'agent';
+  $('currentSearchLink').textContent = page === 'agent' ? 'Текущий подбор' : 'Продолжить подбор';
+  document.querySelectorAll('.site-nav [data-action]').forEach(button => {
+    const active = page === 'history' ? button.dataset.action === 'open-chats'
+      : page === 'apartments' && button.dataset.action === (market === 'new' ? 'new-buildings' : 'apartments');
+    if (active) button.setAttribute('aria-current', 'page');
+    else button.removeAttribute('aria-current');
+  });
+  document.querySelectorAll('[data-tab]').forEach(button => {
+    const active = button.dataset.tab === (page === 'economics' ? 'economics' : page === 'agent' ? 'deal' : '');
+    button.classList.toggle('is-active', active);
+    if (active) button.setAttribute('aria-current', 'page');
+    else button.removeAttribute('aria-current');
+  });
+}
+
+export function showPage(page) {
+  const agent = page === 'agent' || page === 'economics';
+  document.body.dataset.page = page;
+  $('aggregatorHome').hidden = page !== 'apartments';
+  $('historyPage').hidden = page !== 'history';
+  $('agentApp').hidden = !agent;
+  $('view-deal').hidden = page !== 'agent';
+  $('view-economics').hidden = page !== 'economics';
+  document.querySelector('.workspace-heading').hidden = page !== 'agent';
+  $('pageLabel').textContent = {apartments:'Поиск квартиры', history:'Ваши сохранённые подборы',
+    agent:'От пожеланий до сделки', economics:'Экономика для Сбера'}[page];
+  $('entryDialog').close();
+  syncShell();
+  if (page === 'economics') mountEconomics($('view-economics'));
+  document.dispatchEvent(new CustomEvent('pagechange', {detail: {page}}));
+}
+
+export function navigate(page, {fresh = false} = {}) {
+  const hash = page === 'agent' && state.sid && !fresh ? `#chat-${state.sid}`
+    : {apartments:'#apartments', history:'#history', agent:'#agent', economics:'#economics'}[page];
+  if (location.hash !== hash) history.pushState(null, '', hash);
+  showPage(page);
+  window.scrollTo(0, 0);
+}
 
 export function showAgent() {
-  $('aggregatorHome').hidden = true;
-  $('agentApp').hidden = false;
-  $('entryDialog').close();
+  showPage('agent');
 }
 
 export function setChatExpanded(expanded) {
@@ -22,60 +66,73 @@ export function refreshContext(profile) {
 }
 
 export function initShell({ start }) {
-  let market = 'both';
+  let launching = false;
   const selectMarket = (value) => {
     market = value;
     document.querySelectorAll('[data-market]').forEach(button => {
       button.classList.toggle('on', button.dataset.market === value);
       button.setAttribute('aria-pressed', String(button.dataset.market === value));
     });
+    syncShell();
   };
-  $('chatToggle').addEventListener('click', () => setChatExpanded(!$('chatPanel').classList.contains('expanded')));
   const openEntry = () => {
-    if (state.sid) { showAgent(); setChatExpanded(true); return; }
-    $('entryDialog').showModal();
+    if (!$('entryDialog').open) $('entryDialog').showModal();
     $('entryQuery').focus();
   };
+  const launch = async (query) => {
+    if (launching) return;
+    launching = true;
+    const buttons = document.querySelectorAll('[data-action="portal-search"], #entryForm [type="submit"]');
+    buttons.forEach(button => button.disabled = true);
+    try {
+      navigate('agent', {fresh:true});
+      setChatExpanded(true);
+      await start(query);
+      if (state.sid) $('entryQuery').value = '';
+    } finally {
+      launching = false;
+      buttons.forEach(button => button.disabled = false);
+      syncShell();
+    }
+  };
+  $('chatToggle').addEventListener('click', () => setChatExpanded(!$('chatPanel').classList.contains('expanded')));
   document.addEventListener('click', (event) => {
     const button = event.target.closest('[data-action]');
     if (!button) return;
     const action = button.dataset.action;
-    if (action === 'open-agent') openEntry();
+    if (action === 'open-agent' || action === 'smart-search') openEntry();
     if (action === 'market') selectMarket(button.dataset.market);
+    if (action === 'apartments') { selectMarket('both'); navigate('apartments'); }
+    if (action === 'home') navigate('apartments');
     if (action === 'new-buildings') {
-      selectMarket('new');
-      $('portalCity').focus();
+      selectMarket('new'); navigate('apartments');
+      $('portalForm').scrollIntoView({block:'center'});
     }
-    if (action === 'focus-city') $('portalCity').focus();
-    if (action === 'open-chats') {
-      showAgent(); setChatExpanded(true);
-      if ($('chatsPanel').hidden) $('chatsBtn').click();
+    if (action === 'focus-city') {
+      navigate('apartments'); $('portalCity').focus();
     }
+    if (action === 'open-chats') navigate('history');
     if (action === 'close-entry') $('entryDialog').close();
-    if (action === 'home') {
-      $('agentApp').hidden = true;
-      $('aggregatorHome').hidden = false;
-    }
-    if (action === 'open-account') {
-      showAgent();
-      document.querySelector('#account button')?.click();
-    }
-    if (action === 'portal-search') {
-      const city = $('portalCity').value.trim();
-      const rooms = $('portalRooms').value;
-      const budget = Number($('portalBudget').value);
-      const housing = {both: 'новостройки и вторичка', new: 'только новостройки', secondary: 'только вторичка'}[market];
-      const query = `Ищу ${rooms === '0' ? 'студию' : `${rooms}-комнатную квартиру`} в ${city || 'Москве'}${budget > 0 ? ` до ${budget} млн рублей` : ', бюджет пока не знаю'}, ${housing}`;
-      showAgent(); setChatExpanded(true); start(query);
-    }
+    if (action === 'open-account') document.querySelector('#account button')?.click();
+  });
+  $('portalForm').addEventListener('submit', (event) => {
+    event.preventDefault();
+    const city = $('portalCity').value.trim();
+    const rooms = $('portalRooms').value;
+    const budget = Number($('portalBudget').value);
+    const housing = {both:'новостройки и вторичка', new:'только новостройки', secondary:'только вторичка'}[market];
+    launch(`Ищу ${rooms === '0' ? 'студию' : `${rooms}-комнатную квартиру`} в ${city || 'Москве'}${budget > 0 ? ` до ${budget} млн рублей` : ', бюджет пока не знаю'}, ${housing}`);
   });
   $('entryForm').addEventListener('submit', (event) => {
     event.preventDefault();
     const query = $('entryQuery').value.trim();
-    if (query.length < 3) return;
-    showAgent(); setChatExpanded(true); start(query);
+    if (query.length >= 3) launch(query);
   });
   document.querySelectorAll('[data-entry-example]').forEach(button => button.addEventListener('click', () => {
-    showAgent(); setChatExpanded(true); start(button.dataset.entryExample);
+    $('entryQuery').value = button.dataset.entryExample;
+    $('entryQuery').focus();
   }));
+  // Открытие/закрытие окна не должно терять набранный текст.
+  $('entryDialog').addEventListener('close', syncShell);
+  syncShell();
 }

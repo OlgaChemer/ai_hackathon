@@ -9,17 +9,18 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import json
-import logging
 import uuid
 
 from .. import geo
 from ..llm import LLMError
+from ..llm.base import LLMBusy
+from ..config import settings
+from ..runtime import Turn, TurnStopped, record
 from . import actions, guard, prompts
 from .features import FEATURES
 from .numbers import fmt
 from .profile import missing_required
-
-log = logging.getLogger(__name__)
+from .session import close_dangling_calls
 
 MAX_ACTIONS_IN_ROW = 14  # действий подряд без ответа клиенту — дальше модель должна заговорить с клиентом
 
@@ -72,55 +73,74 @@ async def run(s) -> None:
             s.messages.append({"role": "user", "content": await s.inbox.get()})
         else:
             s.messages.append({"role": "user", "content": s.query})
-    in_row = 0
+    turn = Turn(s.id, settings.agent_turn_timeout_s, s.signal)
     while True:
         s.signal("typing", on=True)
+        interrupted_call = None
         try:
-            resp = await think(s, with_actions=in_row < MAX_ACTIONS_IN_ROW)
-        except LLMError as exc:
-            log.warning("модель не ответила: %s", type(exc).__name__)
-            s.signal("typing", on=False)
-            s.push("provider", provider=s.llm.name, model=s.llm.model, degraded=True, reason="Модель временно недоступна")
-            await s.say(f"Модель {s.llm.name} сейчас не отвечает — продолжить не могу. Напишите, когда попробовать снова: "
-                        "продолжу с того же места.")
-            s.remember()
-            s.messages.append({"role": "user", "content": await s.inbox.get()})
-            continue
-        if resp.tool_calls:
-            if len(resp.tool_calls) > MAX_ACTIONS_IN_ROW - in_row:
-                await s.say("Достигнут лимит действий за один ход. Напишите, чтобы продолжить.")
+            resp = await turn.run(lambda: think(s, with_actions=turn.tool_calls < MAX_ACTIONS_IN_ROW),
+                                  kind="llm", name="agent")
+            if resp.tool_calls:
+                if len(resp.tool_calls) > MAX_ACTIONS_IN_ROW - turn.tool_calls:
+                    raise TurnStopped("tool_limit")
+                calls = [c if c.id else dataclasses.replace(c, id=f"call_{uuid.uuid4().hex[:8]}") for c in resp.tool_calls]
+                s.messages.append({"role": "assistant", "content": guard.output(resp.text or "", s), "tool_calls": [
+                    {"id": c.id, "type": "function", "function": {"name": c.name, "arguments": json.dumps(guard.output(guard.sanitize(c.arguments), limit=False), ensure_ascii=False)}}
+                    for c in calls]})
+                if resp.functions_state_id:
+                    s.messages[-1]["functions_state_id"] = resp.functions_state_id
+                s.remember()  # вызов не потеряется, если сервер остановится на карточке
+                if resp.text.strip():
+                    await s.say(resp.text.strip())
                 s.signal("typing", on=False)
-                s.messages.append({"role": "user", "content": await s.inbox.get()})
-                in_row = 0
+                for call in calls:
+                    interrupted_call = call.name
+                    turn.check_repeat(call.name, call.arguments)
+                    revision = s.client_revision
+                    # В логе только известное имя действия, без аргументов модели.
+                    name = call.name if call.name in actions.REGISTRY else "unknown"
+                    result = await turn.run(lambda: actions.execute(s, call), kind="tool", name=name)
+                    s.messages.append({"role": "tool", "tool_call_id": call.id, "content": json.dumps(guard.output(guard.sanitize(result), limit=False), ensure_ascii=False, default=str)})
+                    if s.client_revision != revision:
+                        turn.finish("client_answer")
+                        turn = Turn(s.id, settings.agent_turn_timeout_s, s.signal)
+                s.remember()
                 continue
-            in_row += len(resp.tool_calls)
-            calls = [c if c.id else dataclasses.replace(c, id=f"call_{uuid.uuid4().hex[:8]}") for c in resp.tool_calls]
-            s.messages.append({"role": "assistant", "content": guard.output(resp.text or "", s), "tool_calls": [
-                {"id": c.id, "type": "function", "function": {"name": c.name, "arguments": json.dumps(guard.output(guard.sanitize(c.arguments), limit=False), ensure_ascii=False)}}
-                for c in calls]})
-            if resp.functions_state_id:
-                s.messages[-1]["functions_state_id"] = resp.functions_state_id
-            s.remember()  # до действий: если сервер упадёт, пока карточка ждёт клиента, вызов не потеряется
-            if resp.text.strip():
-                await s.say(resp.text.strip())
             s.signal("typing", on=False)
-            for call in calls:
-                log.info("агент %s: вызов действия", s.id)
-                revision = s.client_revision
-                result = await actions.execute(s, call)
-                if s.client_revision != revision:  # карточку подтвердил человек: начался новый ход клиента
-                    in_row = 0
-                s.messages.append({"role": "tool", "tool_call_id": call.id, "content": json.dumps(guard.output(guard.sanitize(result), limit=False), ensure_ascii=False, default=str)})
-            s.remember()
-            continue
-        in_row = 0
-        s.signal("typing", on=False)
-        text = guard.output(resp.text.strip(), s)
-        if text:
+            text = guard.output(resp.text.strip(), s)
+            if not text:
+                raise LLMError("пустой ответ модели")
             await s.say(text, await_reply=True)
             s.messages.append({"role": "assistant", "content": text, **({"functions_state_id": resp.functions_state_id} if resp.functions_state_id else {})})
-        s.remember()
+            s.remember()
+            turn.finish("await_reply")
+        except (LLMError, TurnStopped) as exc:
+            reason = exc.reason if isinstance(exc, TurnStopped) else type(exc).__name__
+            turn.finish(reason)
+            s.signal("typing", on=False)
+            s.signal("model_wait", on=False)
+            if isinstance(exc, LLMBusy):
+                text = "Сейчас много обращений, модель занята. Напишите чуть позже — продолжу с сохранёнными условиями."
+            elif isinstance(exc, LLMError):
+                s.push("provider", provider=s.llm.name, model=s.llm.model, degraded=True, reason="Модель временно недоступна")
+                text = f"Модель {s.llm.name} сейчас не отвечает. Напишите, когда попробовать снова — продолжу с того же места."
+            elif reason == "repeated_tool":
+                text = "Заметил повтор одного и того же действия и остановился. Напишите «продолжить» или уточните запрос — условия сохранены."
+            elif reason == "tool_limit":
+                text = "Достигнут лимит действий за один ход. Напишите, чтобы продолжить с сохранёнными условиями."
+            else:
+                text = "Обработка заняла слишком много времени, поэтому я остановился. Напишите «продолжить» — условия поиска сохранены."
+            if interrupted_call == "call_seller" and s.current:
+                s.push("call_end", status="failed", price=s.current["listing"]["price"], learned={}, viewing=None)
+                s.current = None
+            # В том числе закрываем ещё не выполненные вызовы из одного ответа модели.
+            s.messages = close_dangling_calls(s.messages, "прервано: обработка остановлена; требуется новое сообщение клиента")
+            await s.say(text, await_reply=True)
+            s.messages.append({"role": "assistant", "content": text})
+            s.remember()
         s.messages.append({"role": "user", "content": await s.inbox.get()})
+        turn = Turn(s.id, settings.agent_turn_timeout_s, s.signal)
+        s.push("provider", provider=s.llm.name, model=s.llm.model, degraded=False)
 
 
 async def run_session(s) -> None:
@@ -129,5 +149,5 @@ async def run_session(s) -> None:
     except asyncio.CancelledError:
         raise
     except Exception as exc:  # показать ошибку в интерфейсе, а не молча упасть
-        log.error("агент упал (%s)", type(exc).__name__)
+        record("session_error", session=s.id, error_type=type(exc).__name__)
         s.push("error", text="Ошибка агента. Попробуйте продолжить диалог.")

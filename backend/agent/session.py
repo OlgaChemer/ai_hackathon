@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .. import db
+from ..runtime import human_wait
 from ..db import repo
 from ..llm import LLMClient
 from . import finance as F
@@ -147,7 +148,8 @@ class Session:
         self.pending[kind] = fut
         self.push("confirm", kind=kind, title=title, text=text, **payload)
         try:
-            return await fut
+            with human_wait():
+                return await fut
         finally:
             self.pending.pop(kind, None)
 
@@ -237,7 +239,7 @@ def restore_session(chat_id: str, text: str, llm: LLMClient) -> Session:
     return s
 
 
-def close_dangling_calls(messages: list[dict]) -> list[dict]:
+def close_dangling_calls(messages: list[dict], reason: str = "прервано: агент перезапускался, клиент не успел ответить") -> list[dict]:
     """Действие было начато, но сервер остановился раньше результата: даём модели честный результат «прервано»,
     иначе разговор с вызовом без ответа модель не примет."""
     out: list[dict] = []
@@ -248,8 +250,7 @@ def close_dangling_calls(messages: list[dict]) -> list[dict]:
             for call in m["tool_calls"]:
                 if call["id"] not in answered:
                     out.append({"role": "tool", "tool_call_id": call["id"],
-                                "content": json.dumps({"error": "прервано: агент перезапускался, клиент не успел ответить"},
-                                                      ensure_ascii=False)})
+                                "content": json.dumps({"error": reason}, ensure_ascii=False)})
     return out
 
 

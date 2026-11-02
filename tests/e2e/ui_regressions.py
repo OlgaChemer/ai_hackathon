@@ -30,6 +30,8 @@ async def main(base):
             await page.locator('[data-action=portal-search]').click()
         query = (await sent.value).post_data_json['query']
         assert 'Казань' in query and '9 млн' in query and 'только вторичка' in query, query
+        await page.wait_for_function('query => document.getElementById("query").value === query', arg=query)
+        assert await page.locator('#sendBtn').is_enabled()
         await page.unroute('**/api/session')
         await page.goto(base, wait_until='domcontentloaded')
         await page.locator('.agent-launcher').click()
@@ -50,6 +52,19 @@ async def main(base):
           })}));
         }""")
         await page.wait_for_selector('#chatPanel.expanded')
+        await page.locator('#chatToggle').click()
+        # Очередь модели видна и на телефоне; завершение ожидания убирает индикатор.
+        await page.evaluate("""async () => {
+          const {state}=await import('/js/state.js');
+          state.es.onmessage(new MessageEvent('message',{data:JSON.stringify({type:'model_wait',on:true})}));
+        }""")
+        await page.wait_for_selector('#chatPanel.expanded')
+        await page.wait_for_function("document.querySelector('.msg-thinking')?.textContent.includes('жду очередь')")
+        await page.evaluate("""async () => {
+          const {state}=await import('/js/state.js');
+          state.es.onmessage(new MessageEvent('message',{data:JSON.stringify({type:'model_wait',on:false})}));
+        }""")
+        await page.wait_for_selector('.msg-thinking', state='detached')
         await page.locator('#chatToggle').click()
         print('PASS: новая главная → реальный запрос → подборка, мобильная ширина и локальный Leaflet')
 

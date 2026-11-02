@@ -1,11 +1,13 @@
 """DeepSeek: OpenAI-совместимый Chat Completions API."""
 from __future__ import annotations
 
+import asyncio
 import json
 
 import httpx
 
 from .base import LLMClient, LLMError, LLMResponse, Tool, ToolCall, post_with_retry
+from .. import runtime
 
 
 class DeepSeekClient(LLMClient):
@@ -15,13 +17,21 @@ class DeepSeekClient(LLMClient):
         if not api_key:
             raise LLMError("DEEPSEEK_API_KEY не задан")
         self.model = model
+        self._call_timeout = timeout
         self._http = httpx.AsyncClient(
             base_url=base_url.rstrip("/"),
             headers={"Authorization": f"Bearer {api_key}"},
             timeout=httpx.Timeout(timeout, connect=10.0),
         )
 
-    async def chat(
+    async def chat(self, messages, **kwargs) -> LLMResponse:
+        with runtime.timed("llm", provider=self.name, model=self.model, tag=kwargs.get("tag", "")):
+            try:
+                return await asyncio.wait_for(self._chat(messages, **kwargs), self._call_timeout)
+            except asyncio.TimeoutError:
+                raise LLMError("Истекло время ответа DeepSeek") from None
+
+    async def _chat(
         self,
         messages,
         *,

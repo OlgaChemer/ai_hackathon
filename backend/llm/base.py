@@ -18,6 +18,10 @@ class LLMError(RuntimeError):
     """Ошибка обращения к модели (сеть, авторизация, формат)."""
 
 
+class LLMBusy(LLMError):
+    """Очередь модели заполнена или истекло время ожидания."""
+
+
 @dataclass
 class ToolCall:
     name: str
@@ -105,5 +109,6 @@ async def post_with_retry(http, url: str, *, attempts: int = 3, provider: str = 
             last = LLMError(f"{provider} {r.status_code}")
         except httpx.TransportError as exc:  # таймауты, обрыв keep-alive, DNS
             last = exc
-        await asyncio.sleep(0.5 * (i + 1))
+        if i < attempts - 1:
+            await asyncio.sleep(0.5 * (i + 1))
     raise LLMError(f"{provider} недоступен: {type(last).__name__} {last}".strip())

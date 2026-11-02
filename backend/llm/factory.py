@@ -14,7 +14,8 @@ def build_llm(provider: str | None = None) -> LLMClient:
         from .deepseek import DeepSeekClient
 
         return DeepSeekClient(
-            settings.deepseek_api_key, settings.deepseek_base_url, settings.deepseek_model
+            settings.deepseek_api_key, settings.deepseek_base_url, settings.deepseek_model,
+            timeout=settings.llm_call_timeout_s,
         )
     if provider == "gigachat":
         from .gigachat import GigaChatClient
@@ -27,6 +28,9 @@ def build_llm(provider: str | None = None) -> LLMClient:
             base_url=settings.gigachat_base_url,
             verify_ssl=settings.gigachat_verify_ssl,
             ca_bundle=settings.gigachat_ca_bundle,
+            timeout=settings.llm_call_timeout_s,
+            max_waiters=settings.gigachat_queue_size,
+            queue_timeout=settings.gigachat_queue_timeout_s,
         )
     raise LLMError(f"Неизвестный LLM_PROVIDER: {provider} (нужен deepseek или gigachat)")
 

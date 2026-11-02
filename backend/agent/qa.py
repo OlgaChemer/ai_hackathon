@@ -5,14 +5,14 @@
 """
 from __future__ import annotations
 
-import logging
 import re
 
 from ..llm import LLMError
+from ..llm.base import LLMBusy
+from ..config import settings
+from ..runtime import Turn, TurnStopped
 from . import guard, prompts
 from .numbers import fmt
-
-log = logging.getLogger(__name__)
 
 # вопрос — фраза с вопросительного слова; «а если трёшку?» — не вопрос, а новое условие поиска
 QUESTION = re.compile(r"^\s*(?:а\s+|и\s+|скажи(?:те)?,?\s+)?(?:что|как|почему|зачем|сколько|когда|где|какой|какая|какое|какие|"
@@ -59,14 +59,18 @@ def build_context(s) -> dict:
 
 async def answer(s, text: str) -> None:
     system = prompts.QA_SYSTEM + "\n" + guard.POLICY
+    turn = Turn(s.id, settings.agent_turn_timeout_s, s.signal)
     try:
-        resp = await s.llm.chat([{"role": "system", "content": system}, guard.data_message("session_context", build_context(s)),
+        resp = await turn.run(lambda: s.llm.chat([{"role": "system", "content": system}, guard.data_message("session_context", build_context(s)),
                                   {"role": "user", "content": text}],
-                                temperature=0.3, max_tokens=500, tag="answer")
+                                temperature=0.3, max_tokens=500, tag="answer"), kind="llm", name="answer")
         reply = resp.text.strip()
         if not reply:
             raise LLMError("пустой ответ")
-    except LLMError as exc:
-        log.info("вопрос без ответа: %s", type(exc).__name__)
+        turn.finish("answered")
+    except (LLMError, TurnStopped) as exc:
+        turn.finish(type(exc).__name__)
         reply = "Сейчас не могу ответить на вопрос: модель недоступна. Продолжаю работу — спросите чуть позже."
+        if isinstance(exc, LLMBusy):
+            reply = "Модель сейчас занята. Спросите чуть позже — текущая карточка и условия поиска сохранены."
     await s.say(reply)

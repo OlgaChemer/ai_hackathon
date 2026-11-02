@@ -34,6 +34,12 @@ class Settings:
     gigachat_verify_ssl: bool = _bool("GIGACHAT_VERIFY_SSL", True)
     gigachat_ca_bundle: str = os.getenv("GIGACHAT_CA_BUNDLE", "")
 
+    # Время активной работы: ожидание ответа человека в него не входит.
+    agent_turn_timeout_s: float = max(1, float(os.getenv("AGENT_TURN_TIMEOUT_S") or 120))
+    gigachat_queue_size: int = max(0, int(os.getenv("GIGACHAT_QUEUE_SIZE") or 6))
+    gigachat_queue_timeout_s: float = max(.1, float(os.getenv("GIGACHAT_QUEUE_TIMEOUT_S") or 25))
+    llm_call_timeout_s: float = max(1, float(os.getenv("LLM_CALL_TIMEOUT_S") or 60))
+
     # МТС Exolve: настоящий звонок продавцу (синтез речи + SIP через WebRTC)
     exolve_api_key: str = os.getenv("EXOLVE_API_KEY", "")
     exolve_voice: int = int(os.getenv("EXOLVE_VOICE", "13") or 13)  # 13 — Кирилл

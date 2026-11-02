@@ -448,7 +448,9 @@ async def run(llm: LLMClient, n: Negotiation, human_input: SellerInput | None = 
 
 
 async def queue_input(queue: "asyncio.Queue[str]", timeout: float = 180.0) -> str | None:
+    from ..runtime import human_wait
     try:
-        return await asyncio.wait_for(queue.get(), timeout=timeout)
+        with human_wait():
+            return await asyncio.wait_for(queue.get(), timeout=timeout)
     except asyncio.TimeoutError:
         return None
