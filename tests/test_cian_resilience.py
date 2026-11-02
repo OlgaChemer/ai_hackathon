@@ -25,6 +25,18 @@ class CianResilienceTest(unittest.IsolatedAsyncioTestCase):
             p.start()
             self.addCleanup(p.stop)
 
+    async def test_veliky_novgorod_inflected_title_is_accepted_but_nizhny_is_not(self):
+        page = fixtures.CianParsingTest.PAGE
+        import re
+        good = re.sub(r'<title>.*?</title>', '<title>Купить квартиру в Великом Новгороде</title>', page, flags=re.S)
+        bad = re.sub(r'<title>.*?</title>', '<title>Купить квартиру в Нижнем Новгороде</title>', page, flags=re.S)
+        with patch.object(cian, '_get_httpx', AsyncMock(return_value=(200, '', good))):
+            rows, _ = await cian._fetch_page('Великий Новгород',2,9_000_000,1)
+            self.assertTrue(rows)
+        with patch.object(cian, '_get_httpx', AsyncMock(return_value=(200, '', bad))):
+            with self.assertRaisesRegex(SourceUnavailable, 'не про нужный город'):
+                await cian._fetch_page('Великий Новгород',2,9_000_000,1)
+
     async def test_http_session_survives_same_url_307_cookie_handshake(self):
         client_type = httpx.AsyncClient
         calls = []

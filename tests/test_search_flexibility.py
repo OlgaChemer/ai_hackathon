@@ -114,6 +114,21 @@ class QueryAndRankingTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('city', no_region)
         self.assertEqual(no_region['cities'], [])
 
+    def test_only_scopes_the_new_city_not_a_negated_old_city(self):
+        base = merge_profile({'city':'Москва','cities':['Московская область'],'rooms':1,'budget_max':8_000_000})
+        raw = {'city':'Казань'}
+        change = explicit_search_fields(raw, 'Передумал: только Казань. Москву и область больше не ищи.', base)
+        final = merge_profile(change, base)
+        self.assertEqual(final['city'], 'Казань')
+        self.assertEqual(final['cities'], [])
+        self.assertEqual(final['budget_max'], 8_000_000)
+        self.assertEqual(explicit_search_fields({'cities':['Казань']}, 'Не только Москва, но и Казань')['cities'], ['Казань'])
+
+    def test_cash_slang_is_explicit_payment_but_mixed_funding_is_not(self):
+        self.assertEqual(explicit_search_fields({}, 'Казань, наличка, вторичка')['payment'], 'cash')
+        self.assertNotIn('payment', explicit_search_fields({}, 'Часть наличкой, остальное ипотека'))
+        self.assertNotIn('payment', explicit_search_fields({}, 'Не наличными, беру кредит'))
+
     async def test_all_variants_are_queried_and_deduplicated(self):
         p = {'city': 'Москва', 'cities': ['Московская область'], 'rooms': 1, 'rooms_options': [1, 2], 'budget_max': 10_000_000}
         got = []

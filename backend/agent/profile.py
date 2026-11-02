@@ -193,6 +193,8 @@ def explicit_search_fields(changes: dict, text: str, base: dict | None = None, c
                          ("condition", r"ремонт|отделк|заех|засел|готов.{0,15}(?:квартир|жиль)")):
             if key in out and not (base or {}).get(key) and not re.search(cue, cue_text):
                 out.pop(key)  # отсутствующие требования не становятся фильтрами из-за догадки модели
+    if re.search(r'\b(?:наличк(?:а|ой)|наличными)\b', text) and not re.search(r'ипотек|кредит|взнос|часть|коплю|копим|(?:не|без)\s+налич', text):
+        out['payment'] = 'cash'  # явный способ оплаты, без согласия на какие-либо операции
     rooms = re.search(r'\b([0-5])\s*(?:[-–—]|или)\s*([0-5])\s*(?:комнат|комн)', text)
     if rooms:
         lo, hi = sorted(map(int, rooms.groups()))
@@ -207,7 +209,7 @@ def explicit_search_fields(changes: dict, text: str, base: dict | None = None, c
         out['cities'] = [c for c in out.get('cities', (base or {}).get('cities')) or [] if c != 'Московская область']
         if out.get('city') == 'Московская область':
             out.pop('city')
-    if moscow and 'только' in text and not region:
+    if re.search(r'(?<!не )\bтолько\s+(?:в\s+)?москв[аеуы]\b', text) and not region:
         out['city'], out['cities'] = 'Москва', []
     if region and moscow and re.search(r'\bили\b|\bи\b', text):
         out['city'], out['cities'] = 'Москва', ['Московская область']

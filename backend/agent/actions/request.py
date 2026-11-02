@@ -5,7 +5,7 @@ from ... import geo, sources
 from ..features import FEATURES
 from ..numbers import fmt
 from ..criteria import CRITERIA_KEYS
-from ..profile import explicit_search_fields, merge_profile, missing_required, profile_summary
+from ..profile import explicit_search_fields, in_districts, merge_profile, missing_required, passes_hard_filters, profile_summary
 from . import ActionError, action
 
 LIST_KEYS = ("districts", "avoid_districts", "features", "poi", "wishes", "material", "soft_criteria", "rooms_options", "cities")
@@ -52,7 +52,7 @@ def emit_profile(s) -> None:
     avoid_districts={"type": "array", "items": {"type": "string"}, "description": "районы, которые не показывать"},
     housing={"type": "string", "enum": ["secondary", "new", "both"], "description": "вторичка, новостройки или и то и другое"},
     payment={"type": "string", "enum": ["cash", "mortgage_ready", "mortgage_saving"],
-             "description": "наличные; ипотека и взнос есть; ипотека, взнос ещё копит"},
+             "description": "cash — вся сумма своими деньгами (наличными, наличка, за свои, без ипотеки); mortgage_ready — ипотека и взнос есть; mortgage_saving — ипотека, взнос ещё копит. Записывай уже названную оплату сразу, не переспрашивай."},
     children={"minimum": 0, "maximum": 30, "type": "integer", "description": "детей в семье (0 — нет)"},
     youngest_age={"minimum": 0, "maximum": 100, "type": "integer", "description": "возраст младшего ребёнка, лет"},
     matcap={"type": "boolean", "description": "есть неизрасходованный маткапитал"},
@@ -62,8 +62,8 @@ def emit_profile(s) -> None:
          "description": "что должно быть в 1 км (проверю по карте): " + "; ".join(f"{k} — {v[0]}" for k, v in geo.POI.items())},
     kitchen_min={"minimum": 0, "maximum": 500, "type": "number", "description": "кухня от, м²"},
     area_min={"minimum": 0, "maximum": 2000, "type": "number", "description": "площадь от, м²"},
-    not_first_floor={"type": "boolean"},
-    not_last_floor={"type": "boolean"},
+    not_first_floor={"type": "boolean", "description": "true — первый этаж запрещён; false — разрешён. Если клиент исключает первый И последний этаж, запиши оба ограничения, не пропускай отрицательные условия."},
+    not_last_floor={"type": "boolean", "description": "true — последний этаж запрещён; false — разрешён. При изменении первого этажа не снимай запрет последнего без слов клиента."},
     condition={"type": "string", "enum": ["ready", "cosmetic", "repair", "any"],
                "description": "готова к заселению; косметический; под ремонт; не важно"},
     material={"type": "array", "items": {"type": "string", "enum": ["кирпич", "монолит", "панель", "блочный", "дерево"]}},
@@ -118,6 +118,11 @@ async def update_request(s, **changes) -> dict:
             s.market = None
     elif s.search and any(p.get(k) != old_profile.get(k) for k in changes) and (changes.keys() & {"features", "poi", "kitchen_min", "area_min", "not_first_floor", "not_last_floor",
                                          "condition", "material", "year_min", "metro_max_minutes", "soft_criteria", "clear_criteria", "avoid_districts"}):
+        # Возвращаем ранее отфильтрованные варианты при снятии жёсткого ограничения.
+        # Рынок/город/комнаты не менялись: исходная выдача остаётся актуальным пулом.
+        if "listings" in s.search:
+            s.search["pool"] = [x for x in s.search["listings"] if passes_hard_filters(x, p)
+                                and (not s.search.get("strict") or in_districts(x, s.search.get("named")))]
         s.search["shown_ids"].clear()
         s.shown = []
         s.calls.clear()

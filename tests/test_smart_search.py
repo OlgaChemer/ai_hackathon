@@ -155,6 +155,30 @@ class SearchIntegrationTest(unittest.TestCase):
         self.assertFalse(self.s.agreed)
         self.assertIsNone(self.s.chosen)
 
+    def test_relaxing_first_floor_reconsiders_original_listings(self):
+        async def go():
+            await R.update_request(self.s, not_first_floor=True, not_last_floor=True)
+            rows = [listing(id='first',floor=1,floors=9,price=5_000_000),
+                    listing(id='middle',floor=4,floors=9), listing(id='last',floor=9,floors=9)]
+            with patch.object(sources, 'collect', AsyncMock(return_value=(rows, []))), patch.object(sources, 'stored', return_value=[]), \
+                 patch.object(sources, 'comparables', return_value=[]), patch.object(sources, 'more', AsyncMock(return_value=[])):
+                await S.search_listings(self.s)
+                self.assertNotIn('first', [x['id'] for x in self.s.search['pool']])
+                await R.update_request(self.s, not_first_floor=False)
+                await S.show_selection(self.s)
+            self.assertEqual([x['id'] for x in self.s.shown], ['first', 'middle'])
+            self.assertTrue(self.s.profile['not_last_floor'])
+        asyncio.run(go())
+
+    def test_source_failure_is_not_presented_as_an_empty_market(self):
+        async def go():
+            self.s.search = {'report':[{'status':'unavailable'}]}
+            await S.offer_search_alternatives(self.s)
+            args = self.s.ask.call_args
+            self.assertIn('не означает', args.args[2])
+            self.assertIn('Повторить поиск', args.kwargs['chips'])
+        asyncio.run(go())
+
     def test_new_client_turn_can_retry_map_after_expired_budget(self):
         self.s.profile['poi'] = ['park']
         self.s.prefs.sync(self.s.profile)

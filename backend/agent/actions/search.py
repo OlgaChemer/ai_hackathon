@@ -282,7 +282,11 @@ async def offer_search_alternatives(s):
         elif s.profile.get("housing") == "new":
             options.append("Посмотреть вторичку")
         options += ["Смягчить пожелания", "Изменить район", "Рассмотреть меньше комнат"]
-    r = await s.ask("clarify", "Расширить поиск?",
-                    "Подходящих подтверждённых вариантов пока нет. Что готовы рассмотреть? Бюджет без вашего решения не увеличу.",
-                    chips=options)
+    reports = s.search.get("report") or []
+    unavailable = reports and all(r.get("status") == "unavailable" for r in reports)
+    if unavailable:
+        options = ["Повторить поиск", *options]
+    text = ("Не удалось получить выдачу от источника — это не означает, что квартир нет. Можно повторить запрос или изменить условия."
+            if unavailable else "Подходящих подтверждённых вариантов пока нет. Что готовы рассмотреть? Бюджет без вашего решения не увеличу.")
+    r = await s.ask("clarify", "Источник недоступен" if unavailable else "Расширить поиск?", text, chips=options)
     return {"client_said": r["data"].get("text", ""), "hint": "запиши только выбранное изменение через update_request и повтори поиск"}
