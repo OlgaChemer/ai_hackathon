@@ -5,7 +5,7 @@ import { POI_COLORS } from "./map.js";
 const EXAMPLES = [
   "Ищу 2-комнатную в Казани до 9 млн, у нас ребёнок — нужна школа рядом",
   "Двушка в Новосибирске до 7 млн, не первый этаж, кухня от 9 метров",
-  "Ищу квартиру для семьи",
+  "Однокомнатная квартира в Казани",
 ];
 
 const ICON_UP = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M7 10v11H3V10h4zm2 11h8.3a2 2 0 0 0 2-1.6l1.4-7A2 2 0 0 0 18.7 10H14l.7-3.6a2 2 0 0 0-.5-1.8L13 3.4 8.6 8.6A2 2 0 0 0 8 10v9a2 2 0 0 0 1 2z" fill="currentColor"/></svg>';
@@ -15,13 +15,10 @@ export function welcome(cities = {}) {
   return html`
   <section class="panel welcome">
     <h1>Какую квартиру ищем?</h1>
-    <p>Опишите словами или голосом: город, бюджет, сколько комнат и что для вас важно.
-       Агент найдёт объявления, учтёт ваши отметки, позвонит продавцу, сторгуется и договорится о просмотре.
-       А финансовый помощник подскажет, как собрать первоначальный взнос.</p>
+
     <div class="examples">
       ${html.raw(EXAMPLES.map((e) => html`<button class="example" data-example="${e}">${e}</button>`).join(""))}
     </div>
-    <p class="hint">Объявления — с Циана${cities.featured?.length ? `: ${cities.featured.join(", ")} и ещё ${cities.total - cities.featured.length} ${plural(cities.total - cities.featured.length, "город", "города", "городов")}` : ""}.</p>
   </section>`;
 }
 
@@ -232,7 +229,7 @@ export function search(d) {
     ${html.raw(d.confirmed !== undefined ? html`<p class="panel-lead">Все обязательные условия подтверждены: ${d.confirmed}. Нужно уточнить данные: ${d.unverified}. Не подошли: ${d.rejected}.</p>` : "")}
     <div class="sources">${html.raw(d.report.map(sourceChip).join(""))}</div>
     ${html.raw(d.store?.total ? html`<p class="store-line">В базе агента по такому запросу — ${d.store.total} ${plural(d.store.total, "квартира", "квартиры", "квартир")}${d.store.mapped ? html`, у ${d.store.mapped} уже проверено по карте, что рядом` : ""}. Признаки считаются один раз и нужны всем, кто ищет похожее.${d.store.crawl ? html` Последний обход Циана ${shortDate(d.store.crawl.finished_at.slice(0, 10))}: +${d.store.crawl.added} новых, ${d.store.crawl.price_changed} изменений цены, ${d.store.crawl.removed} снято.` : ""}</p>` : "")}
-    <p class="panel-lead">Под ваши параметры подходят ${d.matched} из ${d.total}. Справедливая цена — медиана цены м² ближайших похожих квартир (по координатам, площадь ±30%) с поправками на ремонт, год дома и этаж, минус 3% на торг. Коридор — разброс цен аналогов. Если объявление правее коридора — есть что сторговать.</p>
+    <details class="price-explanation"><summary>Как рассчитана справедливая цена</summary><p>Справедливая цена — медиана цены м² ближайших похожих квартир (по координатам, площадь ±30%) с поправками на ремонт, год дома и этаж, минус 3% на торг. Коридор — разброс цен аналогов. Если объявление правее коридора — есть что сторговать.</p></details>
     ${html.raw(items.join(""))}
     <div class="legend"><span class="l-band">коридор справедливой цены</span><span class="l-tick">цена в объявлении</span></div>
   </section>`;
@@ -339,7 +336,9 @@ export function selection(d, marks) {
       <div>
         <div class="eyebrow">Подборка${d.round > 1 ? ` · раунд ${d.round}` : " · первые результаты"}</div>
         <h2 class="panel-title">Квартиры под ваши пожелания</h2>
-        <p class="panel-lead">Сначала подтверждённые обязательные условия; внутри группы — совпадение пожеланий на миллион рублей с поправкой на цену аналогов. ${d.cards.some(c => c.ranking?.center_requested) ? "По пожеланию центра выше идут квартиры в пределах 5 км от опорной точки центра; остальные остаются ниже." : ""} Отметьте, что нравится и что нет. Пожелание можно написать в чат или сказать голосом.</p>
+        <details class="ranking-explanation"><summary>Как упорядочены квартиры</summary>
+          <p>Сначала подтверждённые обязательные условия; внутри группы — совпадение пожеланий на миллион рублей с поправкой на цену аналогов. ${d.cards.some(c => c.ranking?.center_requested) ? "По пожеланию центра выше идут квартиры в пределах 5 км от опорной точки центра; остальные остаются ниже." : ""}</p>
+        </details>
       </div>
     </div>
     ${html.raw(d.learned?.length ? html`<div class="learned"><span>Учёл:</span>${html.raw(d.learned.map((l) => html`<span class="chip">${l}</span>`).join(""))}</div>` : "")}
