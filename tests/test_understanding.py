@@ -16,7 +16,14 @@ class ReviewModel(LLMClient):
     name, model = 'test', 'review'
     def __init__(self, *answers):
         self.answers, self.seen = list(answers), []
+        self.audits, self.audit_seen = [], []
     async def chat(self, messages, **kwargs):
+        if kwargs['tag'] == 'request_audit':
+            self.audit_seen.append(messages)
+            answer = self.audits.pop(0) if self.audits else {'accepted':True,'issues':[]}
+            if isinstance(answer, Exception):
+                raise answer
+            return LLMResponse(json.dumps(answer, ensure_ascii=False))
         assert kwargs['tag'] == 'request_review'
         self.seen.append(messages)
         answer = self.answers.pop(0)
@@ -68,6 +75,40 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(s.profile['not_last_floor'])
         self.assertEqual(s.profile['rooms_options'], [1,2])
         self.assertEqual(s.profile['budget_max'], 10_000_000)
+
+    async def test_coverage_audit_rejects_grounded_but_incomplete_candidate_then_repairs(self):
+        text = 'Казань, до девяти миллионов, плачу своими.'
+        incomplete = verdict(text, {'city':'Казань','budget_max':9_000_000})
+        complete = verdict(text, {'city':'Казань','budget_max':9_000_000,'payment':'cash'})
+        s = self.agent(text, incomplete, complete)
+        s.llm.audits = [{'accepted':False,'issues':[{'quote':'плачу своими','problem':'Пропущен способ оплаты cash'}]},
+                        {'accepted':True,'issues':[]}]
+        await U.ensure(s)
+        self.assertEqual(s.profile['payment'], 'cash')
+        self.assertEqual(len(s.llm.seen), 2)
+        payload = json.loads(s.llm.seen[1][1]['content'])['data']
+        self.assertIn('audit_feedback', payload)
+        self.assertNotIn('Пропущен способ оплаты', s.llm.seen[1][0]['content'])
+
+    async def test_rejected_coverage_cannot_apply_even_a_well_formed_grounded_patch(self):
+        text = 'Новгород'
+        guess = verdict(text, {'city':'Великий Новгород'})
+        s = self.agent(text, guess, guess)
+        problem = {'accepted':False,'issues':[{'quote':text,'problem':'Неоднозначная территория: нужно уточнить.'}]}
+        s.llm.audits = [problem, problem]
+        before = deepcopy(s.profile)
+        with self.assertRaises(U.UnderstandingError):
+            await U.ensure(s)
+        self.assertEqual(s.profile, before)
+
+    async def test_unavailable_auditor_cannot_apply_candidate(self):
+        text = 'Казань'
+        s = self.agent(text, verdict(text, {'city':'Казань'}))
+        s.llm.audits = [LLMError('offline')]
+        before = deepcopy(s.profile)
+        with self.assertRaises(LLMError):
+            await U.ensure(s)
+        self.assertEqual(s.profile, before)
 
     async def test_ambiguity_does_not_mutate_until_actual_clarification(self):
         text = 'Двушка в Новгороде до 9 миллионов.'

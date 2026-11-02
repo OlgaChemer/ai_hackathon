@@ -49,6 +49,8 @@ class ScriptedLLM(LLMClient):
     async def chat(self, messages: list[dict[str, Any]], **kw) -> LLMResponse:
         if self.fail:
             raise LLMError("сеть недоступна")
+        if kw.get('tag') == 'request_audit':
+            return say(json.dumps({'accepted': True, 'issues': []}))
         if kw.get('tag') == 'request_review':
             payload = json.loads(next(m['content'] for m in messages if m['role'] == 'user'))['data']
             self.reviews.append(payload)
