@@ -70,7 +70,9 @@ def merge_profile(raw: dict, base: dict | None = None) -> dict:
                 p[key] = None
             continue
         p[key] = v
-    if "rooms" in raw and "rooms_options" not in raw:
+    if raw.get("city") and "cities" not in raw and normalize_city(raw["city"]) != normalize_city((base or {}).get("city")):
+        p["cities"] = []
+    if raw.get("rooms") not in (None, "") and "rooms_options" not in raw:
         p["rooms_options"] = []
     p["rooms_options"] = sorted(set(int(n) for n in p.get("rooms_options") or [] if type(n) is int and 0 <= n <= 5))
     if p["rooms_options"]:
@@ -195,8 +197,18 @@ def explicit_search_fields(changes: dict, text: str, base: dict | None = None, c
     if rooms:
         lo, hi = sorted(map(int, rooms.groups()))
         out['rooms_options'] = list(range(lo, hi + 1)) if 'или' not in rooms.group() else [lo, hi]
+    if (base or {}).get('rooms_options') and 'rooms' in out and 'rooms_options' not in out and not re.search(r'комнат|однуш|двуш|треш|студи', cue_text):
+        out.pop('rooms')  # пересказ одной комнатности не сужает согласованный диапазон
     region = bool(re.search(r'подмосков|московск\w* обл', text))
     moscow = bool(re.search(r'\bмоскв[аеуы]\b|\bмск\b', text))
+    region_negated = bool(re.search(r'(?:не|без)\s+подмосков|подмосков\w*\s+(?:не хочу|не нужно|не подходит)', text))
+    if region_negated:
+        region = False
+        out['cities'] = [c for c in out.get('cities', (base or {}).get('cities')) or [] if c != 'Московская область']
+        if out.get('city') == 'Московская область':
+            out.pop('city')
+    if moscow and 'только' in text and not region:
+        out['city'], out['cities'] = 'Москва', []
     if region and moscow and re.search(r'\bили\b|\bи\b', text):
         out['city'], out['cities'] = 'Москва', ['Московская область']
     elif region and not moscow:

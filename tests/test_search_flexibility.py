@@ -104,6 +104,16 @@ class QueryAndRankingTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(normalize_city('Подмосковье'), 'Московская область')
         self.assertIn('region=4593', sources.cian.build_url('Московская область', 1, 10_000_000))
 
+    def test_refinements_preserve_rooms_but_explicit_city_change_clears_old_regions(self):
+        base = merge_profile({'city':'Москва','cities':['Московская область'],'rooms_options':[1,2],'budget_max':10_000_000})
+        change = explicit_search_fields({'rooms':2,'poi':['park']}, 'Парк рядом желателен', base)
+        self.assertEqual(merge_profile(change, base)['rooms_options'], [1,2])
+        self.assertEqual(merge_profile({'city':'Казань'},base)['cities'], [])
+        self.assertEqual(explicit_search_fields({'city':'Москва'}, 'Только Москва', base)['cities'], [])
+        no_region = explicit_search_fields({'city':'Московская область'}, 'Не Подмосковье', base)
+        self.assertNotIn('city', no_region)
+        self.assertEqual(no_region['cities'], [])
+
     async def test_all_variants_are_queried_and_deduplicated(self):
         p = {'city': 'Москва', 'cities': ['Московская область'], 'rooms': 1, 'rooms_options': [1, 2], 'budget_max': 10_000_000}
         got = []
