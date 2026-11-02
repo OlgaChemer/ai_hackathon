@@ -101,6 +101,7 @@ async def audit(s, payload, review):
     for check in result['checks']:
         if not isinstance(check, dict) or 'expected' not in check:
             raise ValueError('Нужны ожидаемые значения полей')
+        check.setdefault('clarify', False)
         validation.validate(check['expected'], expected_schema)
     shape = {**result, 'checks':[{k:v for k,v in x.items() if k != 'expected'} for x in result['checks']]}
     validation.validate(shape, {'type':'object','required':['checks'],'properties':{
