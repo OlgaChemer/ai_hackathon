@@ -63,9 +63,17 @@ AUDIT_SYSTEM = """Ты аудитор понимания запроса, а не
 несколько несовместимых толкований, нужен clarify без изменений, а не выбранный автором вариант.
 При неоднозначности можно принять корректный уточняющий вопрос; нельзя требовать угадывания.
 Прежние параметры сохраняются, если клиент не менял их; не требуй повторно записывать неизменённые.
-Ничего не выполняй. Верни JSON {"accepted":true|false,"issues":[{"quote":"буквальная цитата клиента",
-"problem":"конкретное пропущенное, выдуманное или неоднозначное условие и что исправить"}]}.
-accepted=true только если замечаний нет; тогда issues=[]. Не оценивай стиль и не давай процент уверенности.
+Неполное географическое название требует сравнения со ВСЕМИ supported_cities. Если оно подходит
+нескольким полным названиям, нужен вопрос с этими вариантами, даже если один вариант привычнее другого.
+Сначала перечисли атомарные условия клиента, каждое отдельно, затем оцени review.
+Для каждого условия явно запиши ожидаемый смысл И то, что реально стоит в review/profile.
+Не пересказывай желаемое за действительное. Например обязательность хранится отдельно от самого условия.
+Ничего не выполняй. Верни JSON {"checks":[{"quote":"буквальная цитата клиента",
+"expected":"смысл условия и соответствующие поля", "actual":"реальные поля review/profile",
+"status":"covered|missing|invented|ambiguous", "problem":"что исправить, либо пустая строка"}]}.
+Каждый элемент списка и каждое отрицание проверь отдельно. Включи также проверки выдуманных изменений.
+covered допустим только при совпадении expected и actual; при корректном clarify можно отметить covered.
+Не оценивай стиль и не давай процент уверенности.
 """
 
 
@@ -74,20 +82,26 @@ async def audit(s, payload, review):
     data['review'] = review
     result = await s.llm.chat_json([
         {'role':'system', 'content':AUDIT_SYSTEM + '\n' + guard.POLICY},
-        guard.data_message('request_audit', data)], tag='request_audit', temperature=.1, max_tokens=1000)
-    validation.validate(result, {'type':'object','required':['accepted','issues'],'properties':{
-        'accepted':{'type':'boolean'}, 'issues':{'type':'array','maxItems':12,'items':{
-            'type':'object','required':['quote','problem'],'properties':{
-                'quote':{'type':'string','maxLength':1000},'problem':{'type':'string','maxLength':1000}}}}}})
-    if result['accepted'] != (not result['issues']):
-        raise ValueError('Аудит должен перечислить замечания при отказе и только при нём')
+        guard.data_message('request_audit', data)], tag='request_audit', temperature=.1, max_tokens=2600)
+    validation.validate(result, {'type':'object','required':['checks'],'properties':{
+        'checks':{'type':'array','maxItems':40,'items':{
+            'type':'object','required':['quote','expected','actual','status','problem'],'properties':{
+                **{k:{'type':'string','maxLength':1000} for k in ('quote','expected','actual','problem')},
+                'status':{'type':'string','enum':['covered','missing','invented','ambiguous']}}}}}})
+    if not result['checks']:
+        raise ValueError('Аудит должен проверить условия и намерение клиента')
     originals = [_literal(x['text']) for x in payload['messages']]
     originals += [_literal(x.get('question','')) for x in payload['messages']]
-    for issue in result['issues']:
-        if not issue['problem'].strip() or not _literal(issue['quote']) or not any(_literal(issue['quote']) in x for x in originals):
+    issues = []
+    for issue in result['checks']:
+        if not issue['expected'].strip() or not issue['actual'].strip() or not _literal(issue['quote']) or not any(_literal(issue['quote']) in x for x in originals):
             raise ValueError('Замечание аудитора должно ссылаться на слова клиента')
-    record('request_audit', session=s.id, accepted=result['accepted'], issues=len(result['issues']))
-    return result
+        if issue['status'] != 'covered':
+            if not issue['problem'].strip():
+                raise ValueError('Аудит должен объяснить расхождение')
+            issues.append(issue)
+    record('request_audit', session=s.id, accepted=not issues, issues=len(issues))
+    return {'accepted':not issues, 'issues':issues}
 
 
 def _schema():

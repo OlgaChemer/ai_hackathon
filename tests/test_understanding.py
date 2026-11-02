@@ -19,8 +19,9 @@ class ReviewModel(LLMClient):
         self.audits, self.audit_seen = [], []
     async def chat(self, messages, **kwargs):
         if kwargs['tag'] == 'request_audit':
+            from tests.fakes import audit_reply
             self.audit_seen.append(messages)
-            answer = self.audits.pop(0) if self.audits else {'accepted':True,'issues':[]}
+            answer = self.audits.pop(0) if self.audits else audit_reply(messages)
             if isinstance(answer, Exception):
                 raise answer
             return LLMResponse(json.dumps(answer, ensure_ascii=False))
@@ -38,6 +39,11 @@ def verdict(text, changes=None, intent='refine', decision=None):
     changes = changes or {}
     return {'intent': intent, 'decision': decision or ('apply' if changes else 'unchanged'), 'changes': changes,
             'evidence': [{'field': k, 'quote': text} for k in changes], 'question': '', 'options': []}
+
+
+def audit_verdict(quote, problem=''):
+    return {'checks':[{'quote':quote,'expected':'нужное условие','actual':'разобранное условие',
+                       'status':'missing' if problem else 'covered','problem':problem}]}
 
 
 class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
@@ -81,8 +87,7 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
         incomplete = verdict(text, {'city':'Казань','budget_max':9_000_000})
         complete = verdict(text, {'city':'Казань','budget_max':9_000_000,'payment':'cash'})
         s = self.agent(text, incomplete, complete)
-        s.llm.audits = [{'accepted':False,'issues':[{'quote':'плачу своими','problem':'Пропущен способ оплаты cash'}]},
-                        {'accepted':True,'issues':[]}]
+        s.llm.audits = [audit_verdict('плачу своими','Пропущен способ оплаты cash'), audit_verdict(text)]
         await U.ensure(s)
         self.assertEqual(s.profile['payment'], 'cash')
         self.assertEqual(len(s.llm.seen), 2)
@@ -94,7 +99,7 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
         text = 'Новгород'
         guess = verdict(text, {'city':'Великий Новгород'})
         s = self.agent(text, guess, guess)
-        problem = {'accepted':False,'issues':[{'quote':text,'problem':'Неоднозначная территория: нужно уточнить.'}]}
+        problem = audit_verdict(text,'Неоднозначная территория: нужно уточнить.')
         s.llm.audits = [problem, problem]
         before = deepcopy(s.profile)
         with self.assertRaises(U.UnderstandingError):

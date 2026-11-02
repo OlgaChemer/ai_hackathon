@@ -176,7 +176,8 @@ class PolicyLLM(LLMClient):
 
     async def chat_json(self, messages: list[dict[str, Any]], *, tag: str = "", **kw) -> dict[str, Any]:
         if tag == 'request_audit':
-            return LLMResponse(json.dumps({'accepted': True, 'issues': []}))
+            from tests.fakes import audit_reply
+            return LLMResponse(json.dumps(audit_reply(messages)))
         if tag == 'request_review':
             from tests.fakes import review_reply
             payload = json.loads(next(m['content'] for m in messages if m['role'] == 'user'))['data']

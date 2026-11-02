@@ -33,6 +33,12 @@ def review_reply(payload, changes=None, intent=None):
             'evidence': [{'field': k, 'quote': text[:1000]} for k in changes], 'question': '', 'options': []}
 
 
+def audit_reply(messages):
+    payload = json.loads(messages[1]['content'])['data']
+    return {'checks':[{'quote':payload['messages'][-1]['text'][:1000], 'expected':'fixture',
+                      'actual':'fixture', 'status':'covered', 'problem':''}]}
+
+
 class ScriptedLLM(LLMClient):
     """Модель агента по сценарию: каждый ход — следующий шаг сценария (действие или текст клиенту).
     Шаг может быть функцией от сообщений (видит результаты действий). Сценарий кончился — короткий текст."""
@@ -50,7 +56,7 @@ class ScriptedLLM(LLMClient):
         if self.fail:
             raise LLMError("сеть недоступна")
         if kw.get('tag') == 'request_audit':
-            return say(json.dumps({'accepted': True, 'issues': []}))
+            return say(json.dumps(audit_reply(messages)))
         if kw.get('tag') == 'request_review':
             payload = json.loads(next(m['content'] for m in messages if m['role'] == 'user'))['data']
             self.reviews.append(payload)
