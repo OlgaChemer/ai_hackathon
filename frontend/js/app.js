@@ -550,8 +550,8 @@ const fromHash = () => location.hash.match(/^#chat-([0-9a-f]{12})$/)?.[1];
 const route = () => {
   const id = fromHash();
   if (id) { openChat(id); return; }
-  const page = {'#history':'history', '#economics':'economics', '#agent':'agent', '#apartments':'apartments'}[location.hash]
-    || (new URLSearchParams(location.search).has('agent') ? 'agent' : 'apartments');
+  const page = {'#welcome':'welcome', '#history':'history', '#economics':'economics', '#agent':'agent', '#apartments':'apartments'}[location.hash]
+    || (new URLSearchParams(location.search).has('agent') ? 'agent' : 'welcome');
   showPage(page);
   if (page === 'agent') setChatExpanded(true);
 };

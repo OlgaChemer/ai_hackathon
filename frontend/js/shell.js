@@ -26,13 +26,14 @@ export function syncShell() {
 export function showPage(page) {
   const agent = page === 'agent' || page === 'economics';
   document.body.dataset.page = page;
+  $('welcomePage').hidden = page !== 'welcome';
   $('aggregatorHome').hidden = page !== 'apartments';
   $('historyPage').hidden = page !== 'history';
   $('agentApp').hidden = !agent;
   $('view-deal').hidden = page !== 'agent';
   $('view-economics').hidden = page !== 'economics';
   document.querySelector('.workspace-heading').hidden = page !== 'agent';
-  $('pageLabel').textContent = {apartments:'Поиск квартиры', history:'Ваши сохранённые подборы',
+  $('pageLabel').textContent = {welcome:'Подбор с агентом', apartments:'Поиск квартиры', history:'Ваши сохранённые подборы',
     agent:'От пожеланий до сделки', economics:'Экономика для Сбера'}[page];
   $('entryDialog').close();
   syncShell();
@@ -42,7 +43,7 @@ export function showPage(page) {
 
 export function navigate(page, {fresh = false} = {}) {
   const hash = page === 'agent' && state.sid && !fresh ? `#chat-${state.sid}`
-    : {apartments:'#apartments', history:'#history', agent:'#agent', economics:'#economics'}[page];
+    : {welcome:'#welcome', apartments:'#apartments', history:'#history', agent:'#agent', economics:'#economics'}[page];
   if (location.hash !== hash) history.pushState(null, '', hash);
   showPage(page);
   window.scrollTo(0, 0);
@@ -80,15 +81,15 @@ export function initShell({ start }) {
     $('entryQuery').focus();
   };
   const launch = async (query) => {
-    if (launching) return;
+    if (launching || query.trim().length < 3) return;
     launching = true;
-    const buttons = document.querySelectorAll('[data-action="portal-search"], #entryForm [type="submit"]');
+    const buttons = document.querySelectorAll('[data-action="portal-search"], #entryForm [type="submit"], #welcomeForm [type="submit"], [data-welcome-example]');
     buttons.forEach(button => button.disabled = true);
     try {
       navigate('agent', {fresh:true});
       setChatExpanded(true);
       await start(query);
-      if (state.sid) $('entryQuery').value = '';
+      if (state.sid) { $('entryQuery').value = ''; $('welcomeQuery').value = ''; }
     } finally {
       launching = false;
       buttons.forEach(button => button.disabled = false);
@@ -103,7 +104,7 @@ export function initShell({ start }) {
     if (action === 'open-agent' || action === 'smart-search') openEntry();
     if (action === 'market') selectMarket(button.dataset.market);
     if (action === 'apartments') { selectMarket('both'); navigate('apartments'); }
-    if (action === 'home') navigate('apartments');
+    if (action === 'home') navigate('welcome');
     if (action === 'new-buildings') {
       selectMarket('new'); navigate('apartments');
       $('portalForm').scrollIntoView({block:'center'});
@@ -123,6 +124,11 @@ export function initShell({ start }) {
     const housing = {both:'новостройки и вторичка', new:'только новостройки', secondary:'только вторичка'}[market];
     launch(`Ищу ${rooms === '0' ? 'студию' : `${rooms}-комнатную квартиру`} в ${city || 'Москве'}${budget > 0 ? ` до ${budget} млн рублей` : ', бюджет пока не знаю'}, ${housing}`);
   });
+  $('welcomeForm').addEventListener('submit', event => {
+    event.preventDefault();
+    launch($('welcomeQuery').value.trim());
+  });
+  document.querySelectorAll('[data-welcome-example]').forEach(button => button.addEventListener('click', () => launch(button.dataset.welcomeExample)));
   $('entryForm').addEventListener('submit', (event) => {
     event.preventDefault();
     const query = $('entryQuery').value.trim();

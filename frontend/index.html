@@ -11,8 +11,9 @@
   <link rel="stylesheet" href="appearance.css">
   <link rel="stylesheet" href="approved-design.css">
   <link rel="stylesheet" href="shell.css">
+  <link rel="stylesheet" href="ux-ui.css">
 </head>
-<body data-page="apartments">
+<body data-page="welcome">
 <header class="site-header">
 <div class="site-bar">
 <button class="agg-brand site-brand" data-action="home" aria-label="Место — на главную">
@@ -45,7 +46,22 @@
 </nav>
 </div>
 </header>
-<div id="aggregatorHome" class="dc-home">
+<main id="welcomePage" class="agent-welcome">
+<a class="welcome-brand" href="#" aria-label="Место — подбор квартиры"><span class="welcome-logo">м</span>место</a>
+<div class="welcome-scene">
+<button class="request-orbit orbit-one" data-welcome-example="Хочу двушку в Москве, бюджет пока не знаю"><span>↗</span>Рассчитать<br>бюджет</button>
+<button class="request-orbit orbit-two" data-welcome-example="Ищу двухкомнатную квартиру в Москве рядом с метро"><span>⌁</span>Квартира<br>у метро</button>
+<button class="request-orbit orbit-three" data-welcome-example="Ищу двухкомнатную квартиру для семьи в Москве рядом со школой и парком"><span>✳</span>Для семьи<br>рядом с парком</button>
+<button class="request-orbit orbit-four" data-welcome-example="Хочу двухкомнатную квартиру в Москве, нужно накопить на первоначальный взнос"><span>＋</span>Накопить<br>на квартиру</button>
+<section class="welcome-card" aria-labelledby="welcomeTitle">
+<div class="welcome-orb" aria-hidden="true"><span>✦</span></div>
+<div class="welcome-agent">Ваш агент по недвижимости</div>
+<h1 id="welcomeTitle">Какую квартиру<br>ищем?</h1>
+<div class="welcome-examples" aria-label="Примеры запросов"><button type="button" data-welcome-example="Ищу однокомнатную квартиру в Казани">Однокомнатная квартира в Казани <span aria-hidden="true">↗</span></button><button type="button" data-welcome-example="Ищу двухкомнатную квартиру в Москве до 15 млн ₽">Двухкомнатная в Москве до 15 млн ₽ <span aria-hidden="true">↗</span></button></div><form id="welcomeForm"><textarea id="welcomeQuery" aria-label="Первый запрос агенту" placeholder="Расскажите, где хотите жить и что для вас важно…" required></textarea><button class="btn" type="submit">Начать подбор <span aria-hidden="true">↗</span></button></form>
+</section></div>
+
+</main>
+<div id="aggregatorHome" class="dc-home" hidden>
 <main class="dc-main">
 <h1>Найдём квартиру,<br>которая подходит именно вам</h1>
 <p class="lead">Реальные объявления, ваши пожелания и агент на вашей стороне.<br>От первого запроса до разговора с продавцом.</p>
@@ -99,7 +115,7 @@
 <main id="historyPage" class="history-page" hidden aria-labelledby="historyTitle">
   <div class="page-heading">
     <div><span class="eyebrow">Ваше пространство</span><h1 id="historyTitle">История подбора</h1>
-      <p class="lead">Возвращайтесь к квартирам, расчётам и договорённостям. Каждый подбор — отдельный диалог.</p></div>
+      </div>
     <button class="btn" data-action="smart-search">✦ Новый умный поиск</button>
   </div>
   <div class="history-toolbar">
@@ -117,21 +133,21 @@
 <button class="close" data-action="close-entry" aria-label="Закрыть агента">✕</button>
 </div>
 <div class="entry-content">
-<span class="eyebrow">Умный поиск</span><h2>Расскажите о квартире,<br>в которой хочется жить</h2>
-<p class="muted">Парк для прогулок, школа рядом или тихий двор — начните с того, что важно. Агент уточнит недостающие параметры.</p>
-<button class="example" data-entry-example="Хочу двушку в Москве, бюджет пока не знаю">Хочу двушку в Москве, бюджет пока не знаю ↗</button>
-<button class="example" data-entry-example="2-комнатная в Москве до 15 млн ₽">2-комнатная в Москве до 15 млн ₽ ↗</button>
+<h2>Какую квартиру ищем?</h2>
+
+<button class="example" data-entry-example="Ищу однокомнатную квартиру в Казани">Однокомнатная квартира в Казани ↗</button>
+<button class="example" data-entry-example="Ищу двухкомнатную квартиру в Москве до 15 млн ₽">Двухкомнатная в Москве до 15 млн ₽ ↗</button>
 <form id="entryForm">
 <textarea id="entryQuery" aria-label="Первый запрос агенту" required minlength="3" maxlength="500" placeholder="Например: ищу квартиру для семьи в Москве…">
 </textarea>
 <button class="btn" type="submit">Начать подбор</button>
 </form>
-<p class="small muted">Начнётся новый подбор. К предыдущим можно вернуться в истории.</p>
+
 </div>
 </dialog>
 
 <div id="agentApp" hidden>
-  <div class="workspace-heading"><div><span class="eyebrow">Личный агент по недвижимости</span><h1>Ваш подбор</h1></div>
+  <div class="workspace-heading"><div><h1>Ваш подбор</h1></div>
     <button class="btn btn-ghost" data-action="open-chats">Все подборы ↗</button></div>
   <main id="view-deal" class="workspace layout">
     <aside id="chatPanel" class="chat" aria-label="Диалог с агентом">
@@ -187,7 +203,7 @@
 
   <main id="view-economics" class="economics" hidden></main>
 
-  <footer class="footnote">Прототип для хакатона. Объявления — с Циана. Режим звонка выбираете вы; решения о цене и сделке подтверждаете отдельно.</footer>
+  <footer class="footnote">Решения о цене и сделке подтверждаете вы.</footer>
 
   </div>
   <script type="module" src="js/app.js"></script>
