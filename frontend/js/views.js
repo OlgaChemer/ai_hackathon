@@ -26,7 +26,7 @@ export function welcome(cities = {}) {
 }
 
 export function waiting(title, text) {
-  return html`<section class="panel"><h2 class="panel-title">${title}</h2><p class="panel-lead">${text}</p></section>`;
+  return html`<section class="panel waiting-panel"><h2 class="panel-title">${title}</h2><p class="panel-lead">${text}</p></section>`;
 }
 
 function marketBlock(p) {
@@ -90,6 +90,7 @@ export function finance(d, opened = {}, selected) {
   const months = (m) => (m == null ? "дольше 10 лет" : m === 0 ? "уже хватает" : `${m} мес.`);
   return html`
   <section class="panel">
+    <div class="eyebrow">Ваш финансовый помощник</div>
     <h2 class="panel-title">Финансовая подготовка</h2>
     <p class="panel-lead">${f.verdict}</p>
     <div class="fin-kpis">
@@ -172,7 +173,8 @@ function mortgage(m) {
       ? html`<span class="tag tag-amber">на взнос не хватает ${rub(s.savings_gap)}</span>`
       : s.fits_income ? html`<span class="tag tag-green">по силам</span>` : html`<span class="tag tag-red">высокий платёж</span>`;
     return html`
-      <article class="scenario ${best ? "is-best" : ""}">
+      <article class="scenario loan-option ${best ? "is-best" : ""}">
+        <div class="loan-label">${html.raw(best ? '<span class="tag tag-green">✓ Рекомендованный расчёт</span>' : '<span class="tag">Расчётный вариант</span>')}</div>
         <h3>${s.title}</h3>
         <div class="big num">${rub(s.monthly)}<small style="font-size:14px;font-weight:500"> / мес</small></div>
         <dl>
@@ -187,6 +189,7 @@ function mortgage(m) {
   });
   return html`
   <section class="panel">
+    <div class="eyebrow">Ипотечные сценарии</div>
     <h2 class="panel-title">Ипотека</h2>
     <p class="panel-lead">${m.program || "Ипотека"}: три сценария${m.scenarios.every((s) => s.rate === m.rate) ? ` по ставке ${pct(m.rate)}` : ", ставка зависит от взноса"}. Каждые 100 000 ₽, которые агент сторгует, — это минус ${rub(m.per_100k_discount)} в месяц.</p>
     <div class="scenarios">${html.raw(cards.join(""))}</div>
@@ -220,7 +223,7 @@ export function search(d) {
           <div class="band" style="left:${x(r.low)}%;width:${x(r.high) - x(r.low)}%"></div>
           <div class="tick" style="left:${x(r.price)}%" title="Цена объявления ${rub(r.price)}"></div>
         </div>
-        <div class="delta num" style="color:${dlt > 0 ? "var(--amber)" : "var(--green-strong)"}">${dlt > 0 ? "+" : "−"}${rub(Math.abs(dlt))}</div>
+        <div class="fair-price"><b class="num">${rub(r.price)}</b><small>Отклонение от справедливой цены</small><span class="delta num" style="color:${dlt > 0 ? "var(--amber)" : "var(--green-strong)"}">${dlt > 0 ? "+" : "−"}${rub(Math.abs(dlt))}</span></div>
       </div>`;
   });
   return html`
@@ -302,6 +305,7 @@ function offerCard(c, vote, no) {
       ${html.raw(c.match ? html`<p class="meta ${c.match.status === "confirmed" ? "" : "missing"}">${c.match.status === "confirmed" ? "Обязательные условия подтверждены" : c.match.status === "rejected" ? "Есть несоответствия условиям" : `Нужно проверить: ${c.match.unknown.join(", ")}`}</p>` : "")}
       ${html.raw(c.match?.checks?.filter((r) => r.source === "cian_description" && r.key.startsWith("poi:")).map((r) => html`<p class="hint">В описании упомянуто: ${r.label}. Расстояние по карте не подтверждено.</p>`).join("") || "")}
 
+      ${html.raw(c.match?.checks?.length ? html`<details class="criteria-detail"><summary>Критерии и подробности</summary><table><thead><tr><th scope="col">Критерий</th><th scope="col">Результат</th></tr></thead><tbody>${html.raw(c.match.checks.map(r => html`<tr><td>${r.label}${r.required ? '' : ' · пожелание'}</td><td>${r.status === true ? '✓ Подтверждено' : r.status === false ? 'Не соответствует' : 'Нет данных'}${r.evidence ? html.raw(html`<small>${r.evidence}</small>`) : ''}</td></tr>`).join(''))}</tbody></table></details>` : '')}
       ${html.raw(featureChips(c.features))}
       ${html.raw(nearbyChips(c.nearby))}
       ${html.raw(c.unchecked?.length ? html`<p class="missing">Не проверено по карте: ${c.unchecked.join(", ")}</p>` : "")}
@@ -331,7 +335,8 @@ export function selection(d, marks) {
   <section class="panel">
     <div class="sel-head">
       <div>
-        <h2 class="panel-title">Подборка${d.round > 1 ? ` · раунд ${d.round}` : ""}</h2>
+        <div class="eyebrow">Подборка${d.round > 1 ? ` · раунд ${d.round}` : " · первые результаты"}</div>
+        <h2 class="panel-title">Квартиры под ваши пожелания</h2>
         <p class="panel-lead">Отметьте, что нравится и что нет, — агент учтёт это в следующей подборке. Пожелание можно написать в чат или сказать голосом.</p>
       </div>
     </div>

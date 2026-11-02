@@ -142,7 +142,7 @@ async function handle(ev, myGen) {
       await pause(ev.kind === "selection" ? 0 : 500);
       break;
     case "confirm":
-      setChatExpanded(ev.kind !== "selection");
+      setChatExpanded(false);
       if (ev.kind === "call") {
         state.call = createCall(ev);
         state.view = 6;
@@ -323,6 +323,8 @@ function leaveChat() {
   queue = [];
   resetState();
   chatLog.innerHTML = "";
+  $("decisionHost").replaceChildren();
+  document.querySelector("section.stage").classList.remove("has-decision");
   $("chatPeek").textContent = "";
   refreshContext(null);
   renderStage();
@@ -420,7 +422,7 @@ async function sendText(text) {
     // подборка и подтверждение ждут дальше, их кнопки должны работать
     if (r.handled_as === "question" || r.handled_as === "blocked") return;
     if (state.awaiting === "clarify") {
-      chatLog.querySelectorAll(".confirm-clarify:not(.is-done)").forEach((c) => c.classList.add("is-done"));
+      $("decisionHost").querySelectorAll(".confirm-clarify:not(.is-done)").forEach((c) => c.classList.add("is-done"));
     }
     state.awaiting = null;
   } catch (e) {

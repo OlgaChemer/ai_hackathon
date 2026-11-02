@@ -9,6 +9,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
   <link rel="stylesheet" href="appearance.css">
+  <link rel="stylesheet" href="approved-design.css">
 </head>
 <body>
 <div id="aggregatorHome" class="dc-home">
@@ -166,7 +167,11 @@
 
     <section class="stage" aria-label="Ход сделки">
       <div class="context" id="searchContext"></div>
-      <ol class="stepper" id="stepper"></ol>
+      <details class="stage-navigation">
+        <summary>Этапы сделки</summary>
+        <ol class="stepper" id="stepper" aria-label="Перейти к этапу сделки"></ol>
+      </details>
+      <div id="decisionHost" class="decision-host" aria-live="polite"></div>
       <div class="stage-body" id="stage"></div>
     </section>
   </main>

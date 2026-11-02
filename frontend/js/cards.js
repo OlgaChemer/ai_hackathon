@@ -1,4 +1,4 @@
-// Карточки решений в чате: рамки, оплата, семья, где искать, финансы, звонок, цена, просмотр, подписание.
+// Карточки решений в основной области; принятые решения остаются в истории чата.
 // Решение уходит на сервер; карточку закрывает событие resolved из ленты — так же она выглядит и в истории.
 import { api } from "./api.js";
 import { el, html, rub } from "./format.js";
@@ -6,6 +6,7 @@ import { PhoneCall, formatPhone, normalizePhone } from "./phone.js";
 import { $, addMsg, chatLog, config, stage, state } from "./state.js";
 import { sayPrompt, voiceHint } from "./voicechat.js";
 import { voice } from "./voice.js";
+import { setChatExpanded } from "./shell.js";
 
 let sendText = async () => {};
 
@@ -99,6 +100,29 @@ function collectForm(card) {
   return data;
 }
 
+function updateDecisionLayout() {
+  document.querySelector("section.stage").classList.toggle("has-decision",
+    Boolean($("decisionHost").querySelector(".confirm:not(.is-done)")));
+}
+
+function presentDecision(card, live) {
+  $("decisionHost").append(card);
+  updateDecisionLayout();
+  if (live) card.scrollIntoView({ block: "start", behavior: "smooth" });
+}
+
+function archiveDecision(card) {
+  card.querySelectorAll("button, input, select").forEach((x) => (x.disabled = true));
+  const extra = card.querySelector("[data-extra]");
+  if (extra?.childElementCount && !card.querySelector(".decision-archive")) {
+    const details = el(html`<details class="decision-archive"><summary>Параметры решения</summary></details>`);
+    extra.replaceWith(details);
+    details.append(extra);
+  }
+  chatLog.append(card);
+  updateDecisionLayout();
+}
+
 export function confirmCard(ev) {
   if (ev.kind === "selection") return; // решения подборки — на экране подбора
   const live = !ev.replay; // из истории — без голоса, звонка и фокуса
@@ -111,12 +135,17 @@ export function confirmCard(ev) {
     state.awaiting = "clarify";
     const chips = ev.chips || [];
     if (live) sayPrompt(chips.length ? `${ev.text} Например: ${chips.slice(0, 3).join(", или ")}.` : ev.text);
-    extra.innerHTML = html`<p class="hint">Ответьте в поле ниже — текстом или голосом.</p>
+    extra.innerHTML = html`<p class="hint">Ответьте в диалоге с агентом — текстом или голосом.</p>
+      <button type="button" class="btn btn-ghost btn-small" data-answer-chat>Написать ответ</button>
       ${html.raw(chips.length ? html`<div class="quick">${html.raw(chips.map((c) => html`<button class="chip-btn" data-quick="${c}">${c}</button>`).join(""))}</div>` : "")}`;
+    extra.querySelector("[data-answer-chat]").addEventListener("click", () => {
+      setChatExpanded(true);
+      $("query").focus();
+    });
     extra.querySelectorAll("[data-quick]").forEach((b) => b.addEventListener("click", () => sendText(b.dataset.quick)));
-    chatLog.append(card);
+    presentDecision(card, live);
     chatLog.scrollTop = chatLog.scrollHeight;
-    if (live) $("query").focus();
+    if (live) card.querySelector("[data-quick]")?.focus({ preventScroll: true });
     return;
   }
 
@@ -187,11 +216,10 @@ export function confirmCard(ev) {
     });
     actions.append(b);
   });
-  chatLog.append(card);
+  presentDecision(card, live);
   chatLog.scrollTop = chatLog.scrollHeight;
   if (!live) return;
   actions.querySelector("button")?.focus({ preventScroll: true });
-  if (matchMedia("(max-width: 860px)").matches) card.scrollIntoView({ block: "center", behavior: "smooth" });
 }
 
 /** Клиент решил (событие resolved): карточка закрывается с подписью решения. */
@@ -203,6 +231,7 @@ export function resolved(ev) {
     if (ev.kind === "clarify") card.classList.add("is-done");
     else settle(card, ev.label || (ev.approved === null ? "ответили сообщением" : ev.approved ? "да" : "нет"));
   }
+  if (card && ev.kind !== "selection") archiveDecision(card);
   delete state.cards[ev.kind];
   if (state.awaiting === ev.kind) state.awaiting = null;
 }
@@ -213,6 +242,7 @@ export function staleCards() {
     if (kind === "selection") continue; // кнопки подборки — на экране, их выключаем ниже
     if (kind === "clarify") card.classList.add("is-done");
     else settle(card, "не принято — напишите сообщение, чтобы продолжить диалог");
+    archiveDecision(card);
   }
   state.cards = {};
   state.awaiting = null;
