@@ -43,6 +43,8 @@ async def scenario(base, name):
                     assert cards, 'Пустая подборка'
                     if name == 'center':
                         assert profile.get('rooms_options') == [1, 2] and profile.get('prefer_center')
+                        assert profile.get('condition') is None and profile.get('metro_max_minutes') is None, 'Агент добавил неназванные требования'
+                        assert cards[0]['ranking']['center_preferred'], 'Центральные варианты не получили приоритет'
                     if name == 'region':
                         assert profile.get('city') == 'Московская область'
                     if name == 'both':

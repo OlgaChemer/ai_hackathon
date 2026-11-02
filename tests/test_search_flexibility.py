@@ -62,6 +62,14 @@ class FlexibleSearchTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(s.profile['housing'], 'secondary')
         self.assertEqual(s.profile['budget_max'], 9_000_000)
 
+    async def test_finances_are_required_for_deal_preparation_but_not_for_search(self):
+        s = self.agent()
+        s.chosen, s.red_lines_ok = 'cian-1', True
+        self.assertTrue(actions.available(s, 'search_listings'))
+        self.assertFalse(actions.available(s, 'prepare_deal'))
+        s.profile['payment'] = 'cash'
+        self.assertTrue(actions.available(s, 'prepare_deal'))
+
     async def test_knowledge_answer_does_not_start_a_new_search(self):
         s = self.agent(say('Эскроу — специальный счёт для безопасной сделки.'))
         await drive(s)

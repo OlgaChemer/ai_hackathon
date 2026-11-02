@@ -51,6 +51,8 @@ def available(s, name: str) -> bool:
     """Модель выбирает действия среди разрешённых текущим состоянием, порядок не диктуется."""
     p = s.profile
     ready = bool(p.get("city") and p.get("rooms") is not None and p.get("budget_max"))
+    finance_ready = p.get("payment") == "cash" or (s.mortgage is not None and
+                    (p.get("payment") != "mortgage_saving" or s.finance is not None))
     rules = {
         # Подтверждение рамок завершает вводную анкету. Если поиск ничего не даст,
         # снова разрешаем обсудить изменение условий.
@@ -70,7 +72,7 @@ def available(s, name: str) -> bool:
         "call_seller": s.search is not None and s.red_lines_ok,
         "confirm_price": bool(s.calls) and s.red_lines_ok,
         "plan_viewing": bool(s.agreed) and s.red_lines_ok,
-        "prepare_deal": bool(s.chosen) and s.red_lines_ok and s.status.get(8) != "done",
+        "prepare_deal": bool(s.chosen) and s.red_lines_ok and finance_ready and s.status.get(8) != "done",
     }
     return bool(rules.get(name, True))
 
