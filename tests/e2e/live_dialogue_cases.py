@@ -127,6 +127,8 @@ def validate(name, phase, dialogue, outcome):
             errors.append(message)
     if name == 'ambiguous_city' and phase == 0:
         check(outcome['outcome'] in ('clarify', 'text_wait'), 'Не уточнил неоднозначный Новгород')
+        question = str(outcome.get('text','')) + ' ' + str(outcome.get('chips',''))
+        check('Великий' in question and 'Нижний' in question, 'Вместо уточнения двух городов получен другой ответ')
         check(not p.get('city') and not cards, 'Сам выбрал город до уточнения клиента')
         return errors
     check(outcome['outcome'] == 'selection' and bool(cards), 'Не дошёл до подборки: ' + str(outcome))
