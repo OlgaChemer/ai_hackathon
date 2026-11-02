@@ -129,6 +129,14 @@ class QueryAndRankingTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('payment', explicit_search_fields({}, 'Часть наличкой, остальное ипотека'))
         self.assertNotIn('payment', explicit_search_fields({}, 'Не наличными, беру кредит'))
 
+    def test_explicit_single_market_is_recorded_without_widening_conditional_alternatives(self):
+        self.assertEqual(explicit_search_fields({}, 'Самара, наличными, вторичка')['housing'], 'secondary')
+        self.assertEqual(explicit_search_fields({}, 'Мне вторичку')['housing'], 'secondary')
+        self.assertEqual(explicit_search_fields({'housing':'both'}, 'Только новостройку')['housing'], 'new')
+        self.assertNotIn('housing', explicit_search_fields({}, 'Не хочу вторичку'))
+        self.assertNotIn('housing', explicit_search_fields({}, 'Вторичка не обязательна'))
+        self.assertNotIn('housing', explicit_search_fields({}, 'Хочу вторичку, если нет — предложи новостройки'))
+
     async def test_all_variants_are_queried_and_deduplicated(self):
         p = {'city': 'Москва', 'cities': ['Московская область'], 'rooms': 1, 'rooms_options': [1, 2], 'budget_max': 10_000_000}
         got = []

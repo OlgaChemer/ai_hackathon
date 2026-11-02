@@ -195,6 +195,15 @@ def explicit_search_fields(changes: dict, text: str, base: dict | None = None, c
                 out.pop(key)  # отсутствующие требования не становятся фильтрами из-за догадки модели
     if re.search(r'\b(?:наличк(?:а|ой)|наличными)\b', text) and not re.search(r'ипотек|кредит|взнос|часть|коплю|копим|(?:не|без)\s+налич', text):
         out['payment'] = 'cash'  # явный способ оплаты, без согласия на какие-либо операции
+    # Один явно названный рынок нельзя потерять и заменить поиском по умолчанию на обоих.
+    secondary = re.search(r'\bвторич\w*', text)
+    new_build = re.search(r'\bновостро\w*', text)
+    if bool(secondary) != bool(new_build):
+        mention = secondary or new_build
+        before, after = text[:mention.start()], text[mention.end():]
+        negated = re.search(r'\bне(?:\s+хочу|\s+нужна|\s+ищу|\s+нужен)?\s*$', before) or re.match(r'\s+не\b', after)
+        if not negated:
+            out['housing'] = 'secondary' if secondary else 'new'
     rooms = re.search(r'\b([0-5])\s*(?:[-–—]|или)\s*([0-5])\s*(?:комнат|комн)', text)
     if rooms:
         lo, hi = sorted(map(int, rooms.groups()))
