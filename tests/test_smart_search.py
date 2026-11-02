@@ -170,6 +170,19 @@ class SearchIntegrationTest(unittest.TestCase):
             self.assertTrue(self.s.profile['not_last_floor'])
         asyncio.run(go())
 
+    def test_targeted_removal_clears_optional_park_and_preserves_other_constraints(self):
+        async def go():
+            await R.update_request(self.s, poi=['park','school'], soft_criteria=['poi:park'], features=['loggia'], not_first_floor=True, not_last_floor=True)
+            await R.update_request(self.s, clear_criteria=['poi:park','not_first_floor'])
+            self.assertEqual(self.s.profile['poi'], ['school'])
+            self.assertNotIn('poi:park', self.s.profile['soft_criteria'])
+            self.assertFalse(self.s.profile['not_first_floor'])
+            self.assertTrue(self.s.profile['not_last_floor'])
+            self.assertEqual(self.s.profile['features'], ['loggia'])
+            await R.update_request(self.s, clear_criteria=['feature:loggia'])
+            self.assertEqual(self.s.profile['features'], [])
+        asyncio.run(go())
+
     def test_source_failure_is_not_presented_as_an_empty_market(self):
         async def go():
             self.s.search = {'report':[{'status':'unavailable'}]}

@@ -72,8 +72,8 @@ def emit_profile(s) -> None:
     soft_criteria={"type": "array", "items": {"type": "string", "enum": CRITERIA_KEYS},
                    "description": "Ключи условий, которые клиент назвал желательными, а не обязательными. Список целиком. "
                                   "Например poi:park — желательно парк, feature:parking — желательно парковка. Остальные условия обязательны."},
-    clear_criteria={"type": "array", "items": {"type": "string", "enum": ["kitchen_min", "area_min", "metro_max_minutes", "year_min", "condition", "timeline"]},
-                    "description": "Снять названные ограничения по явному пожеланию клиента «не важно»."},
+    clear_criteria={"type": "array", "items": {"type": "string", "enum": [*CRITERIA_KEYS, "prefer_center", "districts", "avoid_districts"]},
+                    "description": "Полностью убрать только отменённые клиентом условия, сохранив остальные. Например «парк больше не нужен» -> [poi:park], «ремонт любой» -> [condition], «любой этаж» -> [not_first_floor,not_last_floor]. Удобства: feature:ключ. Снятие условия одновременно убирает его из желательных; удалять один soft_criteria недостаточно."},
     metro_max_minutes={"minimum": 0, "maximum": 300, "type": "integer", "description": "до метро не дольше, минут"},
     wishes={"type": "array", "items": {"type": "string"}, "description": "прочие пожелания коротко, которые не ложатся в поля"},
 )
@@ -95,7 +95,17 @@ async def update_request(s, **changes) -> dict:
     changes = explicit_search_fields(changes, latest, s.profile, context)
     p = merge_profile(changes, s.profile or None)
     for key in changes.get("clear_criteria", []):
-        p[key] = None
+        if key.startswith("poi:"):
+            p["poi"] = [v for v in p["poi"] if v != key[4:]]
+        elif key.startswith("feature:"):
+            p["features"] = [v for v in p["features"] if v != key[8:]]
+        elif key in ("not_first_floor", "not_last_floor", "prefer_center"):
+            p[key] = False
+        elif key in ("material", "districts", "avoid_districts"):
+            p[key] = []
+        else:
+            p[key] = None
+        p["soft_criteria"] = [v for v in p["soft_criteria"] if v != key]
     for key in LIST_KEYS:  # пустой список от модели — снять условие
         if key in changes and changes[key] == []:
             p[key] = []

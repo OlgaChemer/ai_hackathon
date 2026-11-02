@@ -138,6 +138,8 @@ def validate(name, phase, dialogue, outcome):
     allowed = {'slang': {1, 2}, 'disjoint': {1, 3}, 'move_city': {1}, 'relax': {1, 2}, 'ambiguous_city': {2}}[name]
     actual = set(p.get('rooms_options') or [p.get('rooms')])
     check(actual == allowed, f'Потерял допустимые комнатности: {actual}, ожидалось {allowed}')
+    queried = {r.get('rooms') for r in dialogue.report if 'rooms' in r}
+    check(allowed <= queried, f'Не запросил все допустимые комнатности: {queried}')
     check(all(x['rooms'] in allowed for x in cards), 'В выдаче запрещённая комнатность')
     check(all(x['price'] <= budgets[name] * 1.05 for x in cards), 'Цена вне действующего допуска поиска (+5% для торга)')
     if name in ('slang', 'disjoint'):
@@ -149,7 +151,7 @@ def validate(name, phase, dialogue, outcome):
         check(all(x['city'] in expected for x in cards), 'Квартиры из прежней территории')
     if name == 'relax':
         check(p.get('city') == 'Самара', 'Изменил город')
-        check(bool(p.get('not_last_floor')), 'Потерял запрет последнего этажа')
+        check(bool(p.get('not_last_floor')) and 'not_last_floor' not in (p.get('soft_criteria') or []), 'Потерял запрет последнего этажа')
         check(all(not x.get('floors') or x.get('floor') != x['floors'] for x in cards), 'Показал известный последний этаж')
         if phase == 0:
             check(p.get('not_first_floor'), 'Не записал запрет первого этажа')
@@ -182,6 +184,8 @@ async def scenario(base, name):
                 'seconds': round(time.monotonic() - started, 1), 'input': text, 'outcome': outcome,
                 'profile': {k: dialogue.profile.get(k) for k in PROFILE_KEYS}, 'cards': len(cards),
                 'card_rooms': sorted({x['rooms'] for x in cards}), 'card_cities': sorted({x['city'] for x in cards}),
+                'first_floors': sum(x.get('floor') == 1 for x in cards),
+                'last_floors': sum(bool(x.get('floors')) and x.get('floor') == x['floors'] for x in cards),
                 'over_budget_for_bargain': sum(x['price'] > (dialogue.profile.get('budget_max') or 0) for x in cards),
                 'reports': dialogue.report, 'delivery': delivery, 'errors': errors,
             }, ensure_ascii=False), flush=True)
