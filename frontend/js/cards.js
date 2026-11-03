@@ -6,6 +6,7 @@ import { PhoneCall, formatPhone, normalizePhone } from "./phone.js";
 import { $, addMsg, chatLog, config, stage, state } from "./state.js";
 import { sayPrompt, voiceHint } from "./voicechat.js";
 import { voice } from "./voice.js";
+import { roomDescription } from "./speech.js";
 import { setChatExpanded } from "./shell.js";
 
 let sendText = async () => {};
@@ -200,10 +201,11 @@ export function confirmCard(ev) {
   const hint = voiceHint(ev);
   card.dataset.hint = hint;
   const spoken = {
-    red_lines: () => `Проверим рамки: ${[ev.payload.city, ...(ev.payload.cities || [])].join(", ")}, ${ev.payload.rooms_options?.length > 1 ? `${ev.payload.rooms_options.join("–")}-комнатная` : ev.payload.rooms === 0 ? "студия" : `${ev.payload.rooms}-комнатная`}, бюджет до ${rub(ev.payload.budget_max)}. ${ev.text}`,
+    red_lines: () => `Подтвердите верхний лимит покупки: ${[ev.payload.city, ...(ev.payload.cities || [])].join(", ")}, ${roomDescription(ev.payload.rooms_options?.length ? ev.payload.rooms_options : [ev.payload.rooms])}, до ${rub(ev.payload.budget_max)}. Выше этой суммы я не пойду. Итоговую цену подтверждаете вы.`,
     finance: () => `${ev.title}.`,
     payment: () => `${ev.title}`,
-    family: () => `${ev.title}. ${ev.text}`,
+    family: () => "Есть ли у вас дети? Возраст и маткапитал можно указать на карточке.",
+    housing: () => "Посмотреть вторичку, новостройки или оба варианта?",
   }[ev.kind]?.() ?? `${ev.title}. ${ev.text}`;
   if (live) sayPrompt(`${spoken} ${hint}`);
 

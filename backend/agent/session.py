@@ -54,6 +54,8 @@ class Session:
     messages: list[dict] = field(default_factory=list)  # память: разговор агента с моделью (формат OpenAI)
     status: dict[int, str] = field(default_factory=dict)  # шаги степпера: номер -> active | done
 
+    voice_mode: bool = False           # стиль ответа; не параметр подбора и не согласие
+
     # --- состояние сделки (его меняют действия агента)
     profile: dict = field(default_factory=dict)
     red_lines_ok: bool = False          # клиент подтвердил рамки: без этого ни поиска, ни звонка

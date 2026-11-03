@@ -1389,3 +1389,12 @@ body[data-page="agent"]:has(.chat.expanded) :is(.site-header,.stage,.footnote) {
 .workspace.layout > .chat.expanded .composer { padding-bottom:max(10px,env(safe-area-inset-bottom)); }
 .workspace.layout > .chat.expanded .talk { padding-bottom:max(16px,env(safe-area-inset-bottom)); }
 }
+
+/* Настройки озвучки внутри режима разговора. */
+.talk-settings { grid-column:1 / -1; min-width:0; font-size:12px; }
+.talk-settings summary { cursor:pointer; color:var(--green-strong); }
+.talk-settings[open] { display:grid; gap:8px; }
+.talk-settings label { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.talk-settings select { min-width:0; max-width:75%; border:1px solid var(--line); border-radius:8px; background:var(--surface); padding:6px; font-size:16px; }
+.talk-settings input { width:100%; accent-color:var(--green); }
+.talk-settings small { color:var(--ink-3); }

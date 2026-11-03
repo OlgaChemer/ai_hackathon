@@ -42,7 +42,7 @@ async def check(browser, base, width, folder):
     await page.fill('#welcomeQuery', query)
     await page.press('#welcomeQuery', 'Enter')
     await page.wait_for_selector('#chatLog .confirm-red_lines')
-    assert starts == [{'query': query}]
+    assert starts == [{'query': query, 'voice_mode': False}]
     assert await page.input_value('#welcomeQuery') == ''
     old_hash = await page.evaluate('location.hash')
     if width > 860:
@@ -69,7 +69,7 @@ async def check(browser, base, width, folder):
     await example.click()
     await page.wait_for_function('(old) => location.hash.startsWith("#chat-") && location.hash !== old', arg=old_hash)
     await page.wait_for_selector('#chatLog .confirm-red_lines')
-    assert len(starts) == 2 and starts[-1] == {'query': expected}
+    assert len(starts) == 2 and starts[-1] == {'query': expected, 'voice_mode': False}
     if width<860:await page.locator('#chatToggle').click()
     # Разговор с главной создаёт новый подбор только после распознанной фразы.
     # Используется настоящий Talk с поддельным устройством Chromium; STT здесь не проверяется.
@@ -86,7 +86,7 @@ async def check(browser, base, width, folder):
         await talk.onText('Двушка в Казани до 9 млн, наличными');
     }""")
     await page.wait_for_selector('#chatLog .confirm-red_lines')
-    assert len(starts)==3 and starts[-1]['query']=='Двушка в Казани до 9 млн, наличными'
+    assert len(starts)==3 and starts[-1]['query']=='Двушка в Казани до 9 млн, наличными' and starts[-1]['voice_mode'] is True
     await page.locator('#talkEnd').click()
     assert await page.locator('#composer').is_visible()
     assert not await page.locator('#talkPanel').is_visible()

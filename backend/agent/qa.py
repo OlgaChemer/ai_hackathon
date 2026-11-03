@@ -52,7 +52,7 @@ def build_context(s) -> dict:
 
 
 async def answer(s, text: str) -> None:
-    system = prompts.QA_SYSTEM + "\n" + guard.POLICY
+    system = prompts.QA_SYSTEM + ("\n" + prompts.VOICE_STYLE if s.voice_mode else "") + "\n" + guard.POLICY
     turn = Turn(s.id, settings.agent_turn_timeout_s, s.signal)
     try:
         resp = await turn.run(lambda: s.llm.chat([{"role": "system", "content": system}, guard.data_message("session_context", build_context(s)),

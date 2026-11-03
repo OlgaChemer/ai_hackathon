@@ -3,28 +3,10 @@
 // пока он говорит — не слушаем (иначе агент услышит сам себя). Нажали на кружок — агент замолкает.
 import { capturePhrase, mic, prepareRecordingAudio, recorder, transcribe, voice } from "./voice.js";
 import { sleep } from "./format.js";
+import { speechChunks } from "./speech.js";
 
 // Whisper на тишине и шуме иногда «слышит» титры из обучающих видео
 const JUNK = /субтитр|продолжение следует|спасибо за просмотр|подписывайтесь|dimatorzok|редактор|корректор/i;
-
-const plural = (n, one, few, many) => {
-  const k = Math.floor(Math.abs(n)) % 100;
-  if (!Number.isInteger(n)) return few; // «9,5 миллиона»
-  if (k % 10 === 1 && k !== 11) return one;
-  return k % 10 >= 2 && k % 10 <= 4 && (k < 12 || k > 14) ? few : many;
-};
-
-/** Текст для голоса: «9 000 000 ₽» -> «9000000 рублей», «9,5 млн» -> «9,5 миллиона», без эмодзи и стрелок. */
-function speechText(text) {
-  return text
-    .replace(/(\d)[\s  ](?=\d{3}(?!\d))/g, "$1")
-    .replace(/(\d+(?:,\d+)?)\s*млн\.?/g, (_, n) => `${n} ${plural(Number(n.replace(",", ".")), "миллион", "миллиона", "миллионов")}`)
-    .replace(/(\d+(?:,\d+)?)\s*тыс\.?/g, (_, n) => `${n} ${plural(Number(n.replace(",", ".")), "тысяча", "тысячи", "тысяч")}`)
-    .replace(/м²/g, " квадратных метров")
-    .replace(/(^|\s)ИИ(?=[\s,.!?-]|$)/g, "$1И И")
-    .replace(/[→←↑↓•·✓✕«»"]/g, " ")
-    .replace(/\p{Extended_Pictographic}/gu, "");
-}
 
 export class Talk {
   /**
@@ -79,6 +61,7 @@ export class Talk {
   stop() {
     this.on = false;
     this.phrases = [];
+    this.speaking = false;
     voice.stop();
     this.capture?.stop();
     // capturePhrase отключит свои узлы; контекст принадлежит всему разговору.
@@ -94,14 +77,7 @@ export class Talk {
   /** Агент говорит фразу (встаёт в очередь). */
   say(text) {
     if (!this.on || !text) return;
-    // длинный текст — по предложениям: Chrome обрывает длинные фразы, а перебить можно между ними
-    const parts = speechText(text).replace(/\s+/g, " ").match(/[^.!?…]+[.!?…]*\s*/g) || [text];
-    let chunk = "";
-    for (const p of parts) {
-      if ((chunk + p).length > 220 && chunk) { this.phrases.push(chunk.trim()); chunk = ""; }
-      chunk += p;
-    }
-    if (chunk.trim()) this.phrases.push(chunk.trim());
+    this.phrases.push(...speechChunks(text));
     // человек ещё не начал говорить — перестаём слушать, агент отвечает
     if (this.capture && !this.capture.heard()) { this.capture.aborted = true; this.capture.stop(); }
   }
@@ -121,8 +97,8 @@ export class Talk {
       if (this.userBusy) { await sleep(120); continue; } // человек договаривает — агент ждёт
       this.speaking = true;
       this.#set("speaking");
-      while (this.on && this.phrases.length) await voice.speak(this.phrases.shift(), "agent", true);
-      this.speaking = false;
+      while (this.#alive(run) && this.phrases.length) await voice.speak(this.phrases.shift(), "agent", true);
+      if (this.run === run) this.speaking = false;
       await sleep(250); // хвост звука из колонок не должен попасть в микрофон
     }
   }

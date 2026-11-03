@@ -61,7 +61,7 @@ def state_brief(s) -> str:
 
 
 async def think(s, with_actions: bool):
-    messages = [{"role": "system", "content": prompts.AGENT_SYSTEM + "\n" + guard.POLICY},
+    messages = [{"role": "system", "content": prompts.AGENT_SYSTEM + ("\n" + prompts.VOICE_STYLE if s.voice_mode else "") + "\n" + guard.POLICY},
                 guard.data_message("session_state", state_brief(s)), *guard.output(s.messages, limit=False)]
     return await s.llm.chat(messages, tools=actions.tools(s) if with_actions else None, temperature=0.3, max_tokens=900,
                             tag="agent")

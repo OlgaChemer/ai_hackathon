@@ -83,10 +83,12 @@ async def _reaper():
 
 
 class StartRequest(BaseModel):
+    voice_mode: StrictBool = False
     query: str = Field(min_length=3, max_length=500)
 
 
 class ConfirmRequest(BaseModel):
+    voice_mode: StrictBool = False
     kind: str = Field(max_length=40)
     approved: StrictBool = False
     data: dict = {}
@@ -97,6 +99,7 @@ class SellerReply(BaseModel):
 
 
 class ClientMessage(BaseModel):
+    voice_mode: StrictBool = False
     text: str = Field(min_length=1, max_length=1000)
     liked: list[str] = []
     disliked: list[str] = []
@@ -241,6 +244,7 @@ async def me(request: Request):
 async def start(req: StartRequest, request: Request):
     vid, uid = auth.whoami(request)
     s = O.create_session(req.query, _llm(), visitor_id=vid, user_id=uid)
+    s.voice_mode = req.voice_mode
     return {"id": s.id}
 
 
@@ -346,9 +350,11 @@ async def chat_message(sid: str, req: ClientMessage, request: Request):
     live = O.SESSIONS.get(sid)
     _cooldown(live)
     if live is not None and (live.task is None or O.running(live)):  # агент ещё не запущен или работает
+        live.voice_mode = req.voice_mode
         kind = await live.receive_text(req.text.strip(), {"liked": req.liked, "disliked": req.disliked})
         return {"ok": True, "handled_as": kind, "continued": False}
     s = O.restore_session(sid, req.text, _llm())
+    s.voice_mode = req.voice_mode
     return {"ok": True, "handled_as": "continue", "continued": True, "after": s.seq}
 
 
@@ -357,6 +363,7 @@ async def confirm(sid: str, req: ConfirmRequest, request: Request):
     s = _session(sid, request)
     _cooldown(s)
     try:
+        s.voice_mode = req.voice_mode
         resolved = s.resolve(req.kind, req.approved, req.data)
     except guard.InputRejected as exc:
         raise HTTPException(422, str(exc)) from exc

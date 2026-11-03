@@ -15,10 +15,11 @@ async function request(path, options = {}) {
 }
 
 export const api = {
+  voiceMode: false,
   health: () => request("/api/health"),
-  start: (query) => request("/api/session", { method: "POST", body: { query } }),
+  start: (query) => request("/api/session", { method: "POST", body: { query, voice_mode: api.voiceMode } }),
   confirm: (sid, kind, approved, data = {}) =>
-    request(`/api/session/${sid}/confirm`, { method: "POST", body: { kind, approved, data } }),
+    request(`/api/session/${sid}/confirm`, { method: "POST", body: { kind, approved, data, voice_mode: api.voiceMode } }),
   seller: (sid, text) => request(`/api/session/${sid}/seller`, { method: "POST", body: { text } }),
   product: (sid, product, amount) => request(`/api/session/${sid}/product`, { method: "POST", body: { product, amount } }),
   economics: (params) => request(`/api/economics?${new URLSearchParams(params)}`),
@@ -26,7 +27,7 @@ export const api = {
   // диалоги: лента (история + живые события), сообщение (агент работает — ответ; закончил — продолжение)
   chats: () => request("/api/chats"),
   chatStream: (id, after = 0) => new EventSource(`/api/chat/${id}/stream?after=${after}`),
-  chatMessage: (id, text, marks = {}) => request(`/api/chat/${id}/message`, { method: "POST", body: { text, ...marks } }),
+  chatMessage: (id, text, marks = {}) => request(`/api/chat/${id}/message`, { method: "POST", body: { text, ...marks, voice_mode: api.voiceMode } }),
 
   me: () => request("/api/me"),
   login: (email, password) => request("/api/auth/login", { method: "POST", body: { email, password } }),

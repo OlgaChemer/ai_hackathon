@@ -2,12 +2,29 @@
 import { $, addMsg, config, state } from "./state.js";
 import { Talk } from "./talk.js";
 import { voice } from "./voice.js";
+import { api } from "./api.js";
 
 let handlers = { sendText: async () => {}, selectionAction: async () => {}, setVote: () => {}, submitSeller: async () => {} };
 
 /** Подключить кнопки голосового режима; handlers — действия приложения, которые нужны голосу. */
 export function initVoiceChat(h) {
   handlers = h;
+  const choices = $("talkVoice");
+  voice.watchVoices(() => {
+    choices.replaceChildren(new Option("Автоматически — русский", ""), ...voice.choices.map(v => new Option(v.name, v.id)));
+    choices.value = voice.choices.some(v => v.id === voice.voiceId) ? voice.voiceId : "";
+    $("talkVoiceNote").textContent = voice.choices.length ? "Голоса вашего устройства" : "Используется системный голос браузера";
+  });
+  choices.addEventListener("change", () => { voice.voiceId = choices.value; });
+  const rate = $("talkRate");
+  const rateLabel = $("talkRateValue");
+  rate.value = String(voice.rate);
+  rateLabel.value = `${voice.rate.toLocaleString("ru-RU")}×`;
+  rate.addEventListener("input", () => { voice.rate = rate.value; rateLabel.value = `${voice.rate.toLocaleString("ru-RU")}×`; });
+  $("talkSample").addEventListener("click", () => {
+    talk.interrupt();
+    talk.say("Например, квартира стоит 42 млн ₽, а её площадь — 53,4 м². Что для вас важнее: район или площадь?");
+  });
   $("talkBtn").addEventListener("click", () => (talk.on ? stopTalk() : startTalk()));
   $("welcomeTalkBtn").addEventListener("click", () => {
     handlers.newChat();
@@ -56,37 +73,36 @@ export function voiceHint(ev) {
 }
 
 const norm = (t) => t.toLowerCase().replace(/ё/g, "е").replace(/[.,!?…«»"]/g, " ").replace(/\s+/g, " ").trim();
-const YES = /^(да|ага|угу|давай|хорошо|ладно|ок|окей|конечно|верно|все верно|поехали|подтвер|согласен|согласна|годится|подходит)/;
-const NO = /^(нет|не надо|не нужно|не хочу|отмена|отмени)/;
-
-// какую кнопку карточки нажать по фразе: [образец, часть надписи кнопки или её номер]
+// Это только голосовые аналоги кнопок. Свободный ответ целиком отправляется агенту.
+const YES = ["да", "ага", "угу", "давай", "хорошо", "ладно", "ок", "окей", "конечно", "верно", "все верно", "согласен", "согласна", "да согласен", "да все верно", "все правильно", "да правильно", "да подтверждаю", "подтверждаю"];
+const NO = ["нет", "не надо", "не нужно", "не хочу", "отмена", "отмени"];
 const VOICE_PICK = {
-  red_lines: [[/измен|друг/, "Изменить"], [/подтвер/, "Подтвердить"], [NO, "Изменить"], [YES, "Подтвердить"]],
-  finance: [[/пропус/, "Пропустить"], [NO, "Пропустить"], [/посчит|рассчит|бюджет|стратег/, 0], [YES, 0]],
-  payment: [[/налич|вся сумма|целиком|сразу/, "Наличными"], [/коп|не хватает|нет взноса|накоп/, "копим"], [/ипотек|хватает|взнос есть|есть взнос/, "хватает"]],
-  family: [[/пропус|не надо|^нет/, "Пропустить"], [/подбер|подобр|посчит|готово|заполн/, "Подобрать"], [YES, "Подобрать"]],
-  housing: [[/там и там|обе|оба|везде|и то и|и новостр\w* и втор|и втор\w* и новостр/, "Новостройки и вторичка"],
-            [/втор/, "Только вторичка"], [/новостро|первичк|застройщ/, "Только новостройки"]],
-  call: [
-    [/пропус|не звони|друг(ой|ую|ая)/, "Пропустить"],
-    [/продавец (я|буду)|я продавец|я сыграю|я сам|сам буду|в чате/, "продавец я"],
-    [/(^|\s)ии(\s|$)|нейросет|искусствен|робот|сыгра|играет|автомат/, "играет ИИ"],
-    [/телефон|позвони мне|мне позвони|на мой|набери/, "Позвонить мне"],
-    [YES, 0],
-  ],
-  price: [[/не подтвер|отклон|дорого|дальше|^нет/, "Отклонить"], [/подтвер|беру|соглас/, "Подтвердить"], [YES, "Подтвердить"]],
-  object: [[/дальше|не (беру|нрав|подход)|^нет/, "Ищем дальше"], [/беру|выбира|эту/, "Выбираю"], [YES, "Выбираю"]],
-  sign: [[/отлож|позже|потом|^нет/, "Отложить"], [/подпис/, "Подписать"], [YES, "Подписать"]],
+  red_lines: [["Изменить", [...NO, "изменить", "изменить сумму", "поправить лимит"]], ["Подтвердить", [...YES, "подтвердить", "подтверждаю лимит"]]],
+  finance: [["Пропустить", [...NO, "пропустить"]], [0, [...YES, "посчитай", "рассчитай", "посчитать", "рассчитать стратегию"]]],
+  payment: [["Наличными", ["наличными", "наличные", "наличка", "за свои", "вся сумма есть"]],
+    ["копим", ["копим", "копим на взнос", "на взнос копим", "взноса нет", "нет взноса"]],
+    ["хватает", ["ипотека", "в ипотеку", "взнос есть", "на взнос хватает", "ипотека и взнос есть", "ипотека взнос есть"]]],
+  family: [["Пропустить", [...NO, "пропустить"]], ["Подобрать", [...YES, "подобрать", "посчитать", "готово"]]],
+  housing: [["Новостройки и вторичка", ["и там и там", "обе", "оба", "везде", "и то и другое", "новостройки и вторичка", "и новостройки и вторичка"]],
+    ["Только вторичка", ["вторичка", "только вторичка", "вторичку", "вторичный рынок"]],
+    ["Только новостройки", ["новостройки", "новостройку", "только новостройки", "первичка", "от застройщика"]]],
+  call: [["Пропустить", [...NO, "пропустить", "не звони", "пропустить объект"]],
+    ["продавец я", ["продавец я", "я продавец", "я сыграю", "в чате", "я сам"]],
+    ["играет ИИ", ["ии", "продавца сыграет ии", "продавца играет ии", "робот", "автоматически"]],
+    ["Позвонить мне", ["позвони мне", "мне позвони", "на мой телефон", "позвонить мне"]], [0, YES]],
+  price: [["Отклонить", [...NO, "отклонить", "дорого", "ищем дальше"]], ["Подтвердить", [...YES, "подтвердить", "подтверждаю цену"]]],
+  object: [["Ищем дальше", [...NO, "ищем дальше", "дальше", "не подходит"]], ["Выбираю", [...YES, "беру", "выбираю", "выбираю эту квартиру"]]],
+  sign: [["Отложить", [...NO, "отложить", "позже", "потом"]], ["Подписать", [...YES, "подписать", "подписываю"]]],
 };
 
-function voiceButton(card, t) {
-  const kind = [...card.classList].find((c) => c.startsWith("confirm-"))?.slice(8);
+function voiceButton(card, text) {
+  const kind = [...card.classList].find(c => c.startsWith("confirm-"))?.slice(8);
   const buttons = [...card.querySelectorAll(".actions button:not(:disabled)")];
-  const rules = VOICE_PICK[kind] || [[NO, 1], [YES, 0]];
-  for (const [re, target] of rules) {
-    if (!re.test(t)) continue;
-    const b = typeof target === "number" ? buttons[target] : buttons.find((x) => x.textContent.includes(target));
-    if (b) return b;
+  const exact = buttons.find(button => norm(button.textContent) === text);
+  if (exact) return exact;
+  for (const [target, phrases] of VOICE_PICK[kind] || []) {
+    if (!phrases.includes(text)) continue;
+    return typeof target === "number" ? buttons[target] : buttons.find(button => button.textContent.includes(target));
   }
   return null;
 }
@@ -95,6 +111,10 @@ const ORDINALS = [["перв", 1], ["втор", 2], ["трет", 3], ["четв"
 
 // «вторая нравится», «первая и третья не то» -> отметки в подборке
 function voteByVoice(t) {
+  // Только короткая команда отметки; длинная реплика с пожеланиями принадлежит агенту.
+  const ordinal = "(?:перв|втор|трет|четв|пят|шест|седьм|восьм|девят|десят)[а-я]*";
+  const choice = `(?:${ordinal}|(?:номер|№)\\s*\\d+)`;
+  if (!new RegExp(`^(?:(?:отметь|убери)\\s+)?${choice}(?:\\s+и\\s+${choice})*\\s+(?:нравится|нравятся|подходит|подходят|не нравится|не нравятся|не подходит|не подходят|не то|плюс|минус|интересна|интересны)$`).test(t)) return false;
   const cards = state.results[4]?.cards || [];
   const down = /не то|не нрав|не подход|не хоч|убер|минус|плох|мимо/.test(t);
   const up = !down && /нрав|подход|отлич|хорош|лайк|плюс|беру|отмет|интерес|супер|класс/.test(t);
@@ -120,14 +140,14 @@ async function routeVoice(text) {
   const card = [...$("chatLog").querySelectorAll(".confirm:not(.is-done):not(.confirm-clarify)")].pop();
   if (card && card.querySelector(".actions button:not(:disabled)")) {
     const b = voiceButton(card, t);
-    if (!b) return talk.say(`Не понял. ${card.dataset.hint || ""}`);
+    if (!b) return handlers.sendText(text);
     card.dataset.said = text; // фраза придёт в ленту вместе с решением
     b.click();
     return;
   }
   if (state.awaiting === "selection") {
     if (voteByVoice(t)) return addMsg("user", text);
-    if (/звони|позвони|созвон|продавц|поехали/.test(t)) return handlers.selectionAction("proceed", text);
+    if (["звони", "позвони", "позвони по отмеченным", "звони по отмеченным", "позвони по выбранным", "звони продавцам", "давай позвоним", "поехали"].includes(t)) return handlers.selectionAction("proceed", text);
   }
   return handlers.sendText(text);
 }
@@ -136,7 +156,7 @@ const TALK_TEXT = {
   listening: ["Слушаю", "Говорите — отвечу, когда замолчите"],
   hearing: ["Слышу вас…", "Договорите — я подожду паузу"],
   processing: ["Распознаю…", ""],
-  thinking: ["Агент думает…", "Ответит через пару секунд"],
+  thinking: ["Агент думает…", "Подбираю ответ"],
   speaking: ["Агент говорит", "Нажмите на кружок, чтобы перебить"],
   waiting: ["Идёт звонок", "Продолжим, когда звонок закончится"],
 };
@@ -158,18 +178,20 @@ async function startTalk() {
     addMsg("error", e.message);
     return;
   }
+  api.voiceMode = true;
   $("composer").hidden = true;
   $("talkPanel").hidden = false;
   $("talkBtn").setAttribute("aria-pressed", "true");
   const card = [...$("chatLog").querySelectorAll(".confirm:not(.is-done)")].pop();
   if (card && state.lastPrompt) talk.say(state.lastPrompt);
   else if (state.awaiting === "selection") talk.say(SELECTION_PROMPT);
-  else if (!state.running) talk.say("Слушаю. Расскажите, какую квартиру ищете: город, бюджет, комнаты и что для вас важно.");
+  else if (!state.running) talk.say("Расскажите, какую квартиру ищете. Начнём с города и бюджета.");
   else talk.say("Слушаю.");
 }
 
 function stopTalk() {
   talk.stop();
+  api.voiceMode = false;
   $("composer").hidden = false;
   $("talkPanel").hidden = true;
   $("talkBtn").setAttribute("aria-pressed", "false");
