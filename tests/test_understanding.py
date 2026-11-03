@@ -7,10 +7,11 @@ from unittest.mock import AsyncMock, patch
 
 from backend import db, sources
 from backend.agent import actions, qa, session, understanding as U
-from backend.agent.actions import request as R
 from backend.agent.profile import merge_profile
 from backend.agent import input_frame
+from backend.agent.request_schema import CHANGE_SCHEMA
 from backend.llm import LLMClient, LLMError, LLMResponse, ToolCall
+from tests.input_contract import input_reply as reply, slots
 
 
 class ReviewModel(LLMClient):
@@ -28,27 +29,6 @@ class ReviewModel(LLMClient):
         return LLMResponse(json.dumps(answer, ensure_ascii=False))
 
 
-def verdict(text, changes=None, intent='refine', decision=None):
-    changes = changes or {}
-    return {'intent': intent, 'decision': decision or ('apply' if changes else 'unchanged'), 'changes': changes,
-            'evidence': [{'field': k, 'quote': text} for k in changes], 'question': '', 'options': []}
-
-
-def frame(*, places=None, fields=None, criteria=None, intent='refine'):
-    return {'places':[{'words':[{'source':w,'lemma':w} for w in x.split()],'source_seq':1} for x in places or []],
-            'fields':[{'field':k,'value':v,'source_seq':1} for k,v in (fields or {}).items()],
-            'criteria':[{'key':k,'value':v,'priority':p,'source_seq':1} for k,v,p in criteria or []],
-            'question':'','options':[],'intent':intent}
-
-
-def slots(*, fields=None, criteria=None, places=None, intent='refine'):
-    schema=input_frame.schema(U._schema())
-    return {'places':[{'words':[{'source':w,'lemma':w} for w in x.split()]} for x in places or []],
-            'fields':{**{k:None for k in schema['properties']['fields']['properties']},**(fields or {})},
-            'criteria':{**{k:None for k in schema['properties']['criteria']['properties']},**(criteria or {})},
-            'question':'','options':[],'intent':intent}
-
-
 
 
 class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
@@ -64,8 +44,7 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
         return s
 
     async def test_criterion_and_priority_are_applied_together_in_one_call(self):
-        s=self.agent('Парк желателен, первый и последний этаж запрещены.', frame(criteria=[
-            ('poi:park',True,'preferred'),('not_first_floor',True,'required'),('not_last_floor',True,'required')]))
+        s=self.agent('Парк желателен, первый и последний этаж запрещены.', slots(criteria={'poi:park':'preferred','not_first_floor':'required','not_last_floor':'required'}))
         await U.ensure(s)
         self.assertEqual(s.profile['poi'],['park'])
         self.assertEqual(s.profile['soft_criteria'],['poi:park'])
@@ -84,15 +63,15 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(s.llm.seen),1)
 
     async def test_declined_city_and_single_room_count_use_the_native_contract(self):
-        reply=slots(fields={'rooms':2,'budget_max':15_000_000},places=['Москва'],intent='search')
-        reply['places'][0]['words'][0]['source']='Москве'
-        s=self.agent('Ищу двухкомнатную квартиру в Москве до 15 млн ₽',reply)
+        value=slots(fields={'rooms':2,'budget_max':15_000_000},places=['Москва'],intent='search')
+        value['places'][0]['words'][0]['source']='Москве'
+        s=self.agent('Ищу двухкомнатную квартиру в Москве до 15 млн ₽',value)
         await U.ensure(s)
         self.assertEqual((s.profile['city'],s.profile['rooms'],s.profile['budget_max']),('Москва',2,15_000_000))
         sent=json.loads(s.llm.seen[0][-1]['content'])
         # Источник выбирается из буквальных слов сообщения в нативной схеме.
         self.assertIn('Москве',str(sent))
-        contract=input_frame.schema(U._schema(),s.request_inputs)
+        contract=input_frame.schema(CHANGE_SCHEMA,s.request_inputs)
         words=contract['properties']['places']['items']['properties']['words']['items']['properties']['source']['enum']
         self.assertIn('Москве',words)
         self.assertNotIn('Москва',words)
@@ -100,10 +79,10 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(validation_schema['minimum'],0)
 
     async def test_qualitative_wish_without_a_numeric_limit_does_not_reject_other_fields(self):
-        reply=slots(fields={'rooms':2,'wishes':['рядом с метро']},places=['Москва'],
+        value=slots(fields={'rooms':2,'wishes':['рядом с метро']},places=['Москва'],
                     criteria={'metro_max_minutes':{'value':None,'priority':'required'}},intent='search')
-        reply['places'][0]['words'][0]['source']='Москве'
-        s=self.agent('Ищу двухкомнатную квартиру в Москве рядом с метро',reply)
+        value['places'][0]['words'][0]['source']='Москве'
+        s=self.agent('Ищу двухкомнатную квартиру в Москве рядом с метро',value)
         await U.ensure(s)
         self.assertEqual((s.profile['city'],s.profile['rooms']),('Москва',2))
         self.assertIsNone(s.profile['metro_max_minutes'])
@@ -128,8 +107,7 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(s.profile['not_first_floor'])
 
     async def test_typed_removal_preserves_other_conditions_and_priorities(self):
-        s=self.agent('Парк не нужен, первый можно, последний нельзя.',frame(criteria=[
-            ('poi:park',None,'remove'),('not_first_floor',False,'required'),('not_last_floor',True,'required')]),profile={
+        s=self.agent('Парк не нужен, первый можно, последний нельзя.',slots(criteria={'poi:park':'remove','not_first_floor':'remove','not_last_floor':'required'}),profile={
                 'poi':['park','school'],'soft_criteria':['poi:park','poi:school'],'not_first_floor':True,'not_last_floor':True})
         await U.ensure(s)
         self.assertEqual(s.profile['poi'],['school'])
@@ -138,15 +116,16 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(s.profile['not_last_floor'])
 
     async def test_required_priority_removes_previous_soft_flag_without_removing_criterion(self):
-        s=self.agent('Теперь парк обязателен.',frame(criteria=[('poi:park',True,'required')]),profile={
+        s=self.agent('Теперь парк обязателен.',slots(criteria={'poi:park':'required'}),profile={
             'poi':['park'],'soft_criteria':['poi:park']})
         await U.ensure(s)
         self.assertEqual(s.profile['poi'],['park'])
         self.assertEqual(s.profile['soft_criteria'],[])
 
     async def test_catalogue_reference_produces_clarification_without_partial_writes(self):
-        s=self.agent('Двушка в Новгороде до девяти миллионов.',frame(places=['Новгород'],fields={
-            'rooms_options':[2],'budget_max':9_000_000},intent='search'))
+        value=slots(places=['Новгород'],fields={'rooms_options':[2],'budget_max':9_000_000},intent='search')
+        value['places'][0]['words'][0]['source']='Новгороде'
+        s=self.agent('Двушка в Новгороде до девяти миллионов.',value)
         before=deepcopy(s.profile)
         review=await U.prepare(s)
         self.assertEqual(review['decision'],'clarify')
@@ -155,7 +134,7 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(review['changes'],{})
 
     async def test_frame_fields_keep_room_alternatives_and_ruble_values(self):
-        s=self.agent('Казань, однушка или трёшка, пять с половиной лямов.',frame(places=['Казань'],fields={
+        s=self.agent('Казань, однушка или трёшка, пять с половиной лямов.',slots(places=['Казань'],fields={
             'rooms_options':[1,3],'budget_max':5_500_000,'housing':'secondary','payment':'cash'},intent='search'))
         await U.ensure(s)
         self.assertEqual(s.profile['rooms_options'],[1,3])
@@ -163,7 +142,7 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(s.profile['city'],'Казань')
 
     async def test_information_frame_keeps_current_confirmation_open(self):
-        s=self.agent('старый ввод',frame(intent='question'),profile={'city':'Казань'})
+        s=self.agent('старый ввод',slots(intent='question'),profile={'city':'Казань'})
         s.request_review_seq=s.request_inputs[-1]['seq']
         future=asyncio.get_running_loop().create_future()
         s.pending['red_lines']=future
@@ -174,8 +153,8 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(s.profile['city'],'Казань')
 
     async def test_information_intent_has_no_authority_to_apply_repeated_or_invented_fields(self):
-        reply=frame(places=['Москва'],fields={'budget_max':100_000_000},intent='question')
-        s=self.agent('Что такое эскроу?',reply,profile={'city':'Казань','budget_max':9_000_000})
+        value=slots(places=['Москва'],fields={'budget_max':100_000_000},intent='question')
+        s=self.agent('Что такое эскроу?',value,profile={'city':'Казань','budget_max':9_000_000})
         before=deepcopy(s.profile)
         await U.ensure(s)
         self.assertEqual(s.profile,before)
@@ -184,24 +163,24 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
     async def test_continuation_and_hold_cannot_broaden_existing_profile(self):
         for intent in ('continue', 'hold', 'other'):
             with self.subTest(intent=intent):
-                reply=slots(fields={'rooms_options':[0,1,2,3,4,5], 'budget_max':100_000_000},intent=intent)
-                s=self.agent('Продолжайте прежнее.',reply,profile={'city':'Казань','rooms':2,'budget_max':9_000_000})
+                value=slots(fields={'rooms_options':[0,1,2,3,4,5], 'budget_max':100_000_000},intent=intent)
+                s=self.agent('Продолжайте прежнее.',value,profile={'city':'Казань','rooms':2,'budget_max':9_000_000})
                 before=deepcopy(s.profile)
                 await U.ensure(s)
                 self.assertEqual(s.profile,before)
                 self.assertEqual(s.request_intent,intent)
 
     async def test_a_single_source_name_cannot_grow_an_unspoken_city_modifier(self):
-        reply=frame(places=['Новгород'])
-        reply['places'][0]['words'][0]={'source':'Новгороде','lemma':'Великий Новгород'}
-        s=self.agent('Квартира в Новгороде',reply,reply)
+        value=slots(places=['Новгород'])
+        value['places'][0]['words'][0]={'source':'Новгороде','lemma':'Великий Новгород'}
+        s=self.agent('Квартира в Новгороде',value,value)
         before=deepcopy(s.profile)
         with self.assertRaises(U.UnderstandingError):
             await U.ensure(s)
         self.assertEqual(s.profile,before)
 
     async def test_catalogue_word_order_does_not_change_the_resolved_city(self):
-        s=self.agent('Великий Новгород',frame(places=['Новгород Великий']))
+        s=self.agent('Великий Новгород',slots(places=['Новгород Великий']))
         await U.ensure(s)
         self.assertEqual(s.profile['city'],'Великий Новгород')
 
@@ -220,37 +199,42 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
         s.accept_request(event['text'],event['seq'])
         self.assertEqual(s.request_inputs[-1]['options'],['Великий Новгород','Нижний Новгород'])
 
-    async def test_identical_field_repetitions_are_a_single_update(self):
-        reply=frame(fields={'budget_max':5_000_000})
-        reply['fields'].append(deepcopy(reply['fields'][0]))
-        s=self.agent('Пять миллионов, потолок пять.',reply)
-        await U.ensure(s)
-        self.assertEqual(s.profile['budget_max'],5_000_000)
-        self.assertEqual(len(s.llm.seen),1)
+    async def test_only_the_current_object_contract_is_accepted(self):
+        legacy = [
+            {'fields': [{'field':'budget_max','value':5_000_000,'source_seq':1}], 'criteria':[], 'places':[], 'intent':'refine','question':'','options':[]},
+            {'intent':'refine','decision':'apply','changes':{'budget_max':5_000_000},'evidence':[]},
+        ]
+        for value in legacy:
+            with self.subTest(value=value):
+                s=self.agent('Пять миллионов.',value,value)
+                before=deepcopy(s.profile)
+                with self.assertRaises(U.UnderstandingError): await U.ensure(s)
+                self.assertEqual(s.profile,before)
 
-    async def test_a_later_message_overrides_an_older_typed_value_even_if_rows_are_reordered(self):
-        reply=frame(fields={'budget_max':4_000_000})
-        reply['fields'][0]['source_seq']=2
-        reply['fields'].append({'field':'budget_max','value':5_000_000,'source_seq':1})
-        s=self.agent('До пяти миллионов.',reply)
+    async def test_later_correction_is_extracted_from_all_pending_messages(self):
+        s=self.agent('До пяти миллионов.',slots(fields={'budget_max':4_000_000}))
         event=s.push('message',role='user',text='Передумал, до четырёх.')
         s.accept_request(event['text'],event['seq'])
         await U.ensure(s)
+        payload=json.loads(s.llm.seen[0][1]['content'])['data']
+        self.assertEqual([m['text'] for m in payload['messages']],['До пяти миллионов.','Передумал, до четырёх.'])
         self.assertEqual(s.profile['budget_max'],4_000_000)
 
-    async def test_conflicting_values_in_one_message_require_clarification(self):
-        reply=frame(fields={'budget_max':4_000_000})
-        reply['fields'].append({'field':'budget_max','value':5_000_000,'source_seq':1})
-        s=self.agent('Четыре или пять, ещё не решил.',reply,reply)
+    async def test_conflicting_values_require_clarification_without_partial_writes(self):
+        value=slots(fields={'budget_max':4_000_000})
+        value.update(question='Какой потолок: четыре или пять миллионов?',options=['4 млн','5 млн'])
+        s=self.agent('Четыре или пять, ещё не решил.',value)
         before=deepcopy(s.profile)
-        with self.assertRaises(U.UnderstandingError):await U.ensure(s)
+        review=await U.prepare(s)
+        self.assertEqual(review['decision'],'clarify')
+        self.assertEqual(review['changes'],{})
         self.assertEqual(s.profile,before)
 
     async def test_understanding_uses_the_whole_message_without_trusting_planner_proposals(self):
         text = 'Однушка или трёшка, до пяти с половиной лямов, вторичка, наличка, Казань.'
         corrected = {'rooms_options':[1,3], 'budget_max':5_500_000, 'housing':'secondary', 'payment':'cash', 'city':'Казань'}
-        s = self.agent(text, verdict(text, corrected, intent='search'))
-        await R.update_request(s, rooms=3, budget_max=5_000_000, city='Казань')
+        s = self.agent(text, reply(text, corrected, intent='search'))
+        await actions.execute(s,ToolCall('update_request',{'rooms':3,'budget_max':5_000_000,'city':'Казань'}))
         self.assertEqual(s.profile['rooms_options'], [1,3])
         self.assertEqual(s.profile['budget_max'], 5_500_000)
         self.assertEqual(s.profile['housing'], 'secondary')
@@ -260,7 +244,7 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_targeted_cancellation_and_unmentioned_fields_survive(self):
         text = 'Зелень больше не важна, и снизу жить уже можно. Верхний этаж всё ещё исключаю.'
-        s = self.agent(text, verdict(text, {'clear_criteria':['poi:park','not_first_floor']}), profile={
+        s = self.agent(text, reply(text, {'clear_criteria':['poi:park','not_first_floor']}), profile={
             'city':'Самара','rooms_options':[1,2],'budget_max':10_000_000,'housing':'secondary',
             'poi':['park','school'],'soft_criteria':['poi:park'],'not_first_floor':True,'not_last_floor':True})
         await U.ensure(s)
@@ -273,30 +257,26 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
 
 
 
-    async def test_removed_sparse_patch_format_is_rejected_without_mutation(self):
-        reply=verdict('Казань',{'city':'Казань'})
-        reply['changes']=[{'field':'city','value':'Казань'}]
-        s=self.agent('Казань',reply,reply)
+    async def test_unknown_machine_fields_are_rejected_without_partial_writes(self):
+        value=slots(fields={'budget_max':5_000_000,'invented':True})
+        s=self.agent('Пять миллионов.',value,value)
         before=deepcopy(s.profile)
         with self.assertRaises(U.UnderstandingError):await U.ensure(s)
         self.assertEqual(s.profile,before)
 
-    async def test_normalized_format_cannot_change_profile_for_nonediting_intents(self):
-        for intent in ('question', 'continue', 'hold', 'other'):
-            with self.subTest(intent=intent):
-                reply=verdict('Москва',{'city':'Москва'},intent=intent)
-                s=self.agent('Москва',reply,reply,profile={'city':'Казань'})
-                before=deepcopy(s.profile)
-                with self.assertRaises(U.UnderstandingError):await U.ensure(s)
-                self.assertEqual(s.profile,before)
+    async def test_invalid_criterion_priority_is_rejected_atomically(self):
+        value=slots(fields={'budget_max':5_000_000},criteria={'poi:park':'maybe'})
+        s=self.agent('Пять миллионов, парк желателен.',value,value)
+        before=deepcopy(s.profile)
+        with self.assertRaises(U.UnderstandingError):await U.ensure(s)
+        self.assertEqual(s.profile,before)
 
     async def test_ambiguity_does_not_mutate_until_actual_clarification(self):
         text = 'Двушка в Новгороде до 9 миллионов.'
-        ambiguous = verdict(text, decision='clarify', intent='search')
+        ambiguous = slots(intent='search')
         ambiguous.update(question='Великий или Нижний Новгород?', options=['Великий Новгород','Нижний Новгород'])
         answer = 'Великий Новгород'
-        final = verdict(answer, {'city':'Великий Новгород','rooms':2,'budget_max':9_000_000}, intent='search')
-        final['evidence'] = [{'field':'city','quote':answer},{'field':'rooms','quote':'Двушка'}, {'field':'budget_max','quote':'9 миллионов'}]
+        final = reply(answer, {'city':'Великий Новгород','rooms':2,'budget_max':9_000_000}, intent='search')
         s = self.agent(text, ambiguous, final)
         before = deepcopy(s.profile)
         s.ask = AsyncMock(return_value={'approved':None,'data':{'text':answer}})
@@ -308,48 +288,39 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
         await U.ensure(s)
         self.assertEqual((s.profile['city'],s.profile['budget_max']), ('Великий Новгород',9_000_000))
 
-    async def test_missing_evidence_gets_one_repair_and_no_partial_application(self):
-        text = 'Квартира в Казани.'
-        wrong = verdict('выдуманная цитата', {'city':'Москва'})
-        s = self.agent(text, wrong, verdict(text, {'city':'Казань'}))
+    async def test_unspoken_city_gets_one_repair_and_no_partial_application(self):
+        text='Квартира в Казани.'
+        s=self.agent(text,slots(places=['Москва']),reply(text,{'city':'Казань'}))
         await U.ensure(s)
         self.assertEqual(s.profile['city'],'Казань')
         self.assertEqual(len(s.llm.seen),2)
-        # GigaChat допускает system только первым сообщением, включая исправление формата.
-        self.assertEqual([m['role'] for m in s.llm.seen[1]], ['system', 'user'])
+        self.assertEqual([m['role'] for m in s.llm.seen[1]],['system','user'])
 
-    async def test_grounded_evidence_for_unchanged_fields_does_not_change_them_or_reject_the_request(self):
+    async def test_unmentioned_fields_are_preserved(self):
         text='Теперь Казань, бюджет прежний.'
-        reply=verdict(text,{'city':'Казань'})
-        reply['evidence'].append({'field':'budget_max','quote':'бюджет прежний'})
-        s=self.agent(text,reply,profile={'city':'Москва','budget_max':9_000_000})
+        value=reply(text,{'city':'Казань'})
+        s=self.agent(text,value,profile={'city':'Москва','budget_max':9_000_000})
         await U.ensure(s)
         self.assertEqual((s.profile['city'],s.profile['budget_max']),('Казань',9_000_000))
         self.assertEqual(len(s.llm.seen),1)
 
-    async def test_source_references_allow_a_paraphrase_without_using_it_as_a_text_parser(self):
-        text='Первый и последний этаж не подходят.'
-        reply=verdict('Первый этаж запрещён',{'not_first_floor':True,'not_last_floor':True})
-        s=self.agent(text,reply)
-        for row in reply['evidence']:
-            row['source_seq']=s.request_inputs[-1]['seq']
+    async def test_machine_criteria_do_not_need_literal_quotes(self):
+        s=self.agent('Первый и последний этаж не подходят.',slots(criteria={
+            'not_first_floor':'required','not_last_floor':'required'}))
         await U.ensure(s)
         self.assertTrue(s.profile['not_first_floor'] and s.profile['not_last_floor'])
 
-    async def test_a_fabricated_source_reference_is_rejected_even_with_a_valid_quote(self):
-        text='Казань'
-        reply=verdict(text,{'city':'Казань'})
-        reply['evidence'][0]['source_seq']=99999
-        s=self.agent(text,reply,reply)
+    async def test_source_must_be_a_whole_word_not_a_substring(self):
+        value=slots(places=['Казань'])
+        value['places'][0]['words'][0]['source']='Каз'
+        s=self.agent('Казань',value,value)
         before=deepcopy(s.profile)
-        with self.assertRaises(U.UnderstandingError):
-            await U.ensure(s)
+        with self.assertRaises(U.UnderstandingError):await U.ensure(s)
         self.assertEqual(s.profile,before)
-
 
     async def test_two_invalid_reviews_leave_profile_unchanged(self):
         text = 'Условия прежние.'
-        wrong = verdict('нет в исходном сообщении', {'budget_max':999_000_000})
+        wrong = slots(fields={'budget_max':'не число'})
         s = self.agent(text, wrong, wrong, profile={'budget_max':5_000_000})
         before = deepcopy(s.profile)
         with self.assertRaises(U.UnderstandingError):
@@ -359,25 +330,24 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_non_object_json_is_repaired_once(self):
         text = 'Самара'
-        s = self.agent(text, 'not an object', verdict(text, {'city':'Самара'}))
+        s = self.agent(text, 'not an object', reply(text, {'city':'Самара'}))
         await U.ensure(s)
         self.assertEqual(s.profile['city'],'Самара')
         self.assertEqual(len(s.llm.seen),2)
 
-    async def test_omitted_empty_question_metadata_needs_no_extra_generation(self):
-        text = 'Казань'
-        reply = verdict(text, {'city':'Казань'})
-        del reply['question'], reply['options']
-        s = self.agent(text, reply)
+    async def test_missing_required_metadata_requires_one_repair(self):
+        value=slots(places=['Казань'])
+        del value['question'],value['options']
+        s=self.agent('Казань',value,slots(places=['Казань']))
         await U.ensure(s)
-        self.assertEqual(s.profile['city'], 'Казань')
-        self.assertEqual(len(s.llm.seen), 1)
+        self.assertEqual(s.profile['city'],'Казань')
+        self.assertEqual(len(s.llm.seen),2)
 
     async def test_missing_actual_clarification_question_still_fails_closed(self):
         text = 'Новгород'
-        reply = verdict(text, decision='clarify')
-        del reply['question'], reply['options']
-        s = self.agent(text, reply, reply)
+        value = slots()
+        del value['question'], value['options']
+        s = self.agent(text, value, value)
         before = deepcopy(s.profile)
         with self.assertRaises(U.UnderstandingError):
             await U.ensure(s)
@@ -389,7 +359,7 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
         async def delayed():
             entered.set()
             await release.wait()
-            return verdict(text, {'city':'Казань'})
+            return reply(text, {'city':'Казань'})
         s = self.agent(text, delayed, profile={'city':'Москва'})
         task = asyncio.create_task(U.ensure(s))
         await entered.wait()
@@ -403,7 +373,7 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_cached_review_is_refreshed_after_a_structured_confirmation(self):
         text = 'Казань'
-        s = self.agent(text, verdict(text, {'city':'Казань'}), verdict(text, {'city':'Казань'}), profile={'city':'Москва'})
+        s = self.agent(text, reply(text, {'city':'Казань'}), reply(text, {'city':'Казань'}), profile={'city':'Москва'})
         await U.prepare(s)
         s.profile['payment'] = 'cash'
         await U.ensure(s)
@@ -412,15 +382,15 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_review_cache_cannot_be_overwritten_by_a_later_planner_proposal(self):
         text = 'Потолок девять миллионов.'
-        s = self.agent(text, verdict(text, {'budget_max':9_000_000}))
-        await R.update_request(s,budget_max=10_000_000)
-        await R.update_request(s,budget_max=100_000_000)
+        s = self.agent(text, reply(text, {'budget_max':9_000_000}))
+        await actions.execute(s,ToolCall('update_request',{'budget_max':10_000_000}))
+        await actions.execute(s,ToolCall('update_request',{'budget_max':100_000_000}))
         self.assertEqual(s.profile['budget_max'],9_000_000)
         self.assertEqual(len(s.llm.seen),1)
 
     async def test_question_shaped_refinement_changes_request_instead_of_going_to_faq(self):
         text = 'Можно ли вместо Москвы смотреть Казань?'
-        s = self.agent('старый ввод', verdict(text, {'city':'Казань'}), profile={'city':'Москва','rooms':1,'budget_max':8_000_000})
+        s = self.agent('старый ввод', reply(text, {'city':'Казань'}), profile={'city':'Москва','rooms':1,'budget_max':8_000_000})
         s.request_review_seq = s.request_inputs[-1]['seq']
         future = asyncio.get_running_loop().create_future()
         s.pending['selection'] = future
@@ -432,7 +402,7 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_faq_keeps_confirmation_open_and_does_not_change_profile(self):
         text = 'Что такое эскроу?'
-        s = self.agent('старый ввод', verdict(text,intent='question'), profile={'city':'Москва'})
+        s = self.agent('старый ввод', reply(text,intent='question'), profile={'city':'Москва'})
         s.request_review_seq = s.request_inputs[-1]['seq']
         future = asyncio.get_running_loop().create_future()
         s.pending['price'] = future
@@ -460,7 +430,7 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
         async def delayed():
             entered.set()
             await release.wait()
-            return verdict(text, {'city':'Казань'})
+            return reply(text, {'city':'Казань'})
         s = self.agent(text, delayed, profile={'city':'Москва'})
         task = asyncio.create_task(U.ensure(s))
         await entered.wait()
@@ -473,7 +443,7 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_new_requirements_revoke_old_call_authority_before_tool_permission_check(self):
         text = 'Теперь ищем в Казани.'
-        s = self.agent(text, verdict(text, {'city':'Казань'}), profile={'city':'Москва','rooms':1,'budget_max':8_000_000})
+        s = self.agent(text, reply(text, {'city':'Казань'}), profile={'city':'Москва','rooms':1,'budget_max':8_000_000})
         s.red_lines_ok = True
         with patch.object(sources,'verify',AsyncMock()) as verify:
             result = await actions.execute(s,ToolCall('call_seller',{'listing_id':'old'}))
@@ -484,14 +454,14 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_invalid_planner_argument_types_do_not_block_a_valid_semantic_request(self):
         text='Казань, однушка до пяти миллионов.'
-        s=self.agent(text,verdict(text,{'city':'Казань','rooms':1,'budget_max':5_000_000},intent='search'))
+        s=self.agent(text,reply(text,{'city':'Казань','rooms':1,'budget_max':5_000_000},intent='search'))
         result=await actions.execute(s,ToolCall('update_request',{'city':123,'budget_max':'пять миллионов'}))
         self.assertNotIn('error',result)
         self.assertEqual((s.profile['city'],s.profile['rooms'],s.profile['budget_max']),('Казань',1,5_000_000))
 
     async def test_explicit_hold_prevents_work_even_with_a_complete_profile(self):
         text = 'Пока не ищи, мне надо подумать.'
-        s = self.agent(text, verdict(text,intent='hold'), profile={'city':'Москва','rooms':1,'budget_max':8_000_000})
+        s = self.agent(text, reply(text,intent='hold'), profile={'city':'Москва','rooms':1,'budget_max':8_000_000})
         await U.ensure(s)
         self.assertFalse(actions.available(s,'search_listings'))
         self.assertFalse(actions.available(s,'call_seller'))

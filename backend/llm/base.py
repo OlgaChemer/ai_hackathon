@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -114,6 +115,8 @@ async def post_with_retry(http, url: str, *, attempts: int = 3, provider: str = 
             last = LLMError(f"{provider} {r.status_code}")
         except httpx.TransportError as exc:  # таймауты, обрыв keep-alive, DNS
             last = exc
+            logging.getLogger(__name__).warning('%s transport failure: %s (attempt %s/%s)',
+                                                provider, type(exc).__name__, i + 1, attempts)
         if i < attempts - 1:
             await asyncio.sleep(0.5 * (i + 1))
     raise LLMError(f"{provider} недоступен: {type(last).__name__} {last}".strip())

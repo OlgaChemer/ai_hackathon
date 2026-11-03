@@ -15,7 +15,8 @@ def validate(value, schema: dict, depth: int = 0) -> None:
     valid = {"object": isinstance(value, dict), "array": isinstance(value, list),
              "string": isinstance(value, str), "boolean": type(value) is bool,
              "integer": type(value) is int, "number": type(value) in (int, float)}
-    if depth > 4 or not valid.get(kind, False):
+    # Native places.words имеет пять уровней; глубина всё равно ограничена.
+    if depth > 6 or not valid.get(kind, False):
         raise ValueError("Неверный тип или глубина параметров")
     if "enum" in schema and value not in schema["enum"]:
         raise ValueError("Значение отсутствует среди допустимых вариантов")

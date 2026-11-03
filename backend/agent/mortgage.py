@@ -1,46 +1,25 @@
-"""Ипотечные программы: рыночная ипотека Сбера и семейная ипотека (условия с 01.10.2026).
+"""Демо-расчёт ипотечных программ по версионированным допущениям.
 
-Модуль отвечает на вопрос клиента «какая ипотека мне подходит и почему» и даёт
-ставку, по которой дальше считаются бюджет, план накоплений и план сделки.
-Числа и правила — в коде, LLM их только пересказывает.
-
-Источники условий (проверено 21.10.2026):
-- семейная ипотека с 01.10.2026: шкала ставок и лимитов по числу детей, ребёнок до 7 лет,
-  вторичка только в городах, где строится не больше двух МКД, субсидия не дольше 15 лет
-  (информация Минфина, КонсультантПлюс; Финуслуги);
-- рыночная ставка Сбера на готовое жильё — от 15,5% с надбавкой за небольшой взнос (myfin, 06.10.2026);
-- маткапитал 2026: 737 200 ₽ на первого ребёнка, 974 100 ₽ на второго, если на первого не получали.
-В проде всё это заменит предодобрение Сбера и справочник программ Домклик.
+Формулы работают с backend/calculation_policy.json. Условия не являются
+подтверждённой линейкой банковских продуктов; реальные условия даёт банк.
 """
 from __future__ import annotations
 
-# ---------------------------------------------------------------- параметры программ
+from ..calculation_policy import POLICY, metadata
 
-MARKET_BASE = 0.155          # «Готовое жильё» Сбера, от 15,5%
-MARKET_SURCHARGES = [        # надбавка к ставке в зависимости от доли взноса
-    (0.30, 0.02),            # взнос до 30% — +2 п.п.
-    (0.50, 0.01),            # 30–50% — +1 п.п.
-]
-
-FAMILY_SCALE = {             # число детей -> (ставка, лимит кредита)
-    "capital": {1: (0.12, 12_000_000), 2: (0.10, 15_000_000), 3: (0.08, 18_000_000),
-                4: (0.06, 18_000_000), 5: (0.04, 18_000_000)},
-    "regions": {1: (0.10, 6_000_000), 2: (0.08, 8_000_000), 3: (0.06, 10_000_000),
-                4: (0.04, 10_000_000), 5: (0.02, 10_000_000)},
-}
-FAMILY_MIN_DOWN = 0.20
-FAMILY_CHILD_AGE = 7
-SUBSIDY_YEARS = 15
-POST_SUBSIDY_RATE = 0.12     # условно: что будет со ставкой после 15 лет, решает договор с банком
-
-CAPITAL_CITIES = {"Москва", "Санкт-Петербург"}  # + Московская и Ленинградская области
-# Крупные города, где строится намного больше двух МКД: семейная на вторичку там недоступна.
-BIG_CITIES = {"Москва", "Санкт-Петербург", "Казань", "Новосибирск", "Екатеринбург", "Нижний Новгород",
-              "Краснодар", "Самара", "Уфа", "Ростов-на-Дону", "Пермь", "Челябинск", "Тюмень", "Воронеж"}
-
-MATCAP_FIRST = 737_200
-
-YEARS = 30
+MARKET_BASE = POLICY["mortgage"]["market_base"]
+MARKET_SURCHARGES = POLICY["mortgage"]["market_surcharges"]
+FAMILY_MIN_DOWN = POLICY["mortgage"]["family_min_down"]
+FAMILY_CHILD_AGE = POLICY["mortgage"]["family_child_age"]
+SUBSIDY_YEARS = POLICY["mortgage"]["subsidy_years"]
+POST_SUBSIDY_RATE = POLICY["mortgage"]["post_subsidy_rate"]
+CAPITAL_CITIES = POLICY["mortgage"]["capital_cities"]
+BIG_CITIES = POLICY["mortgage"]["big_cities"]
+MATCAP_FIRST = POLICY["mortgage"]["matcap_first"]
+YEARS = POLICY["mortgage"]["years"]
+DEFAULT_DOWN_SHARE = POLICY["mortgage"]["default_down_share"]
+FAMILY_SCALE = {region: {int(children): tuple(terms) for children, terms in scale.items()}
+                for region, scale in POLICY['mortgage']['family_scale'].items()}
 
 
 # ---------------------------------------------------------------- расчёты
@@ -136,7 +115,7 @@ def _family_after_subsidy(row: dict) -> int:
     return int(round(annuity(left, POST_SUBSIDY_RATE, row["years"] - SUBSIDY_YEARS), -2))
 
 
-def programs(price: int, city: str | None, family: dict | None, *, down_share: float = 0.2,
+def programs(price: int, city: str | None, family: dict | None, *, down_share: float = DEFAULT_DOWN_SHARE,
              is_secondary: bool = True, secondary_ok: bool | None = None, housing: str | None = None) -> dict:
     """Какие программы подходят для квартиры за price в городе city.
 
@@ -167,17 +146,16 @@ def programs(price: int, city: str | None, family: dict | None, *, down_share: f
     child_ok: bool | None
     if children is None:
         child_ok = None
-        reasons.append("Есть ли в семье ребёнок младше 7 лет? От этого зависит, подходит ли семейная ипотека.")
+        reasons.append(f"Есть ли в семье ребёнок младше {FAMILY_CHILD_AGE} лет? От этого зависит, подходит ли семейная ипотека.")
     elif children == 0:
         child_ok = False
-        reasons.append("Семейная ипотека — для семей с ребёнком младше 7 лет (или ребёнком с инвалидностью).")
+        reasons.append(f"Семейная ипотека — для семей с ребёнком младше {FAMILY_CHILD_AGE} лет (или ребёнком с инвалидностью).")
     elif age is None:
         child_ok = None
-        reasons.append("Нужен возраст младшего ребёнка: программа действует, если ему меньше 7 лет на дату договора.")
+        reasons.append(f"Нужен возраст младшего ребёнка: программа действует, если ему меньше {FAMILY_CHILD_AGE} лет на дату договора.")
     elif age >= FAMILY_CHILD_AGE:
         child_ok = False
-        reasons.append(f"Младшему ребёнку {age} — а с 01.10.2026 нужен ребёнок младше 7 лет. "
-                       "Основание «двое несовершеннолетних детей» для новых договоров отменено.")
+        reasons.append(f"Младшему ребёнку {age} — в демо-расчёте нужен ребёнок младше {FAMILY_CHILD_AGE} лет. Условия программы уточнит банк.")
     else:
         child_ok = True
 
@@ -256,11 +234,12 @@ def programs(price: int, city: str | None, family: dict | None, *, down_share: f
                       "После покупки нужно выделить доли детям — это обязательство перед Соцфондом."}
 
     return {
-        "family": fam, "city": city, "price": price, "secondary": is_secondary,
+        "assumptions": metadata(), "family": fam, "city": city, "price": price, "secondary": is_secondary,
         "programs": cards, "chosen": chosen["key"], "rate": chosen["rate"],
         "housing": housing,
         "matcap": mc, "explanation": explain(cards, chosen, mc, housing),
-        "assumption": "Ставки — по открытым данным на октябрь 2026; итог даст предодобрение Сбера.",
+        "assumption": POLICY['note'],
+        "subsidy_years": SUBSIDY_YEARS, "post_subsidy_rate": POST_SUBSIDY_RATE,
     }
 
 
@@ -282,7 +261,7 @@ def explain(cards: list[dict], chosen: dict, mc: dict | None, housing: str | Non
         parts.append(f"Вам подходит семейная ипотека: {_pct(family['rate'])} вместо {_pct(market['rate'])} по рыночной — "
                      f"платёж {_fmt(family['monthly'])} вместо {_fmt(market['monthly'])}, на {_fmt(diff)} в месяц меньше. "
                      f"Льготная ставка действует {SUBSIDY_YEARS} лет, дальше условия по договору "
-                     f"(при 12% платёж был бы около {_fmt(family['monthly_after_subsidy'])}).")
+                     f"(при {_pct(POST_SUBSIDY_RATE)} платёж был бы около {_fmt(family['monthly_after_subsidy'])}).")
     elif family["status"] == "no":
         why = family.get("main_reason") or ""
         parts.append(f"Семейная ипотека здесь не подходит. {why}")
@@ -300,7 +279,7 @@ def explain(cards: list[dict], chosen: dict, mc: dict | None, housing: str | Non
     return " ".join(parts)
 
 
-def listing_payment(listing: dict, profile: dict, price: int | None = None, down_share: float = 0.2) -> dict:
+def listing_payment(listing: dict, profile: dict, price: int | None = None, down_share: float = DEFAULT_DOWN_SHARE) -> dict:
     """Ипотека для конкретной квартиры: новостройка — семейная, если подходит; вторичка — по правилам города.
 
     Для карточки подборки и плана сделки: программа, ставка, платёж и подсказка, если семейную
@@ -321,7 +300,7 @@ def listing_payment(listing: dict, profile: dict, price: int | None = None, down
             "rate": chosen["rate"], "monthly": chosen["monthly"], "down": chosen["down_payment"], "hint": hint}
 
 
-def max_family_price(city: str | None, family: dict | None, down_share: float = 0.2) -> int | None:
+def max_family_price(city: str | None, family: dict | None, down_share: float = DEFAULT_DOWN_SHARE) -> int | None:
     """До какой цены квартиры проходит семейная при взносе down_share (лимит кредита / (1 − взнос))."""
     fam = normalize_family(family)
     if not fam["children"] or fam["youngest_age"] is None or fam["youngest_age"] >= FAMILY_CHILD_AGE:
@@ -332,16 +311,17 @@ def max_family_price(city: str | None, family: dict | None, down_share: float = 
 
 # ---------------------------------------------------------------- сценарии и расходы
 
-DEMO_RATE = market_rate(0.2)  # рыночная ставка Сбера при взносе 20%; в проде — из предодобрения
+DEMO_RATE = market_rate(DEFAULT_DOWN_SHARE)  # рыночная ставка Сбера при взносе 20%; в проде — из предодобрения
 
 
 def deal_costs(price: int, loan: int) -> dict:
     """Расходы на сделку (допущения по тарифам)."""
+    costs = POLICY['mortgage']['costs']
     return {
-        "Оценка залога": 6_000,
-        "Страхование (имущество, жизнь, титул), 1-й год": int(round(loan * 0.0095, -2)),
-        "Сервис безопасных расчётов": 6_900,
-        "Электронная регистрация": 2_000,
+        "Оценка залога": costs['appraisal'],
+        "Страхование (имущество, жизнь, титул), 1-й год": int(round(loan * costs['insurance_rate'], -2)),
+        "Сервис безопасных расчётов": costs['settlement'],
+        "Электронная регистрация": costs['registration'],
     }
 
 
@@ -349,8 +329,8 @@ def mortgage_scenarios(price: int, monthly_income: int | None = None, down_avail
                        rate: float | None = None, program: str | None = None, matcap: int = 0) -> dict:
     """Три сценария ипотеки. rate=None — рыночная ставка Сбера (зависит от взноса), иначе ставка программы.
     matcap — маткапитал: идёт во взнос, своих нужно меньше."""
-    costs = sum(deal_costs(price, int(price * 0.8)).values())
-    variants = [("Взнос 20%, 30 лет", 0.20, 30), ("Взнос 20%, 20 лет", 0.20, 20), ("Взнос 30%, 25 лет", 0.30, 25)]
+    costs = sum(deal_costs(price, int(price * (1 - DEFAULT_DOWN_SHARE))).values())
+    variants = [(f"Взнос {_pct(share)}, {years} лет", share, years) for share, years in POLICY["mortgage"]["scenarios"]]
     rows = []
     for title, dp_share, years in variants:
         down = int(price * dp_share)
@@ -374,6 +354,6 @@ def mortgage_scenarios(price: int, monthly_income: int | None = None, down_avail
         "deal_costs": costs,
         "scenarios": rows,
         "recommended": best["title"],
-        "approved": int(price * 0.8),
+        "approved": int(price * (1 - DEFAULT_DOWN_SHARE)),
         "per_100k_discount": int(round(annuity(100_000, best["rate"], best["years"]))),
     }

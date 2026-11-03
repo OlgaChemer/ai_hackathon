@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from .. import finance as F
 from .. import mortgage as M
+from ..workflow import programs_current
 from ..numbers import fmt
 from ..profile import profile_summary
 from . import ActionError, action
@@ -27,7 +28,7 @@ def _finance_panel(s) -> None:
     p = s.profile
     budget = p["budget_max"]
     if p.get("payment") == "cash":
-        s.push("result", step=2, kind="finance", data={"mode": "cash", "price": budget})
+        s.push("result", step=2, kind="finance", data={"mode": "cash", "price": budget, "savings_preview": F.cash_preview(budget)})
         return
     progs = s.mortgage
     chosen = next((c for c in progs["programs"] if c["key"] == progs["chosen"]), None) if progs else None
@@ -59,7 +60,7 @@ async def ask_family(s) -> dict:
     known = M.normalize_family(s.profile)
     r = await s.ask(
         "family", "Семья и маткапитал",
-        "От этого зависит ставка: семейная ипотека — от 10% вместо рыночных ~17,5%, а маткапитал можно направить во взнос.",
+        "От этого зависит расчёт семейной ипотеки и первоначального взноса с маткапиталом. Итоговые условия подтверждает банк.",
         defaults={"children": known["children"] if known["children"] is not None else 1,
                   "youngest_age": known["youngest_age"] if known["youngest_age"] is not None else "",
                   "matcap": known["matcap"] or (M.MATCAP_FIRST if s.profile.get("matcap") else 0),
@@ -95,10 +96,6 @@ async def ask_housing(s) -> dict:
     return {"housing": s.profile["housing"]}
 
 
-def programs_current(s):
-    return s.programs_result is not None and s.programs_key == F.programs_key(s.profile)
-
-
 def remember_programs(s, result):
     s.programs_key, s.programs_result = F.programs_key(s.profile), result
     if s.profile.get('payment')=='cash':
@@ -109,7 +106,7 @@ def remember_programs(s, result):
 
 
 @action("mortgage_programs", 2,
-        "Посчитать ипотечные программы для бюджета: рыночная Сбера и семейная (условия с 01.10.2026), маткапитал во взнос. "
+        "Посчитать ипотечные программы для бюджета: рыночная и семейная по демо-политике расчёта, маткапитал во взнос. "
         "Учитывает семью из профиля (если неизвестна — семейная будет «нужно уточнить»). Показывает клиенту экран программ. "
         "Для покупки наличными — показывает, что ипотека не нужна.")
 async def mortgage_programs(s) -> dict:

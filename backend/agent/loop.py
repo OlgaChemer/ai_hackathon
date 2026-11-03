@@ -20,6 +20,7 @@ from . import actions, guard, prompts, understanding
 from .features import FEATURES
 from .numbers import fmt
 from .profile import missing_required
+from .workflow import next_search_action
 from .session import close_dangling_calls
 
 MAX_ACTIONS_IN_ROW = 14  # действий подряд без ответа клиенту — дальше модель должна заговорить с клиентом
@@ -67,21 +68,6 @@ async def think(s, with_actions: bool):
 
 
 
-def pending_search_action(s):
-    """Начальные решения запрашиваются карточками; код никогда не подтверждает их за человека."""
-    if not missing_required(s.profile):
-        if not s.red_lines_ok:
-            return "confirm_red_lines"
-        if not s.profile.get("payment"):
-            return "ask_payment"
-        if s.search is None:
-            return "search_listings"
-        if not s.shown:
-            from .actions.search import selectable
-            return "show_selection" if any(selectable(x, s.prefs) for x in s.search["pool"]) else "offer_search_alternatives"
-    return None
-
-
 async def run(s) -> None:
     """Агент работает, пока открыт диалог: отвечает, действует, ждёт клиента. Остановить — отменить задачу."""
     s.push("provider", provider=s.llm.name, model=s.llm.model, degraded=False)
@@ -107,8 +93,8 @@ async def run(s) -> None:
                                        {"role":"user","content":checked['client_said']}])
                     s.remember()
                     continue
-            intake = pending_search_action(s)
-            if intake in ("confirm_red_lines", "ask_payment") and s.request_intent in ("search", "refine", "continue"):
+            intake = next_search_action(s)
+            if intake in ("confirm_red_lines", "ask_payment"):
                 forced = intake
             if forced:
                 resp = LLMResponse("", [ToolCall(forced, {}, f"progress_{uuid.uuid4().hex[:8]}")])
@@ -124,8 +110,8 @@ async def run(s) -> None:
                                        {"role":"user","content":checked['client_said']}])
                     s.remember()
                     continue
-            next_action = pending_search_action(s)
-            if not resp.tool_calls and next_action and s.request_intent in ("search", "refine", "continue") and next_action not in auto_progress and turn.tool_calls < MAX_ACTIONS_IN_ROW:
+            next_action = next_search_action(s)
+            if not resp.tool_calls and next_action and next_action not in auto_progress and turn.tool_calls < MAX_ACTIONS_IN_ROW:
                 s.messages.append({"role": "assistant", "content": guard.output(resp.text or "", s),
                     **({"functions_state_id": resp.functions_state_id} if resp.functions_state_id else {})})
                 auto_progress.add(next_action)
@@ -154,7 +140,7 @@ async def run(s) -> None:
                     result = await turn.run(lambda: actions.execute(s, call), kind="tool", name=name)
                     if call.name == "search_listings" and not result.get("error"):
                         searched = True
-                    if call.name == "update_request" and result.get("already_reviewed") and s.request_intent in ("search", "refine", "continue"):
+                    if call.name == "update_request" and result.get("already_reviewed"):
                         searched = True
                     s.messages.append({"role": "tool", "tool_call_id": call.id, "content": json.dumps(guard.output(guard.sanitize(result), limit=False), ensure_ascii=False, default=str)})
                     if s.client_revision != revision:
@@ -163,7 +149,7 @@ async def run(s) -> None:
                         turn = Turn(s.id, settings.agent_turn_timeout_s, s.signal)
                 s.remember()
                 if searched:
-                    forced = pending_search_action(s)
+                    forced = next_search_action(s)
                     if forced:
                         auto_progress.add(forced)
                 continue
@@ -181,8 +167,8 @@ async def run(s) -> None:
             s.signal("typing", on=False)
             s.signal("model_wait", on=False)
             s.push("search_progress", on=False)
-            recovery = pending_search_action(s)
-            if reason == "repeated_tool" and recovery and s.request_intent in ("search", "refine", "continue") and recovery not in auto_progress:
+            recovery = next_search_action(s)
+            if reason == "repeated_tool" and recovery and recovery not in auto_progress:
                 s.messages = close_dangling_calls(s.messages, "повтор без прогресса; продолжаю безопасный поиск")
                 auto_progress.add(recovery)
                 forced = recovery

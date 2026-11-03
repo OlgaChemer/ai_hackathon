@@ -55,6 +55,29 @@ class WorkflowReadinessTest(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(actions.ActionError,'ask_payment'):
             await deal.call_seller(s,'missing')
 
+    async def test_refinement_requires_showing_updated_selection_before_calling(self):
+        s=self.agent();s.red_lines_ok=True;s.prefs.sync(s.profile)
+        x=listing()
+        s.shown=[x]
+        s.search={'listings':[x],'pool':[x],'shown_ids':{x['id']}}
+        self.assertTrue(actions.available(s,'call_seller'))
+        R.apply_request(s,{'kitchen_min':9})
+        self.assertFalse(actions.available(s,'call_seller'))
+        with patch.object(sources,'verify',AsyncMock()) as verify:
+            with self.assertRaisesRegex(actions.ActionError,'show_selection'):
+                await deal.call_seller(s,x['id'])
+            s.shown=[x]
+            with self.assertRaisesRegex(actions.ActionError,'текущей подборки'):
+                await deal.call_seller(s,'another-listing')
+            verify.assert_not_awaited()
+
+    async def test_planner_cannot_write_profile_without_accepted_user_input(self):
+        s=self.agent()
+        before=dict(s.profile)
+        result=await actions.execute(s,ToolCall('update_request',{'budget_max':100_000_000}))
+        self.assertIn('error',result)
+        self.assertEqual(s.profile,before)
+
     async def test_repeated_cash_calculation_has_no_repeated_message_or_panel(self):
         s=self.agent()
         await money.mortgage_programs(s)

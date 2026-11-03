@@ -9,7 +9,7 @@ import json
 import logging
 import math
 import time
-from dataclasses import fields
+from dataclasses import fields, asdict
 
 import httpx
 
@@ -403,7 +403,7 @@ async def get_economics(request: Request):
             raise HTTPException(422, f"Неверное значение {key}")
     inputs = economics.Inputs(**params)
     base = economics.Inputs(fin_enabled=inputs.fin_enabled)
-    return {"unit": economics.unit(inputs), "scenarios": economics.scenarios(base)}
+    return {"unit": economics.unit(inputs), "scenarios": economics.scenarios(base), "defaults": asdict(economics.Inputs())}
 
 
 app.mount("/", StaticFiles(directory=ROOT / "frontend", html=True), name="frontend")

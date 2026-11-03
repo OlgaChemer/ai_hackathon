@@ -6,6 +6,7 @@ from datetime import date, timedelta
 from ..sources import description_flags
 from .mortgage import DEMO_RATE, annuity, deal_costs
 from .numbers import fmt
+from ..calculation_policy import POLICY, metadata
 
 
 def legal_check(listing: dict) -> dict:
@@ -84,7 +85,7 @@ def deal_plan(listing: dict, final_price: int, down_payment: int | None, today: 
     assignment = is_new and "уступк" in (listing.get("sale_type") or "")
     cash = down_payment is None
     loan = 0 if cash else max(0, final_price - down_payment)
-    years = 0 if cash else 30
+    years = 0 if cash else POLICY['mortgage']['years']
     rate = None if cash else (DEMO_RATE if rate is None else rate)
     program = None if cash else (program or "Рыночная ипотека Сбера")
     credit = None if cash else f"{program}: кредит {fmt(loan)} на {years} лет под {rate * 100:.1f}%".replace(".", ",")
@@ -134,11 +135,11 @@ def deal_plan(listing: dict, final_price: int, down_payment: int | None, today: 
         ]
         costs = deal_costs(final_price, loan)
     if is_new and not cash:
-        costs = {"Страхование жизни, 1-й год": int(round(loan * 0.004, -2)), **costs}
+        costs = {"Страхование жизни, 1-й год": int(round(loan * POLICY['mortgage']['costs']['new_insurance_rate'], -2)), **costs}
     pay = 0 if cash else annuity(loan, rate, years)
     pay_before = 0 if cash else annuity(max(0, listing["price"] - down_payment), rate, years)
     return {
-        "cash": cash, "new": is_new, "assignment": assignment,
+        "assumptions": metadata(), "cash": cash, "new": is_new, "assignment": assignment,
         "loan": loan, "down_payment": final_price if cash else down_payment, "years": years,
         "rate": rate, "program": program,
         "monthly": int(round(pay, -2)), "monthly_saved": int(round(pay_before - pay, -1)),

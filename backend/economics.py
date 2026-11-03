@@ -7,34 +7,34 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, replace
+from .calculation_policy import POLICY
 
 
 @dataclass
 class Inputs:
-    price: int = 9_000_000            # цена квартиры
-    ltv: float = 0.8                  # доля ипотеки
-    savings_pct: float = 0.03         # экономия на торге
-    fee_pct: float = 0.15             # плата за результат от экономии
-    mortgage_margin_pct: float = 0.03  # маржа по ипотеке за срок жизни кредита, от суммы
-    incrementality: float = 0.30      # доля сделок, которые без агента не пришли бы в Сбер
-    insurance: int = 15_000           # доп. комиссия по страхованию на сделку
-    services: int = 10_000            # СБР, электронная регистрация, проверка
-    manager_hours: float = 4
-    manager_rate: int = 1_500
-    case_cost: int = 8_000            # переменные затраты на начатый кейс
-    conversion: float = 0.25          # кейс -> сделка
-    reserve: int = 3_000              # резерв на ошибки агента
-    deals: int = 2_000                # закрытых сделок в год
-    fixed_costs: int = 150_000_000    # постоянные затраты в год
+    price: int = POLICY['economics']['price']            # цена квартиры
+    ltv: float = POLICY['economics']['ltv']                  # доля ипотеки
+    savings_pct: float = POLICY['economics']['savings_pct']         # экономия на торге
+    fee_pct: float = POLICY['economics']['fee_pct']             # плата за результат от экономии
+    mortgage_margin_pct: float = POLICY['economics']['mortgage_margin_pct']  # маржа по ипотеке за срок жизни кредита, от суммы
+    incrementality: float = POLICY['economics']['incrementality']      # доля сделок, которые без агента не пришли бы в Сбер
+    insurance: int = POLICY['economics']['insurance']           # доп. комиссия по страхованию на сделку
+    services: int = POLICY['economics']['services']            # СБР, электронная регистрация, проверка
+    manager_hours: float = POLICY['economics']['manager_hours']
+    manager_rate: int = POLICY['economics']['manager_rate']
+    case_cost: int = POLICY['economics']['case_cost']            # переменные затраты на начатый кейс
+    conversion: float = POLICY['economics']['conversion']          # кейс -> сделка
+    reserve: int = POLICY['economics']['reserve']              # резерв на ошибки агента
+    deals: int = POLICY['economics']['deals']                # закрытых сделок в год
+    fixed_costs: int = POLICY['economics']['fixed_costs']    # постоянные затраты в год
     # финансовый помощник (на каждый начатый кейс, за год)
-    fin_enabled: bool = True
-    fin_deposit_share: float = 0.35   # доля клиентов, открывших вклад или накопительный счёт (новые деньги)
-    fin_avg_deposit: int = 1_200_000  # средний остаток
-    fin_deposit_margin: float = 0.02  # маржа банка на привлечённых средствах, годовых
-    fin_invest_share: float = 0.10    # доля клиентов, открывших брокерский счёт
-    fin_avg_invest: int = 400_000
-    fin_invest_fee: float = 0.012     # комиссии брокера и управляющей компании, годовых
-
+    fin_enabled: bool = POLICY['economics']['fin_enabled']
+    fin_deposit_share: float = POLICY['economics']['fin_deposit_share']   # доля клиентов, открывших вклад или накопительный счёт (новые деньги)
+    fin_avg_deposit: int = POLICY['economics']['fin_avg_deposit']  # средний остаток
+    fin_deposit_margin: float = POLICY['economics']['fin_deposit_margin']  # маржа банка на привлечённых средствах, годовых
+    fin_invest_share: float = POLICY['economics']['fin_invest_share']    # доля клиентов, открывших брокерский счёт
+    fin_avg_invest: int = POLICY['economics']['fin_avg_invest']
+    fin_invest_fee: float = POLICY['economics']['fin_invest_fee']     # комиссии брокера и управляющей компании, годовых
 
 def unit(i: Inputs) -> dict:
     loan = i.price * i.ltv

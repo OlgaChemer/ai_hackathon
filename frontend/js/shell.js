@@ -2,7 +2,6 @@
 import { bindMic } from './voice.js';
 import { $, state } from './state.js';
 import { html, rub } from './format.js';
-import { mountEconomics } from './economics.js';
 
 let market = 'both';
 
@@ -38,7 +37,7 @@ export function showPage(page) {
     agent:'От пожеланий до сделки', economics:'Экономика для Сбера'}[page];
   $('entryDialog').close();
   syncShell();
-  if (page === 'economics') mountEconomics($('view-economics'));
+  if (page === 'economics') import('./economics.js').then(({mountEconomics}) => mountEconomics($('view-economics')));
   document.dispatchEvent(new CustomEvent('pagechange', {detail: {page}}));
 }
 

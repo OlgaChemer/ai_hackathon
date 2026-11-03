@@ -213,7 +213,7 @@ class TurnTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_repeated_identical_action_stops_before_third_execution(self):
         replies = [LLMResponse('', [ToolCall('update_request', {'city': 'Казань'}, f'c{i}')]) for i in range(3)]
-        s = session.create_session('Квартира', ScriptedLLM(*replies, say('Продолжим')))
+        s = session.create_session('Квартира в Казани', ScriptedLLM(*replies, say('Продолжим')))
         queue = self.start(s)
         stopped = await self.until(queue, lambda e: e.get('await_reply'))
         self.assertIn('повтор', stopped['text'])

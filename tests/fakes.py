@@ -29,8 +29,8 @@ def review_reply(payload, changes=None, intent=None):
         intent = 'question'
     elif intent is None:
         intent = ('refine' if payload.get('profile') else 'search') if changes else 'other'
-    return {'intent': intent, 'decision': 'apply' if changes else 'unchanged', 'changes': changes,
-            'evidence': [{'field': k, 'quote': text[:1000]} for k in changes], 'question': '', 'options': []}
+    from tests.input_contract import input_reply
+    return input_reply(text, changes, intent=intent, profile=payload.get('profile'))
 
 
 
@@ -54,7 +54,7 @@ class ScriptedLLM(LLMClient):
         if kw.get('tag') == 'request_review':
             payload = json.loads(next(m['content'] for m in messages if m['role'] == 'user'))['data']
             self.reviews.append(payload)
-            return say(json.dumps(review_reply(payload, changes=self.last_proposal, intent=self.review_intent), ensure_ascii=False))
+            return say(json.dumps(review_reply(payload, changes=self.last_proposal or None, intent=self.review_intent), ensure_ascii=False))
         self.seen.append(messages)
         if kw.get("tools") is None or not self.steps:  # лимит действий подряд или сценарий кончился
             return say("Готово, жду вас.")

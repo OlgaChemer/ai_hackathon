@@ -12,12 +12,15 @@ from ..config import settings
 from ..runtime import Turn, TurnStopped
 from . import guard, prompts
 from .numbers import fmt
+from ..calculation_policy import POLICY, metadata
 
 
 def build_context(s) -> dict:
     """Выжимка сессии для ответа: запрос, финансы, ипотека, подборка, текущая квартира, итог торга."""
     p = s.profile or {}
-    ctx: dict = {"шаг": s.stage}
+    ctx: dict = {"шаг": s.stage, "допущения расчёта": {
+        **metadata(), "ипотека": POLICY['mortgage'], "продукты": POLICY['savings']['products'],
+        "доля платы от экономии": POLICY['economics']['fee_pct']}}
     if p.get("city"):
         ctx["запрос"] = p.get("summary") or {k: p.get(k) for k in ("city", "rooms", "budget_max")}
         ctx["способ оплаты"] = {"cash": "наличные", "mortgage_ready": "ипотека, взнос есть",

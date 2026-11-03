@@ -142,11 +142,11 @@ class SearchIntegrationTest(unittest.TestCase):
 
     def test_removing_or_tightening_preferences_updates_selection(self):
         async def go():
-            await R.update_request(self.s, not_first_floor=True, features=['loggia'], poi=['park'], soft_criteria=['poi:park'])
+            R.apply_request(self.s, dict(not_first_floor=True, features=['loggia'], poi=['park'], soft_criteria=['poi:park']))
             self.s.search = {'shown_ids': {'old'}}
             self.s.agreed['old'] = 1
             self.s.chosen = 'old'
-            await R.update_request(self.s, not_first_floor=False, features=[], poi=['park'], soft_criteria=[])
+            R.apply_request(self.s, dict(not_first_floor=False, features=[], poi=['park'], soft_criteria=[]))
         asyncio.run(go())
         self.assertFalse(self.s.profile['not_first_floor'])
         self.assertEqual(self.s.profile['features'], [])
@@ -157,14 +157,14 @@ class SearchIntegrationTest(unittest.TestCase):
 
     def test_relaxing_first_floor_reconsiders_original_listings(self):
         async def go():
-            await R.update_request(self.s, not_first_floor=True, not_last_floor=True)
+            R.apply_request(self.s, dict(not_first_floor=True, not_last_floor=True))
             rows = [listing(id='first',floor=1,floors=9,price=5_000_000),
                     listing(id='middle',floor=4,floors=9), listing(id='last',floor=9,floors=9)]
             with patch.object(sources, 'collect', AsyncMock(return_value=(rows, []))), patch.object(sources, 'stored', return_value=[]), \
                  patch.object(sources, 'comparables', return_value=[]), patch.object(sources, 'more', AsyncMock(return_value=[])):
                 await S.search_listings(self.s)
                 self.assertNotIn('first', [x['id'] for x in self.s.search['pool']])
-                await R.update_request(self.s, not_first_floor=False)
+                R.apply_request(self.s, dict(not_first_floor=False))
                 await S.show_selection(self.s)
             self.assertEqual([x['id'] for x in self.s.shown], ['first', 'middle'])
             self.assertTrue(self.s.profile['not_last_floor'])
@@ -172,14 +172,14 @@ class SearchIntegrationTest(unittest.TestCase):
 
     def test_targeted_removal_clears_optional_park_and_preserves_other_constraints(self):
         async def go():
-            await R.update_request(self.s, poi=['park','school'], soft_criteria=['poi:park'], features=['loggia'], not_first_floor=True, not_last_floor=True)
-            await R.update_request(self.s, clear_criteria=['poi:park','not_first_floor'])
+            R.apply_request(self.s, dict(poi=['park','school'], soft_criteria=['poi:park'], features=['loggia'], not_first_floor=True, not_last_floor=True))
+            R.apply_request(self.s, dict(clear_criteria=['poi:park','not_first_floor']))
             self.assertEqual(self.s.profile['poi'], ['school'])
             self.assertNotIn('poi:park', self.s.profile['soft_criteria'])
             self.assertFalse(self.s.profile['not_first_floor'])
             self.assertTrue(self.s.profile['not_last_floor'])
             self.assertEqual(self.s.profile['features'], ['loggia'])
-            await R.update_request(self.s, clear_criteria=['feature:loggia'])
+            R.apply_request(self.s, dict(clear_criteria=['feature:loggia']))
             self.assertEqual(self.s.profile['features'], [])
         asyncio.run(go())
 
@@ -206,8 +206,8 @@ class SearchIntegrationTest(unittest.TestCase):
 
     def test_unknown_fields_can_be_explicitly_cleared(self):
         async def go():
-            await R.update_request(self.s, year_min=2000, kitchen_min=12)
-            await R.update_request(self.s, clear_criteria=['year_min', 'kitchen_min'])
+            R.apply_request(self.s, dict(year_min=2000, kitchen_min=12))
+            R.apply_request(self.s, dict(clear_criteria=['year_min', 'kitchen_min']))
         asyncio.run(go())
         self.assertIsNone(self.s.profile['year_min'])
         self.assertIsNone(self.s.profile['kitchen_min'])

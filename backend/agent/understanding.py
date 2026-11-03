@@ -8,6 +8,7 @@ from ..llm.base import StructuredOutputError
 from ..runtime import Turn, record
 from ..config import settings
 from . import guard, validation, input_frame
+from .request_schema import CHANGE_SCHEMA
 
 SYSTEM = """Разбери новый ввод покупателя квартиры в структурированные поля. Ты ничего не выполняешь.
 Вход — messages с seq, прежний profile, каталог городов и единственная схема ответа input_schema.
@@ -49,27 +50,6 @@ class UnderstandingError(LLMError):
     """Не удалось надёжно проверить сообщение; неподтверждённые изменения не применяются."""
 
 
-def _schema():
-    from . import actions
-    actions._load()
-    return actions.REGISTRY['update_request'].parameters
-
-
-def _literal(text):
-    return ' '.join(text.split()).casefold()
-
-
-def _has_source(item, payload):
-    """Проверяем ссылку на реальный принятый ввод.
-
-    Буквальная цитата остаётся совместимостью со старым внутренним форматом, а не NLU-парсером.
-    """
-    if 'source_seq' in item:
-        return type(item['source_seq']) is int and any(x['seq'] == item['source_seq'] for x in payload['messages'])
-    quote = _literal(item.get('quote',''))
-    return bool(quote) and any(quote in _literal(x['text']) or quote in _literal(x.get('question','')) for x in payload['messages'])
-
-
 def catalog_ambiguities(cities):
     """Индекс справочника, не разбор клиентского текста; новые города учитываются автоматически."""
     parts = {}
@@ -77,47 +57,6 @@ def catalog_ambiguities(cities):
         for word in city.split():
             parts.setdefault(word, []).append(city)
     return {word: names for word, names in parts.items() if len(names) > 1}
-
-
-def _review_schema():
-    return {'type': 'object', 'additionalProperties':False, 'required': ['intent', 'decision', 'changes', 'evidence', 'question', 'options'], 'properties': {
-        'intent': {'type': 'string', 'enum': ['search', 'refine', 'question', 'continue', 'hold', 'other']},
-        'decision': {'type': 'string', 'enum': ['apply', 'unchanged', 'clarify']},
-        'changes': _schema(),
-        'evidence': {'type': 'array', 'maxItems': 64, 'items': {'type': 'object', 'required': ['field', 'quote'], 'properties': {
-            'field': {'type': 'string', 'enum': list(_schema()['properties'])},
-            'source_seq':{'type':'integer','minimum':1},'quote': {'type': 'string', 'maxLength': 1000}}}},
-        'question': {'type': 'string', 'maxLength': 500},
-        'options': {'type': 'array', 'maxItems': 5, 'items': {'type': 'string', 'maxLength': 100}},
-    }}
-
-
-def _validate(result, payload):
-    validation.validate(result, _review_schema())
-    changes = result['changes']
-    from .. import sources
-    territories = ([changes['city']] if 'city' in changes else []) + changes.get('cities', [])
-    if any(value not in sources.SUPPORTED_CITIES for value in territories):
-        raise ValueError('Нужно точное имя из supported_cities либо уточнение без изменения города')
-    if result['decision'] != 'apply' and changes:
-        raise ValueError('Изменения при неподтверждённом решении')
-    if result['decision'] == 'apply' and not changes:
-        raise ValueError('Нет изменений для применения')
-    if result['intent'] not in ('search', 'refine') and changes:
-        raise ValueError('Это намерение не разрешает менять профиль')
-    if result['decision'] == 'clarify' and not result['question'].strip():
-        raise ValueError('Не задан уточняющий вопрос')
-    if result['decision'] != 'clarify' and (result['question'].strip() or result['options']):
-        raise ValueError('Неоднозначность должна быть разрешена до изменения профиля')
-    grounded = set()
-    for item in result['evidence']:
-        if not _has_source(item, payload):
-            raise ValueError('Основание не ссылается на принятый ввод/вопрос')
-        grounded.add(item['field'])
-    if not set(changes) <= grounded:
-        raise ValueError('Для каждого изменения нужна цитата')
-    if not guard.input_verdict(changes).ok or guard.output(changes, limit=False) != changes:
-        raise ValueError('Небезопасные изменения')
 
 
 async def prepare(s):
@@ -129,7 +68,7 @@ async def prepare(s):
         return s.request_review
     from .. import sources
     base_profile=deepcopy(s.profile)
-    contract=input_frame.schema(_schema(), inputs)
+    contract=input_frame.schema(CHANGE_SCHEMA, inputs)
     payload={'supported_cities':sources.SUPPORTED_CITIES,'ambiguous_catalog_names':catalog_ambiguities(sources.SUPPORTED_CITIES),
              'messages':inputs,'profile':{k:v for k,v in base_profile.items() if not k.startswith('_')},'input_schema':contract,
              'workflow':{'has_search':s.search is not None,'has_selection':bool(s.shown),'has_calls':bool(s.calls),'chosen':bool(s.chosen)}}
@@ -141,12 +80,10 @@ async def prepare(s):
         messages=[{'role':'system','content':instruction},guard.data_message('request_review',payload)]
         try:
             result=await s.llm.chat_json(messages,tag='request_review',temperature=.01,max_tokens=2200,json_schema=contract)
-            if 'fields' in result:
-                result=input_frame.decode(result,payload['profile'],payload,_schema())
-            else:
-                # Внутренний формат LLMClient и тестовых моделей; сохранённые диалоги здесь не читаются.
-                result.setdefault('question','');result.setdefault('options',[])
-            _validate(result,payload)
+            result = input_frame.decode(result, payload['profile'], payload, CHANGE_SCHEMA)
+            validation.validate(result['changes'], CHANGE_SCHEMA)
+            if not guard.input_verdict(result['changes']).ok or guard.output(result['changes'], limit=False) != result['changes']:
+                raise ValueError('Небезопасные изменения')
         except StructuredOutputError:
             error='Некорректный JSON';continue
         except (ValueError,TypeError,KeyError) as exc:

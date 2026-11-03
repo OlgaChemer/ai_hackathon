@@ -7,6 +7,7 @@ import time
 from ... import geo, sources
 from ...config import settings
 from .. import criteria as C
+from ..criteria import match, selectable
 from .. import mortgage as M
 from .. import preferences as P
 from ..features import FEATURE_WITH, FEATURES, feature_evidence, missing_info
@@ -36,14 +37,6 @@ def fits(x: dict, prefs: P.Prefs) -> bool:
     """Квартира выполняет все пожелания: удобства подтверждены (объявление или продавец), нужное — в 1 км по карте."""
     profile = {**prefs.profile, "features": prefs.features, "poi": prefs.poi}
     return C.evaluate(profile, x)['status'] == 'confirmed'
-
-
-def match(x, prefs):
-    return C.evaluate({**prefs.profile, "features": prefs.features, "poi": prefs.poi}, x)
-
-
-def selectable(x, prefs):
-    return match(x, prefs)['status'] != 'rejected'
 
 
 async def check_map(s, listings: list[dict], announce: bool = False) -> bool:

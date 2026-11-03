@@ -50,14 +50,15 @@ export function profile(p) {
 
 export function finance(d, opened = {}, selected) {
   if (d.mode === "cash") {
+    const preview = d.savings_preview;
     return html`
     <section class="panel">
       <h2 class="panel-title">Покупка без ипотеки</h2>
       <p class="panel-lead">Ипотека и план накоплений не нужны. Деньги продавцу уйдут через сервис безопасных расчётов — только после регистрации права в Росреестре.</p>
       <div class="alloc">
         <div class="alloc-row">
-          <div><strong>Накопительный счёт — пока ищем квартиру</strong><small>по желанию: деньги доступны в любой момент и приносят доход (${pct(0.10)} годовых — допущение)</small></div>
-          <div class="num">${rub(d.price)}<small>до ${rub(Math.round((d.price * 0.10 / 12) * 2 / 100) * 100)} за 2 месяца</small></div>
+          <div><strong>Накопительный счёт — пока ищем квартиру</strong><small>по желанию: деньги доступны в любой момент и приносят доход (${preview ? `${pct(preview.rate)} годовых — допущение` : "условия уточняются при обновлении расчёта"})</small></div>
+          <div class="num">${rub(d.price)}<small>${preview ? `до ${rub(preview.income)} за ${preview.months} мес.` : "обновите расчёт для оценки дохода"}</small></div>
           <button class="btn ${opened.savings_account ? "btn-ghost" : "btn-primary"} btn-small" data-open="savings_account" data-amount="${d.price}" ${opened.savings_account ? "disabled" : ""}>${opened.savings_account ? "Открыт" : "Открыть"}</button>
         </div>
       </div>
@@ -74,10 +75,10 @@ export function finance(d, opened = {}, selected) {
     <h2 class="panel-title">Финансовая подготовка</h2>
     <p class="panel-lead">${f.verdict}</p>
     <div class="fin-kpis">
-      <div><span class="k">Нужно на взнос 20% и сделку</span><b class="num">${rub(f.need)}</b>${html.raw(f.matcap ? html`<small>маткапитал ${rub(f.matcap)} уже учтён</small>` : "")}</div>
+      <div><span class="k">Нужно на взнос${f.down_share != null ? ` ${pct(f.down_share)}` : ""} и сделку</span><b class="num">${rub(f.need)}</b>${html.raw(f.matcap ? html`<small>маткапитал ${rub(f.matcap)} уже учтён</small>` : "")}</div>
       <div><span class="k">Можно направить сейчас</span><b class="num">${rub(f.available)}</b><small>подушка ${rub(f.cushion)} остаётся</small></div>
       <div class="${f.gap ? "is-gap" : "is-ok"}"><span class="k">${f.gap ? "Не хватает" : "Хватает с запасом"}</span><b class="num">${rub(f.gap || f.available - f.need)}</b></div>
-      <div><span class="k">Откладывать в месяц</span><b class="num">${rub(f.monthly)}</b><small>70% от свободных ${rub(f.free_monthly)}</small></div>
+      <div><span class="k">Откладывать в месяц</span><b class="num">${rub(f.monthly)}</b><small>${f.contribution_share != null ? `${pct(f.contribution_share)} от свободных` : "из свободных"} ${rub(f.free_monthly)}</small></div>
     </div>
     <div class="strategy-tabs" role="radiogroup" aria-label="Стратегия">
       ${html.raw(f.strategies.map((s) => html`
@@ -141,7 +142,7 @@ function programs(p) {
     <p class="panel-lead">${p.explanation}</p>
     <div class="scenarios">${html.raw(cards.join(""))}</div>
     ${html.raw(cap)}
-    <p class="hint">${p.assumption}${p.programs.some((c) => c.monthly_after_subsidy) ? " * Льготная ставка субсидируется не дольше 15 лет; дальше — по договору с банком (в расчёте условно 12%)." : ""}</p>
+    <p class="hint">${p.assumption}${p.subsidy_years && p.post_subsidy_rate != null && p.programs.some((c) => c.monthly_after_subsidy) ? ` * Льготный период в расчёте — ${p.subsidy_years} лет, затем условная ставка ${pct(p.post_subsidy_rate)}.` : ""}</p>
   </section>`;
 }
 
@@ -360,7 +361,7 @@ export function summary(s) {
         <dl class="ledger">
           <dt>Цена в объявлении (зафиксирована в журнале)</dt><dd class="num">${rub(s.base_price)}</dd>
           <dt>Итоговая цена</dt><dd class="num">${rub(s.final_price)}</dd>
-          <dt>Плата агенту, 15% от экономии</dt><dd class="num">${rub(s.fee)}</dd>
+          <dt>Плата агенту${s.fee_rate != null ? `, ${pct(s.fee_rate)} от экономии` : ""}</dt><dd class="num">${rub(s.fee)}</dd>
           <dt class="total">Чистая выгода клиента</dt><dd class="total num">${rub(s.net)}</dd>
           ${html.raw(s.monthly_saved ? html`<dt>Платёж по ипотеке ниже на</dt><dd class="num">${rub(s.monthly_saved)} / мес</dd>` : "")}
           <dt>Сэкономлено времени</dt><dd>${s.hours_saved}</dd>
