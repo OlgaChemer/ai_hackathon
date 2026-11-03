@@ -57,17 +57,31 @@ body[data-page="welcome"] .agent-welcome { min-height:calc(100dvh - 80px); paddi
 .workspace .composer { padding:10px 14px; gap:8px; }
 .workspace .composer textarea { min-height:60px; height:60px; max-height:120px; padding:8px 12px; }
 @media(min-width:861px) {
-  body[data-page="agent"] { height:100dvh; min-height:0; overflow:hidden; display:flex; flex-direction:column; }
+  body[data-page="agent"] { --chat-width:clamp(380px,36vw,560px); height:100dvh; min-height:0; padding-right:var(--chat-width); overflow:hidden; display:flex; flex-direction:column; }
   body[data-page="agent"] .site-header { flex-shrink:0; }
-  body[data-page="agent"] .site-bar { padding-top:12px; padding-bottom:10px; }
-  body[data-page="agent"] .site-subbar { padding-top:0; padding-bottom:8px; }
+  body[data-page="agent"] .site-bar { max-width:none; gap:12px; padding:8px 16px; }
+  body[data-page="agent"] .site-brand .agg-brand-sub { display:none; }
+  body[data-page="agent"] .site-brand .dc-logo { font-size:23px; }
+  body[data-page="agent"] .site-brand .agg-mark { width:29px; height:29px; font-size:22px; }
+  body[data-page="agent"] .site-nav { flex:1; gap:0; }
+  body[data-page="agent"] .site-nav button { padding:7px 8px; font-size:12px; }
+  body[data-page="agent"] .site-tools { gap:5px; }
+  body[data-page="agent"] .site-subbar { max-width:none; padding:0 16px 6px; font-size:11px; }
   body[data-page="agent"] #agentApp { flex:1; min-height:0; display:flex; flex-direction:column; }
-  body[data-page="agent"] .workspace.layout { flex:1; min-height:0; width:100%; margin:0 auto; padding-top:16px; padding-bottom:16px; grid-template-rows:minmax(0,1fr); align-items:stretch; }
+  body[data-page="agent"] .workspace.layout { flex:1; min-height:0; display:block; width:100%; max-width:none; margin:0; padding:14px 18px; overflow:hidden; }
   body[data-page="agent"] .footnote { padding:0 16px 6px; margin:0; font-size:11px; flex-shrink:0; }
-  body[data-page="agent"] .workspace.layout > .chat { position:relative; top:auto; height:100%; min-height:0; max-height:none; }
-  body[data-page="agent"] .workspace.layout > .stage { min-height:0; overflow-y:auto; padding-right:6px; scrollbar-gutter:stable; }
+  body[data-page="agent"] .workspace.layout > .chat { position:fixed; inset:0 0 0 auto; width:var(--chat-width); height:100dvh; min-height:0; max-height:none; border:0; border-left:1px solid var(--line); border-radius:0; box-shadow:none; z-index:50; }
+  body[data-page="agent"] .workspace.layout > .stage { height:100%; min-height:0; overflow-y:auto; padding-right:6px; scrollbar-gutter:stable; }
+}
+@media(min-width:861px) and (max-width:1360px) {
+  body[data-page="agent"] .site-bar { flex-wrap:wrap; gap:4px 12px; }
+  body[data-page="agent"] .site-nav { order:3; flex-basis:100%; justify-content:space-between; }
 }
 @media(max-width:860px) {
-  .workspace.layout > .chat.expanded { height:85dvh; }
+  body[data-page="agent"]:has(.chat.expanded) { overflow:hidden; }
+  body[data-page="agent"]:has(.chat.expanded) :is(.site-header,.stage,.footnote) { visibility:hidden; }
+  .workspace.layout > .chat.expanded { inset:0; height:100dvh; border:0; border-radius:0; padding-top:env(safe-area-inset-top); }
   .workspace.layout > .chat.expanded .chat-log { max-height:none; }
+  .workspace.layout > .chat.expanded .composer { padding-bottom:max(10px,env(safe-area-inset-bottom)); }
+  .workspace.layout > .chat.expanded .talk { padding-bottom:max(16px,env(safe-area-inset-bottom)); }
 }

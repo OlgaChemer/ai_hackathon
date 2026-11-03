@@ -43,6 +43,8 @@ async def check(browser, base, width, folder):
     if folder:
         await page.screenshot(path=str(folder / f'{width}-chat.png'))
 
+    # На телефоне сначала возвращаемся из полноэкранного чата к сайту.
+    if width<860:await page.locator('#chatToggle').click()
     # Возврат на главную и в историю сохраняет предыдущий подбор.
     await page.locator('[data-action=home]').click()
     await page.wait_for_selector('#welcomePage', state='visible')
@@ -58,6 +60,7 @@ async def check(browser, base, width, folder):
     await page.wait_for_function('(old) => location.hash.startsWith("#chat-") && location.hash !== old', arg=old_hash)
     await page.wait_for_selector('#chatLog .confirm-red_lines')
     assert len(starts) == 2 and starts[-1] == {'query': expected}
+    if width<860:await page.locator('#chatToggle').click()
     # Разговор с главной создаёт новый подбор только после распознанной фразы.
     # Используется настоящий Talk с поддельным устройством Chromium; STT здесь не проверяется.
     await page.locator('[data-action=home]').click()

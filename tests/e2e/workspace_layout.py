@@ -19,7 +19,7 @@ async def main(base, shots):
                 errors=[]
                 page.on('pageerror',lambda e:errors.append(str(e)))
                 await page.goto(base.rstrip('/')+'/#agent',wait_until='domcontentloaded')
-                await page.wait_for_selector('#account button')
+                await page.wait_for_selector('#account button',state='attached')
                 await page.wait_for_function("() => import('/js/state.js').then(({config})=>config.cities?.featured?.length>0)")
                 await page.evaluate('document.fonts.ready')
                 await page.evaluate("""async () => {
@@ -29,13 +29,19 @@ async def main(base, shots):
                 chat=await page.locator('#chatPanel').bounding_box()
                 log=await page.locator('#chatLog').bounding_box()
                 composer=await page.locator('#composer').bounding_box()
-                assert chat['height']>=height*.72,(width,chat)
+                assert abs(chat['height']-height)<=1 and abs(chat['y'])<=1,(width,chat)
                 assert log['height']>=height*.5,(width,log)
                 assert composer['y']+composer['height']<=height,(width,composer)
                 assert await page.evaluate('document.documentElement.scrollWidth<=innerWidth')
                 assert await page.locator('#chatLog').evaluate('n=>n.scrollHeight>n.clientHeight')
                 if folder:await page.screenshot(path=str(folder/f'{width}x{height}-chat.png'))
                 if width>860:
+                    assert abs(chat['x']+chat['width']-width)<=1
+                    header=await page.locator('.site-header').bounding_box()
+                    assert header['x']+header['width']<=chat['x']+1
+                    for button in await page.locator('.site-nav button, #account button, #voiceToggle').all():
+                        box=await button.bounding_box()
+                        assert box['x']+box['width']<=chat['x']+1,(width,box,chat)
                     stage=await page.locator('section.stage').bounding_box()
                     assert stage['x']+stage['width']<=chat['x']+1
                     await page.evaluate("""() => {

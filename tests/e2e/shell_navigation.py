@@ -52,6 +52,7 @@ async def check(browser, base, width, folder):
     sid = await page.evaluate("location.hash.slice(6)")
     assert starts[0]['query'].endswith('новостройки и вторичка')
     assert '9.25 млн' in starts[0]['query']
+    if width<860:await page.locator('#chatToggle').click()
     assert await page.locator('#currentSearchLink').is_visible()
 
     # История — самостоятельная страница, диалог продолжает ждать своё решение.
@@ -86,6 +87,8 @@ async def check(browser, base, width, folder):
     await page.wait_for_selector('#chatLog .confirm-red_lines')
     assert await page.evaluate('location.hash') == '#chat-' + sid
     assert len(starts) == 1
+    if width<860 and await page.locator('#chatToggle').get_attribute('aria-expanded')=='true':
+        await page.locator('#chatToggle').click()
     await nav.locator('[data-action=apartments]').click()
     await page.go_back()
     await page.wait_for_selector('#agentApp', state='visible')
@@ -108,6 +111,8 @@ async def check(browser, base, width, folder):
 
     # Новый запрос из текущего диалога создаёт другой подбор и сохраняет путь назад.
     await page.locator('#currentSearchLink').click()
+    if width<860 and await page.locator('#chatToggle').get_attribute('aria-expanded')=='true':
+        await page.locator('#chatToggle').click()
     await nav.locator('[data-action=smart-search]').click()
     await page.fill('#entryQuery', 'Двушка в Москве до 12 млн, наличными')
     await page.locator('#entryForm [type=submit]').click()
