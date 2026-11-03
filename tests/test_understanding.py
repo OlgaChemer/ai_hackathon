@@ -34,7 +34,7 @@ def verdict(text, changes=None, intent='refine', decision=None):
 
 
 def frame(*, places=None, fields=None, criteria=None, intent='refine'):
-    return {'places':[{'name':x,'source_seq':1} for x in places or []],
+    return {'places':[{'words':[{'source':w,'lemma':w} for w in x.split()],'source_seq':1} for x in places or []],
             'fields':[{'field':k,'value':v,'source_seq':1} for k,v in (fields or {}).items()],
             'criteria':[{'key':k,'value':v,'priority':p,'source_seq':1} for k,v,p in criteria or []],
             'question':'','options':[],'intent':intent}
@@ -108,6 +108,23 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(0)
         self.assertFalse(future.done())
         self.assertEqual(s.profile['city'],'Казань')
+
+    async def test_information_intent_has_no_authority_to_apply_repeated_or_invented_fields(self):
+        reply=frame(places=['Москва'],fields={'budget_max':100_000_000},intent='question')
+        s=self.agent('Что такое эскроу?',reply,profile={'city':'Казань','budget_max':9_000_000})
+        before=deepcopy(s.profile)
+        await U.ensure(s)
+        self.assertEqual(s.profile,before)
+        self.assertEqual(s.request_intent,'question')
+
+    async def test_a_single_source_name_cannot_grow_an_unspoken_city_modifier(self):
+        reply=frame(places=['Новгород'])
+        reply['places'][0]['words'][0]={'source':'Новгороде','lemma':'Великий Новгород'}
+        s=self.agent('Квартира в Новгороде',reply,reply)
+        before=deepcopy(s.profile)
+        with self.assertRaises(U.UnderstandingError):
+            await U.ensure(s)
+        self.assertEqual(s.profile,before)
 
     async def test_understanding_uses_the_whole_message_without_trusting_planner_proposals(self):
         text = 'Однушка или трёшка, до пяти с половиной лямов, вторичка, наличка, Казань.'

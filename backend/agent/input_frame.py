@@ -27,8 +27,9 @@ def schema(changes):
     fields = basic_fields(changes)
     return object_schema({
         'places':{'type':'array','maxItems':3,'description':'Итоговые территории поиска. Только положительно выбранные; не упомянутые в отрицании.',
-                  'items':object_schema({'name':{'type':'string','maxLength':160,
-                    'description':'Нормальная форма названия из слов клиента. Не достраивай отсутствующую часть составного имени; общую часть из ambiguous_catalog_names передай как есть.'},'source_seq':SOURCE})},
+                  'items':object_schema({'words':{'type':'array','minItems':1,'maxItems':8,'items':object_schema({
+                    'source':{'type':'string','maxLength':80,'description':'Одно слово названия, буквально из сообщения, без предлогов.'},
+                    'lemma':{'type':'string','maxLength':80,'description':'Начальная форма только этого слова. Одно слово, без добавления пропущенной части названия.'}})},'source_seq':SOURCE})},
         'fields':{'type':'array','maxItems':len(fields),'description':'Все остальные явно названные параметры. Неназванные поля не передавай.',
                   'items':{'anyOf':[object_schema({'field':{'type':'string','enum':[k]},'value':deepcopy(v),'source_seq':SOURCE}) for k,v in fields.items()]}},
         'criteria':{'type':'array','maxItems':len(CRITERIA_KEYS),'description':'Каждое названное условие вместе с обязательностью. При отмене priority=remove,value=null.',
@@ -45,11 +46,16 @@ def schema(changes):
 
 def decode(frame, profile, payload, changes_schema):
     """Преобразует машинные поля; свободный текст здесь не разбирается."""
-    envelope = {k:v for k,v in frame.items() if k not in ('fields','criteria')}
+    envelope = {k:v for k,v in frame.items() if k not in ('fields','criteria','places')}
     envelope_schema = schema(changes_schema)
-    envelope_schema['properties'] = {k:v for k,v in envelope_schema['properties'].items() if k not in ('fields','criteria')}
+    validation.validate(frame.get('places'),envelope_schema['properties']['places'])
+    envelope_schema['properties'] = {k:v for k,v in envelope_schema['properties'].items() if k not in ('fields','criteria','places')}
     envelope_schema['required'] = list(envelope_schema['properties'])
     validation.validate(envelope, envelope_schema)
+    if frame['intent']=='question':
+        # Информационный вопрос не даёт полномочий менять запрос, даже если модель
+        # повторила известные параметры в остальных полях. Карточка остаётся открытой.
+        return {'intent':'question','decision':'unchanged','changes':{},'evidence':[], 'question':'','options':[]}
     seqs = {x['seq'] for x in payload['messages']}
     def source(row):
         if row['source_seq'] not in seqs:
@@ -107,15 +113,30 @@ def decode(frame, profile, payload, changes_schema):
     places=[]
     question,options=frame['question'],frame['options']
     for row in frame['places']:
-        seq=source(row); name=row['name'].strip(); normalized=name.casefold()
+        seq=source(row)
+        text=next(x['text'] for x in payload['messages'] if x['seq']==seq).casefold()
+        if not row['words']:raise ValueError('Нужно исходное название территории')
+        seen_words=set()
+        for word in row['words']:
+            raw=word['source'].strip().casefold(); lemma=word['lemma'].strip()
+            if not raw or raw not in text or raw in seen_words or not lemma or any(c.isspace() for c in lemma):
+                raise ValueError('Каждому исходному слову названия нужна одна начальная форма, без добавления слов')
+            seen_words.add(raw)
+        name=' '.join(w['lemma'].strip() for w in row['words']); normalized=name.casefold()
         if normalized in canonical:
             places.append(canonical[normalized])
         elif normalized in ambiguous:
             options=ambiguous[normalized]
             question='Какой город вы имеете в виду: ' + ' или '.join(options) + '?'
         else:
-            question=f'Города «{name}» пока нет среди поддерживаемых. В каком городе искать?'
-            options=[]
+            # Это справочник синонимов выделенного моделью топонима, не разбор запроса.
+            from ..sources import normalize_city
+            alias=normalize_city(name)
+            if alias in payload['supported_cities']:
+                places.append(alias)
+            else:
+                question=f'Города «{name}» пока нет среди поддерживаемых. В каком городе искать?'
+                options=[]
     if places:
         seq=frame['places'][0]['source_seq']
         places=list(dict.fromkeys(places))
