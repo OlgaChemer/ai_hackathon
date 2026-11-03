@@ -62,6 +62,15 @@ async def scenario(browser, base, width):
     await page.select_option("#talkVoice", "test-ru-2")
     await page.fill("#talkRate", "1.1")
     await page.locator("#talkRate").dispatch_event("input")
+    text_box = await page.locator(".talk-text").bounding_box()
+    hint_box = await page.locator("#talkHint").bounding_box()
+    settings_box = await page.locator(".talk-settings").bounding_box()
+    orb_box = await page.locator("#talkOrb").bounding_box()
+    panel_box = await page.locator("#talkPanel").bounding_box()
+    assert text_box["width"] >= 110, text_box
+    assert hint_box["height"] < 120, hint_box
+    assert settings_box["y"] >= orb_box["y"] + orb_box["height"], (settings_box, orb_box)
+    assert panel_box["height"] <= 450, panel_box
     await page.locator("#talkSample").click()
     await page.wait_for_function(
         "window.__spoken.some(s=>s.text.includes('сорок два миллиона рублей')&&s.voice==='test-ru-2'&&s.rate===1.1&&s.pitch===1)"

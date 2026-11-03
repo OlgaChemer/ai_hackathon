@@ -364,7 +364,7 @@ table.scen td.neg { color: var(--red); }
 .market-legend { display: flex; justify-content: space-between; font-size: 12px; color: var(--ink-3); margin-top: 4px; }
 .talk-btn { display: inline-flex; align-items: center; gap: 6px; height: 44px; padding: 0 14px; flex: none; border: 1px solid var(--green-line); border-radius: 999px; background: var(--green-soft); color: var(--green-strong); font-weight: 600; cursor: pointer; transition: background .15s ease; }
 .talk-btn:hover { background: color-mix(in srgb, var(--green-soft) 70%, var(--green-line)); }
-.talk { border-top: 1px solid var(--line); padding: 16px; display: flex; align-items: center; gap: 14px; background: linear-gradient(180deg, var(--surface), var(--green-soft)); }
+.talk { border-top: 1px solid var(--line); padding: 16px; display: grid; grid-template-columns:64px minmax(0,1fr) auto; max-height:60dvh; overflow-y:auto; align-items: center; gap: 14px; background: linear-gradient(180deg, var(--surface), var(--green-soft)); }
 .talk-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .talk-text strong { font-size: 16px; }
 .talk-text span { font-size: 13px; color: var(--ink-2); overflow-wrap: anywhere; }
