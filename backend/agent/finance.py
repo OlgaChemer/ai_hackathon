@@ -15,6 +15,13 @@ from datetime import date
 from .mortgage import deal_costs
 from .numbers import fmt
 
+def programs_key(profile: dict) -> tuple:
+    """Ключ финансового расчёта не зависит от сессии или реестра инструментов."""
+    if profile.get('payment') == 'cash':
+        return profile.get('budget_max'), 'cash'
+    return tuple(profile.get(k) for k in ('budget_max', 'city', 'payment', 'housing', 'children', 'youngest_age', 'matcap'))
+
+
 PRODUCTS = {
     "savings_account": {"name": "Накопительный счёт", "rate": 0.10, "low": 0.10, "high": 0.10,
                         "note": "снять можно в любой момент"},

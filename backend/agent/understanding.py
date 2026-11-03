@@ -55,17 +55,6 @@ def _schema():
     return actions.REGISTRY['update_request'].parameters
 
 
-def _decode_patch(value):
-    if not isinstance(value, list):
-        return value  # старый сохранённый формат и внутренние клиенты
-    result = {}
-    for item in value:
-        if not isinstance(item,dict) or set(item) != {'field','value'} or not isinstance(item['field'],str) or item['field'] in result:
-            raise ValueError('Неверное или повторное поле изменений')
-        result[item['field']] = item['value']
-    return result
-
-
 def _literal(text):
     return ' '.join(text.split()).casefold()
 
@@ -114,8 +103,8 @@ def _validate(result, payload):
         raise ValueError('Изменения при неподтверждённом решении')
     if result['decision'] == 'apply' and not changes:
         raise ValueError('Нет изменений для применения')
-    if result['intent'] == 'question' and changes:
-        raise ValueError('Информационный вопрос не меняет профиль')
+    if result['intent'] not in ('search', 'refine') and changes:
+        raise ValueError('Это намерение не разрешает менять профиль')
     if result['decision'] == 'clarify' and not result['question'].strip():
         raise ValueError('Не задан уточняющий вопрос')
     if result['decision'] != 'clarify' and (result['question'].strip() or result['options']):
@@ -131,7 +120,7 @@ def _validate(result, payload):
         raise ValueError('Небезопасные изменения')
 
 
-async def prepare(s, proposal=None):
+async def prepare(s):
     """Один принятый разбор на сообщение; предложения инструментов не служат источником пожеланий."""
     inputs=[x for x in s.request_inputs if x['seq'] > s.request_review_seq]
     if not inputs:return None
@@ -155,8 +144,7 @@ async def prepare(s, proposal=None):
             if 'fields' in result:
                 result=input_frame.decode(result,payload['profile'],payload,_schema())
             else:
-                # Внутренний нормализованный формат для клиентов LLMClient и сохранённых заготовок.
-                if 'changes' in result:result['changes']=_decode_patch(result['changes'])
+                # Внутренний формат LLMClient и тестовых моделей; сохранённые диалоги здесь не читаются.
                 result.setdefault('question','');result.setdefault('options',[])
             _validate(result,payload)
         except StructuredOutputError:
@@ -174,9 +162,9 @@ async def prepare(s, proposal=None):
     raise UnderstandingError('Не удалось получить корректный структурированный ввод')
 
 
-async def ensure(s, proposal=None):
+async def ensure(s):
     """Применяет проверенные изменения перед действием; уточнение ничего не разрешает."""
-    review = await prepare(s, proposal)
+    review = await prepare(s)
     if review is None:
         return None
     if review['decision'] == 'clarify':

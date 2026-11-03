@@ -91,10 +91,8 @@ async def execute(s, call: ToolCall) -> dict:
     # Семантический разбор выполняется до проверки допуска: новые условия могут отозвать согласия.
     if s.request_inputs:
         from .. import understanding
-        # Предложение планировщика — только данные. Неверный тип его аргумента
-        # не должен блокировать независимое понимание корректного сообщения клиента.
-        proposal = call.arguments if call.name == 'update_request' and isinstance(call.arguments, dict) else None
-        checked = await understanding.ensure(s, proposal)
+        # Запрос извлекается из принятого ввода, независимо от аргументов планировщика.
+        checked = await understanding.ensure(s)
         if checked and checked.get("needs_clarification"):
             return checked
         if call.name == 'update_request':
@@ -103,13 +101,10 @@ async def execute(s, call: ToolCall) -> dict:
             if checked and checked.get('profile_result'):
                 return checked['profile_result']
             return await a.run(s)  # уже проверенный ввод; повторная догадка не применяется
-    if call.name == "confirm_red_lines" and s.red_lines_ok:
-        return await a.run(s)
-    if call.name == "mortgage_programs":
-        from .money import programs_current
-        if programs_current(s):
-            return await a.run(s)
-    if not available(s, call.name):
+    from .money import programs_current
+    replay = (call.name == "confirm_red_lines" and s.red_lines_ok) or (
+        call.name == "mortgage_programs" and programs_current(s))
+    if not replay and not available(s, call.name):
         names = ", ".join(a.name for a in REGISTRY.values() if available(s, a.name))
         hint = ""
         if call.name == "search_listings":
@@ -125,7 +120,7 @@ async def execute(s, call: ToolCall) -> dict:
     if not verdict.ok or guard.output(args, limit=False) != args:
         guard.note(s, "tool", verdict.category or "unsafe_output", "")
         return {"error": "Параметры действия отклонены проверкой безопасности."}
-    if a.step:
+    if a.step and not replay:
         await s.step(a.step)
     try:
         return await a.run(s, **args)

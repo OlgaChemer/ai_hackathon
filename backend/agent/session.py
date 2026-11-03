@@ -97,8 +97,7 @@ class Session:
         """Согласия относятся к прежним условиям и не могут разрешать новую сделку."""
         if not keep_limit:
             self.red_lines_ok = False
-        from .actions.money import programs_key
-        if self.programs_key != programs_key(self):
+        if self.programs_key != F.programs_key(self.profile):
             self.programs_key = self.programs_result = None
             self.profile.pop('_programs_cache',None)
             self.mortgage = self.finance = None
@@ -286,8 +285,7 @@ def restore_session(chat_id: str, text: str, llm: LLMClient) -> Session:
                           s.profile['_approved_budget_max'] == s.profile.get('budget_max'))
     cache=s.profile.get('_programs_cache') or {}
     if s.profile.get('payment')=='cash' and cache.get('key') and isinstance(cache.get('result'),dict):
-        from .actions.money import programs_key
-        if tuple(cache['key'])==programs_key(s):
+        if tuple(cache['key'])==F.programs_key(s.profile):
             s.programs_key,s.programs_result=tuple(cache['key']),cache['result']
     s.prefs.sync(s.profile)
     SESSIONS[chat_id] = s

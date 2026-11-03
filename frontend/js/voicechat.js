@@ -1,5 +1,5 @@
 // Голосовой режим: разговор с агентом без кнопок. Решения на карточках и отметки в подборке — тоже голосом.
-import { $, addMsg, config, stage, state } from "./state.js";
+import { $, addMsg, config, state } from "./state.js";
 import { Talk } from "./talk.js";
 import { voice } from "./voice.js";
 

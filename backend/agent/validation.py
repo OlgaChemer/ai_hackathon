@@ -25,6 +25,8 @@ def validate(value, schema: dict, depth: int = 0) -> None:
     elif kind == "string" and len(value) > schema.get("maxLength", 2000):
         raise ValueError("Слишком длинный текст")
     elif kind == "array":
+        if len(value) < schema.get("minItems", 0):
+            raise ValueError("Слишком мало элементов")
         if len(value) > schema.get("maxItems", 100):
             raise ValueError("Слишком много элементов")
         for item in value:

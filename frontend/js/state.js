@@ -7,11 +7,11 @@ export const chatLog = $("chatLog");
 export const stage = $("stage");
 
 // настройки сервера (/api/health): звонки на телефон, города
-export const config = { phoneReady: false, sellerPhoneDefault: "", cities: {} };
+export const config = { phoneReady: false, sellerPhoneDefault: "" };
 
 function freshState() {
   return {
-    sid: null, es: null, running: false, streamEnded: false, results: {}, status: Array(10).fill("idle"), view: 0,
+    sid: null, es: null, running: false, streamEnded: false, results: {},
     call: null, phone: null, marks: { liked: new Set(), disliked: new Set() }, opened: {}, strategy: null, awaiting: null,
     cards: {}, lastSeq: 0, retries: 0, // карточки решений по виду; последнее полученное событие ленты
   };

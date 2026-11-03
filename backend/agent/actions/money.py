@@ -95,18 +95,12 @@ async def ask_housing(s) -> dict:
     return {"housing": s.profile["housing"]}
 
 
-def programs_key(s):
-    if s.profile.get('payment')=='cash':
-        return (s.profile.get('budget_max'),'cash')
-    return tuple(s.profile.get(k) for k in ('budget_max','city','payment','housing','children','youngest_age','matcap'))
-
-
 def programs_current(s):
-    return s.programs_result is not None and s.programs_key == programs_key(s)
+    return s.programs_result is not None and s.programs_key == F.programs_key(s.profile)
 
 
 def remember_programs(s, result):
-    s.programs_key, s.programs_result = programs_key(s), result
+    s.programs_key, s.programs_result = F.programs_key(s.profile), result
     if s.profile.get('payment')=='cash':
         s.profile['_programs_cache'] = {'key':list(s.programs_key),'result':result}
     else:

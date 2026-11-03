@@ -6,7 +6,9 @@ from backend import db, sources
 from backend.agent import actions, session
 from backend.agent.actions import request as R, money, deal
 from backend.agent.profile import merge_profile
-from tests.fakes import ScriptedLLM, call, drive, say
+from tests.fakes import ScriptedLLM, drive, say
+from backend.llm import ToolCall
+from backend.agent import validation
 from tests.test_llm_and_agent import listing
 
 
@@ -83,6 +85,20 @@ class WorkflowReadinessTest(unittest.IsolatedAsyncioTestCase):
                            {'role':'tool','tool_call_id':'changed','content':'{"profile":{"budget_max":10000000}}'}])
         s.remember()
         self.assertFalse(session.restore_session(s.id,'Продолжить',s.llm).red_lines_ok)
+
+    async def test_cached_actions_still_validate_arguments(self):
+        s=self.agent();s.red_lines_ok=True
+        await money.mortgage_programs(s)
+        for name in ('mortgage_programs', 'confirm_red_lines'):
+            result=await actions.execute(s,ToolCall(name,{'unexpected':True}))
+            self.assertIn('error',result)
+        self.assertEqual(s.profile['budget_max'],9_000_000)
+        self.assertEqual(len([e for e in s.history if e['type']=='message']),1)
+
+    def test_declared_minimum_array_length_is_enforced(self):
+        schema={'type':'array','minItems':1,'items':{'type':'string'}}
+        with self.assertRaises(ValueError):validation.validate([],schema)
+        validation.validate(['Москва'],schema)
 
     def test_profile_updates_require_new_client_input(self):
         s=self.agent();s.request_inputs=[{'seq':1,'text':'исходный запрос'}];s.request_review_seq=1

@@ -80,7 +80,7 @@ def emit_profile(s) -> None:
 async def update_request(s, **changes) -> dict:
     from .. import understanding
     if s.request_inputs:
-        checked = await understanding.ensure(s, changes)
+        checked = await understanding.ensure(s)
         if checked and checked.get("needs_clarification"):
             return checked
         if checked and checked.get("profile_result"):

@@ -22,7 +22,7 @@ def review_reply(payload, changes=None, intent=None):
     text = payload['messages'][-1]['text']
     question = is_question(text)
     if changes is None:
-        changes = payload.get('proposed_changes') or parse_request(text)
+        changes = parse_request(text)
     if question:
         changes = {}
     if question:

@@ -177,7 +177,6 @@ def decode(frame, profile, payload, changes_schema):
     for row in frame['places']:
         seq=source(row)
         text=' '.join(x['text'] for x in payload['messages'] if native or x['seq']==seq).casefold()
-        if not row['words']:raise ValueError('Нужно исходное название территории')
         seen_words=set();valid=True
         for word in row['words']:
             raw=word['source'].strip().casefold();lemma=word['lemma'].strip()

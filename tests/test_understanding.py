@@ -273,19 +273,22 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
 
 
 
-    async def test_sparse_native_fields_are_decoded_and_compared_without_filling_other_fields(self):
-        text = 'Казань'
-        reply = verdict(text, {'city':'Казань'})
-        reply['changes'] = [{'field':'city','value':'Казань'}]
-        s=self.agent(text,reply)
-        await U.ensure(s)
-        self.assertEqual(s.profile['city'],'Казань')
-        self.assertIsNone(s.profile['budget_max'])
-        self.assertIsNone(s.profile['payment'])
+    async def test_removed_sparse_patch_format_is_rejected_without_mutation(self):
+        reply=verdict('Казань',{'city':'Казань'})
+        reply['changes']=[{'field':'city','value':'Казань'}]
+        s=self.agent('Казань',reply,reply)
+        before=deepcopy(s.profile)
+        with self.assertRaises(U.UnderstandingError):await U.ensure(s)
+        self.assertEqual(s.profile,before)
 
-    def test_native_sparse_fields_reject_duplicate_updates(self):
-        with self.assertRaises(ValueError):
-            U._decode_patch([{'field':'city','value':'Москва'},{'field':'city','value':'Казань'}])
+    async def test_normalized_format_cannot_change_profile_for_nonediting_intents(self):
+        for intent in ('question', 'continue', 'hold', 'other'):
+            with self.subTest(intent=intent):
+                reply=verdict('Москва',{'city':'Москва'},intent=intent)
+                s=self.agent('Москва',reply,reply,profile={'city':'Казань'})
+                before=deepcopy(s.profile)
+                with self.assertRaises(U.UnderstandingError):await U.ensure(s)
+                self.assertEqual(s.profile,before)
 
     async def test_ambiguity_does_not_mutate_until_actual_clarification(self):
         text = 'Двушка в Новгороде до 9 миллионов.'
@@ -297,7 +300,7 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
         s = self.agent(text, ambiguous, final)
         before = deepcopy(s.profile)
         s.ask = AsyncMock(return_value={'approved':None,'data':{'text':answer}})
-        result = await U.ensure(s, {'city':'Нижний Новгород'})
+        result = await actions.execute(s,ToolCall('update_request',{'city':'Нижний Новгород'}))
         self.assertTrue(result['needs_clarification'])
         self.assertEqual(s.profile, before)
         event = s.push('message',role='user',text=answer)

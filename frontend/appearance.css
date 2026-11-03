@@ -524,12 +524,6 @@ body { display:block; }
 .mic { border-radius:12px; }
 .panel { box-shadow:0 3px 20px #102d2004; }
 .panel-title { font-size:27px; letter-spacing:-.035em; }
-.welcome { padding:40px 34px; }
-.welcome h1 { font-size:clamp(28px,3vw,40px); }
-.stepper { padding:12px 14px; border:1px solid var(--line); border-radius:17px; background:#fff; }
-.stepper button { padding:5px 7px; border-radius:9px; font-size:11px; }
-.stepper .dot { width:21px; height:21px; font-size:11px; }
-.stepper .is-viewing button { outline:none; }
 .context { margin-bottom:0; }
 .offers { grid-template-columns:repeat(2,minmax(0,1fr)); gap:18px; }
 .offer { border-radius:17px; border-width:1px; }

@@ -159,6 +159,11 @@ class CianParsingTest(unittest.TestCase):
 
 
 class AgentToolsTest(unittest.TestCase):
+    def test_bargaining_does_not_invent_financing_or_transaction_terms(self):
+        x = listing(days_on_market=0)
+        fp = {"overprice_pct": 0, "cheaper_comps": 0}
+        self.assertEqual(PR.bargaining_arguments(x, fp), [])
+
     def test_profile_merge_and_missing(self):
         p = PF.merge_profile({"rooms": 2, "poi": ["school", "unknown"], "features": ["balcony", "balcony_loggia"]})
         self.assertEqual(PF.missing_required(p), ["city", "budget_max"])
@@ -371,7 +376,7 @@ class WishesAndMapTest(unittest.TestCase):
         no_school = listing(description="Есть гардеробная", nearby={"school": None})
         unknown = listing(description="Хорошая квартира", nearby={"school": {"name": "Школа", "dist": 300}})
         self.assertEqual([fits(x, prefs) for x in (good, no_school, unknown)], [True, False, False])
-        self.assertFalse(fits(no_school, prefs, map_ok=False))  # общая ошибка карты не отменяет уже известное отсутствие школы
+        self.assertFalse(fits(no_school, prefs))  # общая ошибка карты не отменяет уже известное отсутствие школы
 
     def test_seller_reply_with_price_skips_llm(self):
         x = listing()

@@ -20,7 +20,7 @@ async def main(base, shots):
                 page.on('pageerror',lambda e:errors.append(str(e)))
                 await page.goto(base.rstrip('/')+'/#agent',wait_until='domcontentloaded')
                 await page.wait_for_selector('#account button',state='attached')
-                await page.wait_for_function("() => import('/js/state.js').then(({config})=>config.cities?.featured?.length>0)")
+                await page.wait_for_function("document.getElementById('provider').title.startsWith('Модель:')")
                 await page.evaluate('document.fonts.ready')
                 await page.evaluate("""async () => {
                     const {addMsg}=await import('/js/state.js');

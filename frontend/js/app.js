@@ -1,4 +1,4 @@
-// Контроллер: лента событий агента -> чат, степпер, экраны этапов; жизнь диалога (открыть, продолжить, новый).
+// Контроллер: события агента, результаты в чате, подборка и жизнь диалога.
 import { initAccount } from "./account.js";
 import { api } from "./api.js";
 import { addGuard, addLine, createCall, renderCall, setPhase, setStatus, setTyping, showLearned, showSellerInput, updatePrices } from "./call.js";
@@ -13,48 +13,28 @@ import * as V from "./views.js";
 import { SELECTION_PROMPT, initVoiceChat, phoneActive, sayPrompt, talk } from "./voicechat.js";
 import { bindMic, recorder, voice } from "./voice.js";
 
-const STEPS = ["Запрос", "Финансы", "Поиск", "Подбор", "Проверка", "Звонок", "Просмотр", "Сделка", "Итог"];
-const stepper = $("stepper");
-
 let gen = 0; // поколение диалога: события старого диалога отбрасываются
 let queue = [];
 let pumping = false;
 const HANGUP = "(положил трубку)"; // сервер понимает это как конец разговора
 
-// ------------------------------------------------------------------ чат
-
-// ------------------------------------------------------------------ голосовой режим
-
-// ------------------------------------------------------------------ степпер и сцена
-
-function renderStepper() {
-  stepper.innerHTML = STEPS.map((t, i) => {
-    const n = i + 1;
-    const st = state.status[n];
-    const cls = [st === "active" ? "is-active" : "", st === "done" ? "is-done" : "", state.view === n ? "is-viewing" : ""].join(" ");
-    const dot = st === "done" ? "✓" : n;
-    return html`<li class="${cls}"><button data-step="${n}" ${st === "idle" ? "disabled" : ""} aria-current="${state.view === n ? "step" : "false"}"><span class="dot">${dot}</span>${t}</button></li>`;
-  }).join("");
-}
+// ------------------------------------------------------------------ результаты и подборка
 
 function viewFor(n) {
   const r = state.results;
   switch (n) {
-    case 1: return r[1] ? V.profile(r[1]) : V.waiting("Разбираю запрос", "Город, бюджет, комнаты и ваши пожелания. Если чего-то не хватит — спрошу.");
-    case 2: return r[2] ? V.finance(r[2], state.opened, state.strategy) : V.waiting("Финансы", "Ответьте в чате, как планируете покупать: наличными, в ипотеку или ещё копите на взнос.");
-    case 3: return r[3] ? V.search(r[3]) : V.waiting("Ищу объявления", "Запрашиваю Циан и считаю справедливую цену по похожим квартирам.");
-    case 4: return r[4] ? V.selection(r[4], state.marks) : V.waiting("Подбор", "Готовлю подборку.");
-    case 5: return r[5] ? V.legal(r[5]) : V.waiting("Проверка", "Смотрю риски по данным объявления.");
-    case 7: return r[7] ? V.viewing(r[7]) : V.waiting("Просмотр", "Договариваюсь о времени.");
-    case 8: return r[8] ? V.deal(r[8]) : V.waiting("Оформление", "Собираю план сделки.");
-    case 9: return r[9] ? V.summary(r[9]) : V.waiting("Итог", "Завершаю сделку.");
-    default: return V.welcome(config.cities);
+    case 1: return V.profile(r[1]);
+    case 2: return V.finance(r[2], state.opened, state.strategy);
+    case 5: return V.legal(r[5]);
+    case 7: return V.viewing(r[7]);
+    case 8: return V.deal(r[8]);
+    case 9: return V.summary(r[9]);
+    default: return null;
   }
 }
 
 function renderStage() {
   unmountMap(stage.querySelector("[data-map]"));
-  stage.innerHTML = "";
   stage.innerHTML = state.results[4] ? V.selection(state.results[4], state.marks)
     : state.searching ? ""
     : V.waiting("Здесь появятся квартиры", "Расскажите агенту о бюджете, городе и пожеланиях. Профиль и решения останутся в чате.");
@@ -65,11 +45,12 @@ function renderStage() {
   const map = stage.querySelector("[data-map]");
   if (map && state.results[4]?.cards) mountMap(map, state.results[4].cards);
   syncSelectionButtons();
-  renderStepper();
 }
 
 function renderChatResult(step) {
+  if (!state.results[step]) return;
   const markup = viewFor(step);
+  if (!markup) return;
   let node = chatLog.querySelector(`[data-chat-result="${step}"]`);
   if (!node) { node = document.createElement("div"); node.dataset.chatResult = step; node.className = "chat-result"; chatLog.append(node); }
   node.innerHTML = markup;
@@ -81,13 +62,6 @@ function renderChatResult(step) {
 /** Кнопки подборки активны, только пока агент ждёт выбора. */
 function syncSelectionButtons() {
   stage.querySelectorAll("[data-selection]").forEach((b) => (b.disabled = state.awaiting !== "selection"));
-}
-
-function show(n) {
-  if (state.view !== n) {
-    state.view = n;
-    renderStage();
-  } else renderStepper();
 }
 
 // ------------------------------------------------------------------ настоящий звонок (МТС Exolve)
@@ -137,12 +111,6 @@ async function handle(ev, myGen) {
       if (!quiet && ev.role === "agent" && talk.on && !phoneActive()) talk.say(ev.text);
       await pause(ev.role === "agent" ? 300 : 0);
       break;
-    case "step":
-      state.status[ev.step] = ev.status === "pending" ? "active" : ev.status;
-      if (quiet) { if (ev.status === "active") state.view = ev.step; break; } // экран нарисуем один раз в конце истории
-      if (ev.status === "active") show(ev.step); else renderStepper();
-      await pause(150);
-      break;
     case "result":
       state.results[ev.step] = ev.data;
       if (ev.kind === "profile") refreshContext(ev.data);
@@ -152,7 +120,6 @@ async function handle(ev, myGen) {
       if (ev.kind === "selection") {
         state.marks = { liked: new Set(ev.data.liked || []), disliked: new Set(ev.data.disliked || []) };
       }
-      state.view = ev.step;
       if (!quiet) renderStage();
       await pause(ev.kind === "selection" ? 0 : 500);
       break;
@@ -160,7 +127,6 @@ async function handle(ev, myGen) {
       if (ev.kind !== "selection") setChatExpanded(true);
       if (ev.kind === "call") {
         state.call = createCall(ev);
-        state.view = 6;
         const callNode = renderCall(state.call, submitSeller);
         callNode.classList.add("chat-call");
         chatLog.append(callNode);
@@ -183,8 +149,7 @@ async function handle(ev, myGen) {
       if (!call) break;
       call.started = true;
       call.mode = ev.mode;
-      if (quiet) { state.view = 6; break; }
-      if (state.view !== 6) show(6); else renderStage();
+      if (quiet) break;
       setStatus(call, "Идёт звонок · запись");
       setTyping(call, "agent");
       break;
@@ -505,9 +470,6 @@ bindMic($("micBtn"), $("query"), {
 $("micBtn").hidden = false;
 
 async function handleResultClick(e) {
-  const ex = e.target.closest("[data-example]");
-  if (ex) return start(ex.dataset.example);
-
   const vote = e.target.closest("[data-vote]");
   if (vote) return setVote(vote.closest("[data-id]").dataset.id, vote.dataset.vote, true);
   const sel = e.target.closest("[data-selection]");
@@ -550,11 +512,6 @@ initVoiceChat({ sendText, selectionAction, setVote, submitSeller,
   newChat: () => { newChat(); setChatExpanded(true); },
 });
 
-stepper.addEventListener("click", (e) => {
-  const b = e.target.closest("button[data-step]");
-  if (b && !b.disabled) show(Number(b.dataset.step));
-});
-
 $("resumeCallAudio").addEventListener("click", () => {
   state.phone?.unlockAudio().catch(() => addMsg("error", "Не удалось возобновить звук. Вернитесь на страницу звонка и попробуйте ещё раз."));
 });
@@ -593,11 +550,9 @@ else {
   route();
 }
 api.health().then((h) => {
-  config.cities = { featured: h.featured_cities || [], total: (h.cities || []).length };
   recorder.available = Boolean(h.stt?.installed && h.stt.status !== "error");
   config.phoneReady = Boolean(h.phone?.configured);
   config.sellerPhoneDefault = h.phone?.seller_phone || "";
   setProvider(h);
-  if (state.view === 0) renderStage();
 })
   .catch(() => setProvider({ provider: "offline", reason: "сервер недоступен" }));

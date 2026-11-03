@@ -32,7 +32,7 @@ def wishes_text(prefs: P.Prefs) -> str:
     return ", ".join(parts)
 
 
-def fits(x: dict, prefs: P.Prefs, map_ok: bool = True) -> bool:
+def fits(x: dict, prefs: P.Prefs) -> bool:
     """Квартира выполняет все пожелания: удобства подтверждены (объявление или продавец), нужное — в 1 км по карте."""
     profile = {**prefs.profile, "features": prefs.features, "poi": prefs.poi}
     return C.evaluate(profile, x)['status'] == 'confirmed'

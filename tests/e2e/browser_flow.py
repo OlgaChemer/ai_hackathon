@@ -103,13 +103,17 @@ async def main(base: str, shots: str) -> int:
 
         # C. Продолжение завершённого диалога, перезагрузка по ссылке
         await send(pg, "а если трёшку?")
-        card = pg.locator(".confirm-red_lines:not(.is-done)")
+        profile = pg.locator('[data-chat-result="1"]')
         try:
-            await card.last.wait_for(timeout=30000)
-            text = await card.last.inner_text()
+            await profile.locator('.facts div').filter(has_text="Комнат").locator('dd').filter(has_text="3").wait_for(timeout=30000)
+            # В fixture нет трёшек: ждём ответа об альтернативах, а не нового согласия на прежний лимит.
+            await pg.locator('.confirm:not(.is-done)').last.wait_for(timeout=30000)
+            text = await profile.inner_text()
         except Exception:
             text = (await chat_text(pg))[-300:]
-        ok("C: продолжение диалога — новый запрос с памятью (Казань, 3 комнаты)", "Казань" in text and "\n3\n" in text, text[-200:] if "3" not in text else "")
+        ok("C: продолжение — Казань, 3 комнаты, прежний бюджет без нового согласия",
+           "Казань" in text and "\n3\n" in text and "9 000 000" in " ".join(text.split())
+           and await pg.locator('.confirm-red_lines:not(.is-done)').count() == 0, text[-200:])
         await pg.reload()
         await asyncio.sleep(3)
         ok("C: перезагрузка — история на месте", "Сделка оформлена" in await chat_text(pg))

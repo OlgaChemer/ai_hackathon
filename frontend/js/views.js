@@ -1,26 +1,9 @@
 // Отрисовка панелей этапов (кроме звонка — он в call.js, и графика — chart.js).
-import { html, rub, mln, pct, plural, shortDate } from "./format.js";
+import { html, rub, mln, pct, shortDate } from "./format.js";
 import { POI_COLORS } from "./map.js";
-
-const EXAMPLES = [
-  "Ищу 2-комнатную в Казани до 9 млн, у нас ребёнок — нужна школа рядом",
-  "Двушка в Новосибирске до 7 млн, не первый этаж, кухня от 9 метров",
-  "Однокомнатная квартира в Казани",
-];
 
 const ICON_UP = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M7 10v11H3V10h4zm2 11h8.3a2 2 0 0 0 2-1.6l1.4-7A2 2 0 0 0 18.7 10H14l.7-3.6a2 2 0 0 0-.5-1.8L13 3.4 8.6 8.6A2 2 0 0 0 8 10v9a2 2 0 0 0 1 2z" fill="currentColor"/></svg>';
 const ICON_DOWN = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M17 14V3h4v11h-4zm-2-11H6.7a2 2 0 0 0-2 1.6l-1.4 7A2 2 0 0 0 5.3 14H10l-.7 3.6a2 2 0 0 0 .5 1.8l1.2 1.2 4.4-5.2A2 2 0 0 0 16 14V5a2 2 0 0 0-1-2z" fill="currentColor"/></svg>';
-
-export function welcome(cities = {}) {
-  return html`
-  <section class="panel welcome">
-    <h1>Какую квартиру ищем?</h1>
-
-    <div class="examples">
-      ${html.raw(EXAMPLES.map((e) => html`<button class="example" data-example="${e}">${e}</button>`).join(""))}
-    </div>
-  </section>`;
-}
 
 export function waiting(title, text) {
   return html`<section class="panel waiting-panel"><h2 class="panel-title">${title}</h2><p class="panel-lead">${text}</p></section>`;
@@ -190,48 +173,6 @@ function mortgage(m) {
     <h2 class="panel-title">Ипотека</h2>
     <p class="panel-lead">${m.program || "Ипотека"}: три сценария${m.scenarios.every((s) => s.rate === m.rate) ? ` по ставке ${pct(m.rate)}` : ", ставка зависит от взноса"}. Каждые 100 000 ₽, которые агент сторгует, — это минус ${rub(m.per_100k_discount)} в месяц.</p>
     <div class="scenarios">${html.raw(cards.join(""))}</div>
-  </section>`;
-}
-
-// ------------------------------------------------------------------ поиск и цена
-
-function sourceChip(r) {
-  const label = { live: "живые данные", cached: "кеш сессии", snapshot: "сохранённый срез", unavailable: "недоступен", db: "видели за неделю" }[r.status] || r.status;
-  const cls = r.status === "unavailable" ? "tag-red" : r.status === "snapshot" ? "tag-amber" : "tag-green";
-  return html`<span class="source-chip"><b>${r.source}</b> ${r.count} ${plural(r.count, "объявление", "объявления", "объявлений")} <span class="tag ${cls}">${label}</span></span>`;
-}
-
-export function search(d) {
-  const rows = d.rows || [];
-  if (!rows.length) {
-    return html`<section class="panel"><h2 class="panel-title">Поиск</h2><div class="sources">${html.raw(d.report.map(sourceChip).join(""))}</div>
-      <p class="panel-lead">${d.report.map((r) => `${r.source}: ${r.note}`).join("; ")}</p></section>`;
-  }
-  const lo = Math.min(...rows.map((r) => Math.min(r.low, r.price))) * 0.985;
-  const hi = Math.max(...rows.map((r) => Math.max(r.high, r.price))) * 1.015;
-  const x = (v) => ((v - lo) / (hi - lo)) * 100;
-  const items = rows.map((r) => {
-    const dlt = r.price - r.fair;
-    return html`
-      <div class="fair-row">
-        <div class="who">${r.address}<small>${r.district || "район не указан"}, ${r.area} м²</small></div>
-        <div class="fair-scale" aria-label="Коридор ${rub(r.low)}–${rub(r.high)}, цена ${rub(r.price)}">
-          <div class="track"></div>
-          <div class="band" style="left:${x(r.low)}%;width:${x(r.high) - x(r.low)}%"></div>
-          <div class="tick" style="left:${x(r.price)}%" title="Цена объявления ${rub(r.price)}"></div>
-        </div>
-        <div class="fair-price"><b class="num">${rub(r.price)}</b><small>Отклонение от справедливой цены</small><span class="delta num" style="color:${dlt > 0 ? "var(--amber)" : "var(--green-strong)"}">${dlt > 0 ? "+" : "−"}${rub(Math.abs(dlt))}</span></div>
-      </div>`;
-  });
-  return html`
-  <section class="panel">
-    <h2 class="panel-title">Поиск и справедливая цена</h2>
-    ${html.raw(d.confirmed !== undefined ? html`<p class="panel-lead">Все обязательные условия подтверждены: ${d.confirmed}. Нужно уточнить данные: ${d.unverified}. Не подошли: ${d.rejected}.</p>` : "")}
-    <div class="sources">${html.raw(d.report.map(sourceChip).join(""))}</div>
-    ${html.raw(d.store?.total ? html`<p class="store-line">В базе агента по такому запросу — ${d.store.total} ${plural(d.store.total, "квартира", "квартиры", "квартир")}${d.store.mapped ? html`, у ${d.store.mapped} уже проверено по карте, что рядом` : ""}. Признаки считаются один раз и нужны всем, кто ищет похожее.${d.store.crawl ? html` Последний обход Циана ${shortDate(d.store.crawl.finished_at.slice(0, 10))}: +${d.store.crawl.added} новых, ${d.store.crawl.price_changed} изменений цены, ${d.store.crawl.removed} снято.` : ""}</p>` : "")}
-    <details class="price-explanation"><summary>Как рассчитана справедливая цена</summary><p>Справедливая цена — медиана цены м² ближайших похожих квартир (по координатам, площадь ±30%) с поправками на ремонт, год дома и этаж, минус 3% на торг. Коридор — разброс цен аналогов. Если объявление правее коридора — есть что сторговать.</p></details>
-    ${html.raw(items.join(""))}
-    <div class="legend"><span class="l-band">коридор справедливой цены</span><span class="l-tick">цена в объявлении</span></div>
   </section>`;
 }
 

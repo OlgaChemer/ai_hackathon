@@ -115,7 +115,6 @@ def bargaining_arguments(listing: dict, fp: dict) -> list[str]:
         args.append(f"дом {listing['year']} года")
     if listing.get("is_new"):
         args.append("уточню скидку застройщика при ипотеке или полной оплате — у застройщиков это частая практика")
-    args.append("покупатель с одобренной ипотекой Сбера, деньги через сервис безопасных расчётов, выход на сделку за 2–3 недели")
     return args
 
 
