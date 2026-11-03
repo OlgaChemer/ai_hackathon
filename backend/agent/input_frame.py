@@ -13,10 +13,6 @@ SOURCE = {'type':'integer','minimum':1}
 
 def basic_fields(changes):
     fields={k:deepcopy(v) for k,v in changes['properties'].items() if k not in EXCLUDED}
-    # У комнат до пяти уже есть множество вариантов. Второе скалярное представление
-    # побуждает модель выдавать несколько противоречащих записей для одного диапазона.
-    fields['rooms']['minimum']=6
-    fields['rooms']['description']='Один вариант комнатности от 6. Для 0–5 используй rooms_options, даже для одного числа.'
     fields['rooms_options']['description']='Все допустимые числа жилых комнат. 0 — только студия, 1 — однокомнатная, 2 — двухкомнатная и т.д. Неизвестность — null, не 0. Не сужай диапазон или перечисление.'
     return fields
 
@@ -53,7 +49,14 @@ def nullable(value):
     return value
 
 
-def schema(changes):
+def source_words(messages):
+    """Словарь буквальных ссылок для схемы, без извлечения смысла или параметров."""
+    punctuation='.,!?…:;()[]{}«»"'
+    return list(dict.fromkeys(word.strip(punctuation) for message in messages
+        for word in message['text'].split() if word.strip(punctuation)))
+
+
+def schema(changes, messages=None):
     priorities={'type':'string','enum':['required','preferred','remove','unmentioned']}
     criteria={}
     labels={**SCALARS,**{f'feature:{k}':v[0] for k,v in FEATURES.items()},**{f'poi:{k}':v[0] for k,v in geo.POI.items()}}
@@ -65,10 +68,13 @@ def schema(changes):
             criteria[key]=nullable(object_schema({'value':nullable(criterion_value(key,changes)),
                 'priority':priorities}))
         criteria[key]['description']=labels[key]+'. Не названо клиентом — null. Без предположительных значений.'
+    source={'type':'string','maxLength':80,'description':'Выбери одно исходное слово из enum, сохранив его форму и регистр.'}
+    if messages is not None:
+        source['enum']=source_words(messages)
     return object_schema({
         'places':{'type':'array','maxItems':3,'description':'Только названные итоговые территории поиска. Если не менялись — пустой список.',
             'items':object_schema({'words':{'type':'array','minItems':1,'maxItems':8,'items':object_schema({
-                'source':{'type':'string','maxLength':80,'description':'Одно исходное слово названия, без предлогов.'},
+                'source':source,
                 'lemma':{'type':'string','maxLength':80,'description':'Начальная форма этого слова. Не добавляй отсутствующие слова.'}})}})},
         'fields':object_schema({key:nullable(value) for key,value in basic_fields(changes).items()}),
         'criteria':object_schema(criteria),
@@ -95,7 +101,9 @@ def decode(frame, profile, payload, changes_schema):
                 priority=value; actual=None if priority=='remove' else True
             else:
                 priority=value['priority'];actual=value['value']
-            if priority=='unmentioned':continue
+            # null — число не задано, а не ошибочная числовая граница или отмена.
+            # Например «рядом с метро» без количества минут остаётся пожеланием.
+            if priority=='unmentioned' or (actual is None and priority!='remove'):continue
             criteria.append({'key':key,'value':actual,'priority':priority,'source_seq':current})
         frame={**frame,'fields':fields,'criteria':criteria,
                'places':[{**row,'source_seq':current} for row in frame['places']]}

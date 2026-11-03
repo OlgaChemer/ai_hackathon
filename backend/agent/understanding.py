@@ -17,7 +17,8 @@ SYSTEM = """Разбери новый ввод покупателя кварти
 не подменяй их более дешёвым вариантом. Условные будущие изменения сохраняй в wishes, а не применяй заранее.
 Сначала выдели территории, затем остальные поля и каждое условие вместе с его обязательностью.
 places — итоговые территории, где клиент ХОЧЕТ искать. Не включай территории из отрицаний.
-В places.words скопируй каждое исходное слово названия и приведи только его в начальную форму.
+В places.words выбери каждое исходное слово названия из enum source (сохрани его форму),
+а в lemma приведи только его в начальную форму.
 Одному исходному слову соответствует одно нормализованное слово. НЕ добавляй отсутствующие части имени.
 ambiguous_catalog_names перечисляет общие части разных названий. Передай такую часть без достраивания:
 код сам предложит уточнить, какой из соответствующих городов нужен. Полное позднейшее имя разрешает вопрос.
@@ -28,7 +29,8 @@ criteria — объект условий из input_schema. Не названн�
 Для удобств, инфраструктуры и запретов этажей: required — обязательно, preferred — желательно,
 remove — снять условие, null — не менялся. Условие и его желательность — одно значение.
 Для числовых условий, ремонта и материала: {value: значение, priority: required/preferred/remove}.
-При снятии такого условия value=null. Не теряй второе отрицание в одной фразе.
+При снятии такого условия value=null. Если число не названо, не придумывай его: value=null,
+качественное пожелание сохрани в wishes. Не теряй второе отрицание в одной фразе.
 Остальные пожелания и их обязательность сохраняет код: не повторяй их в ответе.
 question — один вопрос только при противоречии или неясном смысле. Известные параметры не переспрашивай.
 options — варианты только к такому вопросу; иначе пустой массив. Не выбирай трактовку за клиента.
@@ -137,7 +139,7 @@ async def prepare(s, proposal=None):
     if s.request_review and s.request_review['seq']==version and s.request_review['base_profile']==s.profile:
         return s.request_review
     from .. import sources
-    contract=input_frame.schema(_schema())
+    contract=input_frame.schema(_schema(), inputs)
     payload={'supported_cities':sources.SUPPORTED_CITIES,'ambiguous_catalog_names':catalog_ambiguities(sources.SUPPORTED_CITIES),
              'messages':inputs,'profile':deepcopy(s.profile),'input_schema':contract,
              'workflow':{'has_search':s.search is not None,'has_selection':bool(s.shown),'has_calls':bool(s.calls),'chosen':bool(s.chosen)}}

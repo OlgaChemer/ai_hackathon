@@ -545,7 +545,9 @@ function setVote(id, dir, toggle) {
 }
 
 initCards({ sendText });
-initVoiceChat({ sendText, selectionAction, setVote, submitSeller });
+initVoiceChat({ sendText, selectionAction, setVote, submitSeller,
+  newChat: () => { newChat(); setChatExpanded(true); },
+});
 
 stepper.addEventListener("click", (e) => {
   const b = e.target.closest("button[data-step]");

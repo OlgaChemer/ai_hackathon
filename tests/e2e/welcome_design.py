@@ -18,6 +18,7 @@ async def check(browser, base, width, folder):
     await page.wait_for_selector('#account button')
     assert await page.locator('#welcomePage').is_visible()
     assert await page.locator('#welcomeMicBtn').is_visible()
+    assert await page.locator('#welcomeTalkBtn').is_visible()
     assert await page.locator('.site-nav [data-action=open-chats]').is_visible()
     assert await page.evaluate('document.documentElement.scrollWidth <= innerWidth')
     if folder:
@@ -57,10 +58,30 @@ async def check(browser, base, width, folder):
     await page.wait_for_function('(old) => location.hash.startsWith("#chat-") && location.hash !== old', arg=old_hash)
     await page.wait_for_selector('#chatLog .confirm-red_lines')
     assert len(starts) == 2 and starts[-1] == {'query': expected}
+    # Разговор с главной создаёт новый подбор только после распознанной фразы.
+    # Используется настоящий Talk с поддельным устройством Chromium; STT здесь не проверяется.
+    await page.locator('[data-action=home]').click()
+    await page.evaluate("import('/js/voice.js').then(({recorder})=>{recorder.available=true})")
+    await page.locator('#welcomeTalkBtn').click()
+    await page.wait_for_selector('#talkPanel', state='visible')
+    assert not await page.locator('#composer').is_visible()
+    assert len(starts)==2
+    assert await page.evaluate("document.getElementById('chatPanel').classList.contains('expanded')")
+    await page.evaluate("""async () => {
+        const {talk}=await import('/js/voicechat.js');
+        if (!talk.on || !talk.stream?.active) throw Error('Микрофон разговора не включён');
+        await talk.onText('Двушка в Казани до 9 млн, наличными');
+    }""")
+    await page.wait_for_selector('#chatLog .confirm-red_lines')
+    assert len(starts)==3 and starts[-1]['query']=='Двушка в Казани до 9 млн, наличными'
+    await page.locator('#talkEnd').click()
+    assert await page.locator('#composer').is_visible()
+    assert not await page.locator('#talkPanel').is_visible()
+    assert await page.evaluate("import('/js/voicechat.js').then(({talk})=>!talk.on && talk.stream===null)")
     assert not errors, errors
     assert await page.evaluate('document.documentElement.scrollWidth <= innerWidth')
     await context.close()
-    print(f'PASS {width}px: старт, микрофон, примеры, история, чат справа и поле сообщения в экране', flush=True)
+    print(f'PASS {width}px: старт, диктовка, разговор с микрофоном и отправкой, примеры, история, чат справа и поле сообщения в экране', flush=True)
 
 
 async def main(args):
@@ -68,7 +89,7 @@ async def main(args):
     if folder:
         folder.mkdir(parents=True, exist_ok=True)
     async with async_playwright() as playwright:
-        browser = await playwright.chromium.launch()
+        browser = await playwright.chromium.launch(args=["--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream"])
         try:
             for width in (1440, 390):
                 await check(browser, args.base.rstrip('/'), width, folder)

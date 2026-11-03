@@ -45,3 +45,7 @@ body[data-page="welcome"] .agent-welcome { min-height:calc(100dvh - 80px); paddi
 #welcomeVoiceStatus:empty { display:none; }
 @media(min-width:861px) and (max-width:1100px) { .workspace.layout { grid-template-columns:minmax(0,1fr) 330px; gap:16px; } }
 @media(max-width:860px) { .workspace.layout { display:block; } .workspace.layout > .chat { position:fixed; left:10px; right:10px; top:auto; bottom:max(10px,env(safe-area-inset-bottom)); height:75px; min-height:0; } .workspace.layout > .chat.expanded { height:min(70dvh,650px); } }
+
+.welcome-actions { flex-wrap:wrap; }
+.welcome-actions .talk-btn { flex:1; justify-content:center; border-radius:14px; min-height:48px; }
+.welcome-actions .btn { flex-basis:100%; }

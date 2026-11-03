@@ -9,6 +9,10 @@ let handlers = { sendText: async () => {}, selectionAction: async () => {}, setV
 export function initVoiceChat(h) {
   handlers = h;
   $("talkBtn").addEventListener("click", () => (talk.on ? stopTalk() : startTalk()));
+  $("welcomeTalkBtn").addEventListener("click", () => {
+    handlers.newChat();
+    startTalk(); // AudioContext создаётся в обработчике нажатия, до сетевых ожиданий.
+  });
   $("talkEnd").addEventListener("click", stopTalk);
   $("talkOrb").addEventListener("click", () => {
     if (talk.busy) talk.interrupt();

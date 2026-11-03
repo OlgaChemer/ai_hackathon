@@ -83,6 +83,33 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(s.profile['metro_max_minutes'])
         self.assertEqual(len(s.llm.seen),1)
 
+    async def test_declined_city_and_single_room_count_use_the_native_contract(self):
+        reply=slots(fields={'rooms':2,'budget_max':15_000_000},places=['Москва'],intent='search')
+        reply['places'][0]['words'][0]['source']='Москве'
+        s=self.agent('Ищу двухкомнатную квартиру в Москве до 15 млн ₽',reply)
+        await U.ensure(s)
+        self.assertEqual((s.profile['city'],s.profile['rooms'],s.profile['budget_max']),('Москва',2,15_000_000))
+        sent=json.loads(s.llm.seen[0][-1]['content'])
+        # Источник выбирается из буквальных слов сообщения в нативной схеме.
+        self.assertIn('Москве',str(sent))
+        contract=input_frame.schema(U._schema(),s.request_inputs)
+        words=contract['properties']['places']['items']['properties']['words']['items']['properties']['source']['enum']
+        self.assertIn('Москве',words)
+        self.assertNotIn('Москва',words)
+        validation_schema=contract['properties']['fields']['properties']['rooms']
+        self.assertEqual(validation_schema['minimum'],0)
+
+    async def test_qualitative_wish_without_a_numeric_limit_does_not_reject_other_fields(self):
+        reply=slots(fields={'rooms':2,'wishes':['рядом с метро']},places=['Москва'],
+                    criteria={'metro_max_minutes':{'value':None,'priority':'required'}},intent='search')
+        reply['places'][0]['words'][0]['source']='Москве'
+        s=self.agent('Ищу двухкомнатную квартиру в Москве рядом с метро',reply)
+        await U.ensure(s)
+        self.assertEqual((s.profile['city'],s.profile['rooms']),('Москва',2))
+        self.assertIsNone(s.profile['metro_max_minutes'])
+        self.assertIn('рядом с метро',s.profile['wishes'])
+        self.assertIsNone(s.profile['budget_max'])
+
     async def test_nullable_slots_clear_only_named_conditions(self):
         s=self.agent('Парк уже не нужен, первый этаж можно.',slots(criteria={
             'poi:park':'remove','not_first_floor':'remove'}),profile={
