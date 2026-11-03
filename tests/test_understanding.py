@@ -168,6 +168,37 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((s.profile['city'],s.profile['budget_max']),('Казань',9_000_000))
         self.assertEqual(len(s.llm.seen),1)
 
+    async def test_source_references_allow_a_paraphrase_without_using_it_as_a_text_parser(self):
+        text='Первый и последний этаж не подходят.'
+        reply=verdict('Первый этаж запрещён',{'not_first_floor':True,'not_last_floor':True})
+        s=self.agent(text,reply)
+        for row in reply['evidence']:
+            row['source_seq']=s.request_inputs[-1]['seq']
+        s.llm.audits=[{'checks':[{'source_seq':s.request_inputs[-1]['seq'],'quote':'Этажи',
+                                 'expected':{'not_first_floor':True,'not_last_floor':True},'clarify':False}]}]
+        await U.ensure(s)
+        self.assertTrue(s.profile['not_first_floor'] and s.profile['not_last_floor'])
+
+    async def test_a_fabricated_source_reference_is_rejected_even_with_a_valid_quote(self):
+        text='Казань'
+        reply=verdict(text,{'city':'Казань'})
+        reply['evidence'][0]['source_seq']=99999
+        s=self.agent(text,reply,reply)
+        before=deepcopy(s.profile)
+        with self.assertRaises(U.UnderstandingError):
+            await U.ensure(s)
+        self.assertEqual(s.profile,before)
+
+    async def test_ambiguous_city_check_can_also_record_already_understood_conditions(self):
+        text='Двушка в Новгороде.'
+        reply=verdict(text,decision='clarify')
+        reply['question']='Великий или Нижний Новгород?'
+        s=self.agent(text,reply)
+        s.llm.audits=[audit_verdict(text,{'rooms':2},clarify=True)]
+        before=deepcopy(s.profile)
+        self.assertEqual((await U.prepare(s))['decision'],'clarify')
+        self.assertEqual(s.profile,before)
+
     async def test_two_invalid_reviews_leave_profile_unchanged(self):
         text = 'Условия прежние.'
         wrong = verdict('нет в исходном сообщении', {'budget_max':999_000_000})

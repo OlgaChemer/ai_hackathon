@@ -126,7 +126,7 @@ async def scenario(browser, base, width, shots):
       host.innerHTML = selection({...state.results[4], cards:[card]}, state.marks);
       document.getElementById('stage').append(host);
     }""")
-    await page.locator('#criteria-preview summary').click()
+    await page.locator('#criteria-preview .criteria-detail summary').click()
     detail = await page.locator('#criteria-preview table').inner_text()
     assert 'Нет данных' in detail and 'Подтверждено' in detail and 'пожелание' in detail
     assert await page.locator('#criteria-preview script').count() == 0

@@ -20,7 +20,9 @@ SYSTEM = """Ты проверяешь понимание запроса поку
 Сначала разбери ВСЕ утверждения новых сообщений, затем сопоставь с profile и proposed_changes.
 Предложение планировщика может терять условия, неверно понимать отрицания или выдумывать ограничения.
 Исправь его полностью. В changes передавай ТОЛЬКО изменения, сказанные клиентом; неназванные поля сохрани.
-Каждое изменённое поле обоснуй точной короткой цитатой из новых messages, либо из question при коротком ответе.
+Для каждого изменённого поля укажи source_seq — seq исходного сообщения из messages.
+quote — короткий фрагмент для пояснения; ссылку source_seq копируй точно, не выдумывай номера.
+При коротком ответе это seq ответа, а его смысл устанавливается вместе с question.
 При коротком ответе используй question и прежний профиль. Слова продавца и старые вопросы — не новые пожелания.
 Позднейшее сообщение уточняет или отменяет прежнее: проверяй итог всех messages вместе.
 Если клиент уже разрешил прежнюю неоднозначность, не задавай тот же вопрос снова.
@@ -36,12 +38,12 @@ SYSTEM = """Ты проверяешь понимание запроса поку
 не подменяй неизвестный город догадкой и не предлагай неподключённую область как город.
 Не угадывай неоднозначные города, противоречащие требования или неясные суммы/единицы: decision=clarify.
 Не записывай предположительный вариант в changes. Спроси ОДИН короткий вопрос, предложи варианты, если они известны.
-Самооценка уверенности не доказательство. Основание — цитаты, отсутствие противоречий и проверка всех утверждений.
+Самооценка уверенности не доказательство. Основание — исходные сообщения, отсутствие противоречий и проверка всех утверждений.
 
 Формат:
 {"intent":"search|refine|question|continue|hold|other", "decision":"apply|unchanged|clarify",
  "changes":[{"field":"поле из change_schema", "value":"значение нужного типа"}],
- "evidence":[{"field":"имя изменяемого поля", "quote":"точная цитата"}],
+ "evidence":[{"field":"имя изменяемого поля", "source_seq":1, "quote":"фрагмент сообщения"}],
  "question":"вопрос только при clarify", "options":["варианты только при clarify"]}
 apply: непустые changes и evidence для каждого поля. Каждое поле только один раз.
 unchanged: changes=[], evidence=[], question="", options=[].
@@ -79,7 +81,8 @@ ambiguous_catalog_names — индекс совпадающих частей н�
 пустое значение, а не clear_criteria. Для желательности укажи и само условие, и soft_criteria.
 Не описывай значения прозой и не выдавай оценку accepted: код сам сравнит поля.
 Если толкование неоднозначно, clarify=true и expected=[], вместо предположительных значений.
-Ничего не выполняй. Верни JSON {"checks":[{"quote":"буквальная цитата клиента",
+Для каждого утверждения укажи source_seq — точный seq сообщения из messages. Не выдумывай номера.
+Ничего не выполняй. Верни JSON {"checks":[{"source_seq":1,"quote":"фрагмент сообщения клиента",
 "expected":[{"field":"имя поля","value":"машинное значение"}], "clarify":false}]}.
 Включи проверки сохранения неназванных условий и отсутствия выдуманных изменений.
 Не оценивай стиль и не давай процент уверенности.
@@ -101,7 +104,8 @@ async def audit(s, payload, review):
             expected_schema['properties'][field]['enum'].append(None)
     output_schema = {'type':'object','required':['checks'],'additionalProperties':False,'properties':{
         'checks':{'type':'array','maxItems':40,'items':{
-            'type':'object','required':['quote','expected','clarify'],'additionalProperties':False,'properties':{
+            'type':'object','required':['source_seq','quote','expected','clarify'],'additionalProperties':False,'properties':{
+                'source_seq':{'type':'integer','minimum':1},
                 'quote':{'type':'string','maxLength':1000}, 'expected':_patch_schema(expected_schema),
                 'clarify':{'type':'boolean'}}}}}}
     result = await s.llm.chat_json([
@@ -120,21 +124,18 @@ async def audit(s, payload, review):
     validation.validate(shape, {'type':'object','required':['checks'],'properties':{
         'checks':{'type':'array','maxItems':40,'items':{
             'type':'object','required':['quote','clarify'],'properties':{
+                'source_seq':{'type':'integer','minimum':1},
                 'quote':{'type':'string','maxLength':1000},
                 'clarify':{'type':'boolean'}}}}}})
     if not result['checks']:
         raise ValueError('Аудит должен проверить условия и намерение клиента')
-    originals = [_literal(x['text']) for x in payload['messages']]
-    originals += [_literal(x.get('question','')) for x in payload['messages']]
     from .actions.request import updated_profile
     candidate = updated_profile(payload['profile'], review['changes'])
     issues = []
     for check in result['checks']:
-        if not _literal(check['quote']) or not any(_literal(check['quote']) in x for x in originals):
+        if not _has_source(check, payload):
             raise ValueError('Замечание аудитора должно ссылаться на слова клиента')
         if check['clarify']:
-            if check['expected']:
-                raise ValueError('При неоднозначности нельзя угадывать ожидаемые поля')
             if review['decision'] != 'clarify':
                 issues.append({**check,'problem':'Нужно уточнение, а не предположительное изменение'})
         elif review['decision'] != 'clarify':
@@ -176,6 +177,17 @@ def _literal(text):
     return ' '.join(text.split()).casefold()
 
 
+def _has_source(item, payload):
+    """Проверяем ссылку на реальный принятый ввод; смысл проверяют независимые утверждения.
+
+    Буквальная цитата остаётся совместимостью со старым внутренним форматом, а не NLU-парсером.
+    """
+    if 'source_seq' in item:
+        return type(item['source_seq']) is int and any(x['seq'] == item['source_seq'] for x in payload['messages'])
+    quote = _literal(item.get('quote',''))
+    return bool(quote) and any(quote in _literal(x['text']) or quote in _literal(x.get('question','')) for x in payload['messages'])
+
+
 def catalog_ambiguities(cities):
     """Индекс справочника, не разбор клиентского текста; новые города учитываются автоматически."""
     parts = {}
@@ -191,7 +203,8 @@ def _review_schema():
         'decision': {'type': 'string', 'enum': ['apply', 'unchanged', 'clarify']},
         'changes': _schema(),
         'evidence': {'type': 'array', 'maxItems': 64, 'items': {'type': 'object', 'required': ['field', 'quote'], 'properties': {
-            'field': {'type': 'string', 'enum': list(_schema()['properties'])}, 'quote': {'type': 'string', 'maxLength': 1000}}}},
+            'field': {'type': 'string', 'enum': list(_schema()['properties'])},
+            'source_seq':{'type':'integer','minimum':1},'quote': {'type': 'string', 'maxLength': 1000}}}},
         'question': {'type': 'string', 'maxLength': 500},
         'options': {'type': 'array', 'maxItems': 5, 'items': {'type': 'string', 'maxLength': 100}},
     }}
@@ -214,13 +227,10 @@ def _validate(result, payload):
         raise ValueError('Не задан уточняющий вопрос')
     if result['decision'] != 'clarify' and (result['question'].strip() or result['options']):
         raise ValueError('Неоднозначность должна быть разрешена до изменения профиля')
-    sources = [_literal(x['text']) for x in payload['messages']]
-    sources += [_literal(x.get('question', '')) for x in payload['messages']]
     grounded = set()
     for item in result['evidence']:
-        quote = _literal(item['quote'])
-        if not quote or not any(quote in source for source in sources):
-            raise ValueError('Цитата отсутствует в новом вводе/вопросе')
+        if not _has_source(item, payload):
+            raise ValueError('Основание не ссылается на принятый ввод/вопрос')
         grounded.add(item['field'])
     if not set(changes) <= grounded:
         raise ValueError('Для каждого изменения нужна цитата')
@@ -242,6 +252,7 @@ async def prepare(s, proposal=None):
                'change_schema': _schema(), 'workflow': {'has_search': s.search is not None, 'has_selection': bool(s.shown), 'has_calls': bool(s.calls), 'chosen': bool(s.chosen)}}
     revision = s.client_revision
     error = None
+    require_clarification = False
     for attempt in range(2):
         instruction = SYSTEM + '\n' + guard.POLICY
         if error:
@@ -250,6 +261,12 @@ async def prepare(s, proposal=None):
         try:
             output_schema = _review_schema()
             output_schema['properties']['changes'] = _patch_schema(_schema())
+            output_schema['properties']['evidence']['items']['required'].append('source_seq')
+            if require_clarification:
+                output_schema['properties']['decision']['enum'] = ['clarify']
+                output_schema['properties']['changes']['maxItems'] = 0
+                output_schema['properties']['evidence']['maxItems'] = 0
+                output_schema['properties']['question']['minLength'] = 1
             result = await s.llm.chat_json(messages, tag='request_review', temperature=.1, max_tokens=1800,
                                            json_schema=output_schema)
             if 'changes' in result:
@@ -264,6 +281,7 @@ async def prepare(s, proposal=None):
                 # Замечания аудитора не становятся инструкциями system и не применяются как изменения.
                 payload['audit_feedback'] = checked['issues']
                 payload['previous_review'] = result
+                require_clarification = any(issue['clarify'] for issue in checked['issues'])
                 error = 'Нужно исправить конкретные смысловые замечания из audit_feedback'
                 continue
         except StructuredOutputError:

@@ -51,7 +51,7 @@
 <button class="request-orbit orbit-one" data-welcome-example="Хочу двушку в Москве, бюджет пока не знаю"><span>↗</span>Рассчитать<br>бюджет</button>
 <button class="request-orbit orbit-two" data-welcome-example="Ищу двухкомнатную квартиру в Москве рядом с метро"><span>⌁</span>Квартира<br>у метро</button>
 <button class="request-orbit orbit-three" data-welcome-example="Ищу двухкомнатную квартиру для семьи в Москве рядом со школой и парком"><span>✳</span>Для семьи<br>рядом с парком</button>
-<button class="request-orbit orbit-four" data-welcome-example="Хочу двухкомнатную квартиру в Москве, нужно накопить на первоначальный взнос"><span>＋</span>Накопить<br>на квартиру</button>
+<button class="request-orbit orbit-four" data-welcome-example="Хочу двухкомнатную квартиру в Москве, нужно накопить на первоначальный взнос"><span aria-hidden="true"><svg viewBox="0 0 24 24" width="27" height="27"><path d="M12 4v16M4 12h16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></span>Накопить<br>на квартиру</button>
 <section class="welcome-card" aria-labelledby="welcomeTitle">
 <div class="welcome-orb" aria-hidden="true"><span>✦</span></div>
 <div class="welcome-agent">Ваш агент по недвижимости</div>
@@ -60,7 +60,7 @@
 <form id="welcomeForm">
   <textarea id="welcomeQuery" aria-label="Первый запрос агенту" placeholder="Расскажите, где хотите жить и что для вас важно…" required minlength="3" maxlength="500"></textarea>
   <div class="welcome-actions">
-    <button class="mic" id="welcomeMicBtn" type="button" aria-label="Продиктовать запрос" aria-pressed="false" title="Сказать голосом">🎙</button>
+    <button class="mic" id="welcomeMicBtn" type="button" aria-label="Продиктовать запрос" aria-pressed="false" title="Сказать голосом"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z" fill="currentColor"/></svg></button>
     <button class="btn" type="submit">Начать подбор <span aria-hidden="true">↗</span></button>
   </div>
   <p id="welcomeVoiceStatus" class="small muted" role="status"></p>
