@@ -28,7 +28,7 @@
 body[data-page="welcome"] .site-header { background:#f5f8f4; border-bottom:0; }
 body[data-page="welcome"] .site-subbar, body[data-page="welcome"] .welcome-brand { display:none; }
 body[data-page="welcome"] .agent-welcome { min-height:calc(100dvh - 80px); padding-top:0; }
-.workspace.layout { display:grid; grid-template-columns:minmax(0,1fr) 380px; gap:28px; max-width:1600px; }
+.workspace.layout { display:grid; grid-template-columns:minmax(0,1fr) clamp(360px,32vw,480px); gap:24px; max-width:1600px; }
 .workspace.layout > .stage { grid-column:1; grid-row:1; }
 .workspace.layout > .chat { grid-column:2; grid-row:1; position:sticky; top:20px; height:calc(100dvh - 245px); min-height:320px; }
 .stage-navigation { display:none; }
@@ -49,3 +49,25 @@ body[data-page="welcome"] .agent-welcome { min-height:calc(100dvh - 80px); paddi
 .welcome-actions { flex-wrap:wrap; }
 .welcome-actions .talk-btn { flex:1; justify-content:center; border-radius:14px; min-height:48px; }
 .welcome-actions .btn { flex-basis:100%; }
+
+/* Переписка занимает доступную высоту; квартиры и сообщения прокручиваются независимо. */
+.chat-log { min-height:0; }
+.chat-head,.composer,.talk { flex-shrink:0; }
+.workspace .workspace-heading { padding:0; margin:0; max-width:none; }
+.workspace .composer { padding:10px 14px; gap:8px; }
+.workspace .composer textarea { min-height:60px; height:60px; max-height:120px; padding:8px 12px; }
+@media(min-width:861px) {
+  body[data-page="agent"] { height:100dvh; min-height:0; overflow:hidden; display:flex; flex-direction:column; }
+  body[data-page="agent"] .site-header { flex-shrink:0; }
+  body[data-page="agent"] .site-bar { padding-top:12px; padding-bottom:10px; }
+  body[data-page="agent"] .site-subbar { padding-top:0; padding-bottom:8px; }
+  body[data-page="agent"] #agentApp { flex:1; min-height:0; display:flex; flex-direction:column; }
+  body[data-page="agent"] .workspace.layout { flex:1; min-height:0; width:100%; margin:0 auto; padding-top:16px; padding-bottom:16px; grid-template-rows:minmax(0,1fr); align-items:stretch; }
+  body[data-page="agent"] .footnote { padding:0 16px 6px; margin:0; font-size:11px; flex-shrink:0; }
+  body[data-page="agent"] .workspace.layout > .chat { position:relative; top:auto; height:100%; min-height:0; max-height:none; }
+  body[data-page="agent"] .workspace.layout > .stage { min-height:0; overflow-y:auto; padding-right:6px; scrollbar-gutter:stable; }
+}
+@media(max-width:860px) {
+  .workspace.layout > .chat.expanded { height:85dvh; }
+  .workspace.layout > .chat.expanded .chat-log { max-height:none; }
+}

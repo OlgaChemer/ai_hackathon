@@ -56,7 +56,7 @@ function renderStage() {
   unmountMap(stage.querySelector("[data-map]"));
   stage.innerHTML = "";
   stage.innerHTML = state.results[4] ? V.selection(state.results[4], state.marks)
-    : state.searching ? V.waiting("Ищу квартиры", state.searching)
+    : state.searching ? ""
     : V.waiting("Здесь появятся квартиры", "Расскажите агенту о бюджете, городе и пожеланиях. Профиль и решения останутся в чате.");
   if (state.searching) {
     stage.setAttribute("aria-busy", "true");

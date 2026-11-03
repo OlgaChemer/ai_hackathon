@@ -60,10 +60,22 @@ async def main(base):
         # Реальный сигнал поиска меняет правую область, даже если старая подборка ещё видна.
         await page.evaluate("""async () => {
           const {state}=await import('/js/state.js');
+          window.savedSelection=state.results[4];
+          delete state.results[4];
           state.es.onmessage(new MessageEvent('message',{data:JSON.stringify({type:'search_progress',on:true,text:'Проверяю квартиры…'})}));
         }""")
         await page.wait_for_selector('#stage .search-spinner')
         assert await page.locator('#stage').get_attribute('aria-busy') == 'true'
+        assert await page.locator('#stage .search-progress').count()==1
+        assert await page.locator('#stage .waiting-panel').count()==0
+        # При уточнении запроса прежние квартиры остаются под тем же единственным индикатором.
+        await page.evaluate("""async () => {
+          const {state}=await import('/js/state.js');
+          state.results[4]=window.savedSelection;
+          state.es.onmessage(new MessageEvent('message',{data:JSON.stringify({type:'search_progress',on:true,text:'Проверяю квартиры…'})}));
+        }""")
+        await page.wait_for_selector('#stage [data-selection=proceed]')
+        assert await page.locator('#stage .search-progress').count()==1
         await page.evaluate("""async () => {
           const {state}=await import('/js/state.js');
           state.es.onmessage(new MessageEvent('message',{data:JSON.stringify({type:'search_progress',on:false})}));
