@@ -17,7 +17,7 @@ echo "→ Ставлю пакеты из requirements.txt"
 
 if [ ! -f .env ]; then
   cp .env.example .env
-  echo "→ Создал .env из .env.example — впишите DEEPSEEK_API_KEY (или настройки GigaChat)"
+  echo "→ Создал .env из .env.example — впишите GIGACHAT_CREDENTIALS для Ultra"
 fi
 
 if [ "${SKIP_WHISPER:-0}" != "1" ]; then

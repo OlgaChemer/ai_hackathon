@@ -18,7 +18,7 @@ def _bool(name: str, default: bool) -> bool:
 
 @dataclass(frozen=True)
 class Settings:
-    llm_provider: str = os.getenv("LLM_PROVIDER", "deepseek").strip().lower()
+    llm_provider: str = os.getenv("LLM_PROVIDER", "gigachat").strip().lower()
 
     deepseek_api_key: str = os.getenv("DEEPSEEK_API_KEY", "")
     deepseek_base_url: str = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
