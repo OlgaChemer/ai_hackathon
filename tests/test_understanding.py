@@ -126,6 +126,37 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
             await U.ensure(s)
         self.assertEqual(s.profile,before)
 
+    async def test_catalogue_word_order_does_not_change_the_resolved_city(self):
+        s=self.agent('Великий Новгород',frame(places=['Новгород Великий']))
+        await U.ensure(s)
+        self.assertEqual(s.profile['city'],'Великий Новгород')
+
+    async def test_identical_field_repetitions_are_a_single_update(self):
+        reply=frame(fields={'budget_max':5_000_000})
+        reply['fields'].append(deepcopy(reply['fields'][0]))
+        s=self.agent('Пять миллионов, потолок пять.',reply)
+        await U.ensure(s)
+        self.assertEqual(s.profile['budget_max'],5_000_000)
+        self.assertEqual(len(s.llm.seen),1)
+
+    async def test_a_later_message_overrides_an_older_typed_value_even_if_rows_are_reordered(self):
+        reply=frame(fields={'budget_max':4_000_000})
+        reply['fields'][0]['source_seq']=2
+        reply['fields'].append({'field':'budget_max','value':5_000_000,'source_seq':1})
+        s=self.agent('До пяти миллионов.',reply)
+        event=s.push('message',role='user',text='Передумал, до четырёх.')
+        s.accept_request(event['text'],event['seq'])
+        await U.ensure(s)
+        self.assertEqual(s.profile['budget_max'],4_000_000)
+
+    async def test_conflicting_values_in_one_message_require_clarification(self):
+        reply=frame(fields={'budget_max':4_000_000})
+        reply['fields'].append({'field':'budget_max','value':5_000_000,'source_seq':1})
+        s=self.agent('Четыре или пять, ещё не решил.',reply,reply)
+        before=deepcopy(s.profile)
+        with self.assertRaises(U.UnderstandingError):await U.ensure(s)
+        self.assertEqual(s.profile,before)
+
     async def test_understanding_uses_the_whole_message_without_trusting_planner_proposals(self):
         text = 'Однушка или трёшка, до пяти с половиной лямов, вторичка, наличка, Казань.'
         corrected = {'rooms_options':[1,3], 'budget_max':5_500_000, 'housing':'secondary', 'payment':'cash', 'city':'Казань'}

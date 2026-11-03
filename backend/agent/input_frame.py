@@ -10,7 +10,12 @@ SOURCE = {'type':'integer','minimum':1}
 
 
 def basic_fields(changes):
-    return {k:v for k,v in changes['properties'].items() if k not in EXCLUDED}
+    fields={k:deepcopy(v) for k,v in changes['properties'].items() if k not in EXCLUDED}
+    # У комнат до пяти уже есть множество вариантов. Второе скалярное представление
+    # побуждает модель выдавать несколько противоречащих записей для одного диапазона.
+    fields['rooms']['minimum']=6
+    fields['rooms']['description']='Один вариант комнатности от 6. Для 0–5 используй rooms_options, даже для одного числа.'
+    return fields
 
 
 def criterion_value(key, changes):
@@ -21,6 +26,21 @@ def criterion_value(key, changes):
 
 def object_schema(properties):
     return {'type':'object','additionalProperties':False,'required':list(properties),'properties':properties}
+
+
+def latest_rows(rows, key):
+    """Повтор факта допустим; разные сообщения применяются по порядку, конфликт одного сообщения — нет."""
+    result={}
+    for row in rows:
+        previous=result.get(row[key])
+        if previous:
+            def comparable(item):
+                return {k:sorted(v,key=str) if isinstance(v,list) else v for k,v in item.items() if k!='source_seq'}
+            if row['source_seq']==previous['source_seq'] and comparable(row)!=comparable(previous):
+                raise ValueError('Противоречащие значения поля '+str(row[key])+' требуют уточнения')
+            if row['source_seq'] < previous['source_seq']:continue
+        result[row[key]]=row
+    return list(result.values())
 
 
 def schema(changes):
@@ -74,12 +94,11 @@ def decode(frame, profile, payload, changes_schema):
             raise ValueError('Неизвестное поле запроса')
         field=row['field']
         validation.validate(row,object_schema({'field':{'type':'string','enum':[field]},'value':fields[field],'source_seq':SOURCE}))
-        if field in changes:
-            raise ValueError('Поле повторено: передай одно итоговое значение')
-        put(field,row['value'],source(row))
+        source(row)
+    for row in latest_rows(frame['fields'],'field'):
+        put(row['field'],row['value'],row['source_seq'])
     soft=set(profile.get('soft_criteria') or [])
     lists={key:list(profile.get(key) or []) for key in ('poi','features')}
-    seen=set()
     for row in frame['criteria']:
         if not isinstance(row,dict) or row.get('key') not in CRITERIA_KEYS:
             raise ValueError('Неизвестное условие')
@@ -90,10 +109,9 @@ def decode(frame, profile, payload, changes_schema):
             raise ValueError('Снятие условия требует value=null')
         validation.validate(row,object_schema({'key':{'type':'string','enum':[key]},'value':value_schema,
             'priority':{'type':'string','enum':['remove'] if removing else ['required','preferred']},'source_seq':SOURCE}))
-        seq=source(row)
-        if key in seen:
-            raise ValueError('Условие повторено: передай итоговую обязательность')
-        seen.add(key)
+        source(row)
+    for row in latest_rows(frame['criteria'],'key'):
+        key=row['key'];removing=row['priority']=='remove';seq=row['source_seq']
         soft.discard(key)
         if removing:
             put('clear_criteria',[*(changes.get('clear_criteria') or []),key],seq)
@@ -109,6 +127,7 @@ def decode(frame, profile, payload, changes_schema):
             put(key,row['value'],seq)
         put('soft_criteria',sorted(soft),seq)
     canonical={x.casefold():x for x in payload['supported_cities']}
+    word_sets={tuple(sorted(x.casefold().split())):x for x in payload['supported_cities']}
     ambiguous={k.casefold():v for k,v in payload['ambiguous_catalog_names'].items()}
     places=[]
     question,options=frame['question'],frame['options']
@@ -123,8 +142,9 @@ def decode(frame, profile, payload, changes_schema):
                 raise ValueError('Каждому исходному слову названия нужна одна начальная форма, без добавления слов')
             seen_words.add(raw)
         name=' '.join(w['lemma'].strip() for w in row['words']); normalized=name.casefold()
-        if normalized in canonical:
-            places.append(canonical[normalized])
+        matched=canonical.get(normalized) or word_sets.get(tuple(sorted(normalized.split())))
+        if matched:
+            places.append(matched)
         elif normalized in ambiguous:
             options=ambiguous[normalized]
             question='Какой город вы имеете в виду: ' + ' или '.join(options) + '?'

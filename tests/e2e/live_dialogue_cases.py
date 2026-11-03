@@ -177,7 +177,10 @@ async def scenario(base, name):
                 delivery = await dialogue.send(text)
             else:
                 delivery = None
-            outcome = await dialogue.round()
+            if delivery and delivery.get('handled_as') in ('unresolved','blocked','question'):
+                outcome = {'outcome':'error','text':'Уточнение запроса не принято: ' + delivery['handled_as']}
+            else:
+                outcome = await dialogue.round()
             errors = validate(name, phase, dialogue, outcome)
             failed |= bool(errors)
             cards = dialogue.cards

@@ -137,17 +137,20 @@ class TurnTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_human_card_wait_does_not_use_active_budget(self):
         s = session.create_session('Квартира', ScriptedLLM())
-        turn = runtime.Turn(s.id, .04)
+        # Ожидание дольше бюджета, но сам бюджет допускает задержку записи карточки
+        # в SQLite на загруженной машине (40 мс периодически истекали ещё до паузы).
+        budget = .2
+        turn = runtime.Turn(s.id, budget)
         task = asyncio.create_task(turn.run(lambda: s.ask('clarify', 'Город', 'Какой город?'),
                                             kind='tool', name='ask_client'))
         self.tasks.append(task)
         while not s.pending:
             await asyncio.sleep(0)
-        await asyncio.sleep(.08)
+        await asyncio.sleep(budget * 1.5)
         self.assertFalse(task.done())
         s.resolve('clarify', True, {'text': 'Казань'})
         self.assertEqual((await task)['data']['text'], 'Казань')
-        self.assertLess(turn.elapsed, .04)
+        self.assertLess(turn.elapsed, budget)
 
     async def test_seller_wait_does_not_use_active_budget(self):
         queue = asyncio.Queue()
