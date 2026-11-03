@@ -43,38 +43,66 @@ def latest_rows(rows, key):
     return list(result.values())
 
 
+def nullable(value):
+    value=deepcopy(value)
+    value['type']=[value['type'],'null']
+    if 'enum' in value:value['enum'].append(None)
+    return value
+
+
 def schema(changes):
-    fields = basic_fields(changes)
+    priorities={'type':'string','enum':['required','preferred','remove','unmentioned']}
+    criteria={}
+    for key in CRITERIA_KEYS:
+        if key.startswith(('poi:','feature:')) or key in ('not_first_floor','not_last_floor'):
+            criteria[key]=nullable({'type':'string','enum':['required','preferred','remove'],
+                'description':'Обязательное / желательное / снять условие. null — не названо.'})
+        else:
+            criteria[key]=nullable(object_schema({'value':nullable(criterion_value(key,changes)),
+                'priority':priorities}))
     return object_schema({
-        'places':{'type':'array','maxItems':3,'description':'Итоговые территории поиска. Только положительно выбранные; не упомянутые в отрицании.',
-                  'items':object_schema({'words':{'type':'array','minItems':1,'maxItems':8,'items':object_schema({
-                    'source':{'type':'string','maxLength':80,'description':'Одно слово названия, буквально из сообщения, без предлогов.'},
-                    'lemma':{'type':'string','maxLength':80,'description':'Начальная форма только этого слова. Одно слово, без добавления пропущенной части названия.'}})},'source_seq':SOURCE})},
-        'fields':{'type':'array','maxItems':len(fields),'description':'Все остальные явно названные параметры. Неназванные поля не передавай.',
-                  'items':{'anyOf':[object_schema({'field':{'type':'string','enum':[k]},'value':deepcopy(v),'source_seq':SOURCE}) for k,v in fields.items()]}},
-        'criteria':{'type':'array','maxItems':len(CRITERIA_KEYS),'description':'Каждое названное условие вместе с обязательностью. При отмене priority=remove,value=null.',
-                    'items':{'anyOf':[
-                        *[object_schema({'key':{'type':'string','enum':[k]},'value':criterion_value(k,changes),
-                            'priority':{'type':'string','enum':['required','preferred']},'source_seq':SOURCE}) for k in CRITERIA_KEYS],
-                        object_schema({'key':{'type':'string','enum':CRITERIA_KEYS},'value':{'type':'null'},
-                            'priority':{'type':'string','enum':['remove']},'source_seq':SOURCE})]}},
-        'question':{'type':'string','maxLength':500,'description':'Один вопрос только при неясном смысле/противоречии. Иначе пустая строка.'},
+        'places':{'type':'array','maxItems':3,'description':'Только названные итоговые территории поиска. Если не менялись — пустой список.',
+            'items':object_schema({'words':{'type':'array','minItems':1,'maxItems':8,'items':object_schema({
+                'source':{'type':'string','maxLength':80,'description':'Одно исходное слово названия, без предлогов.'},
+                'lemma':{'type':'string','maxLength':80,'description':'Начальная форма этого слова. Не добавляй отсутствующие слова.'}})}})},
+        'fields':object_schema({key:nullable(value) for key,value in basic_fields(changes).items()}),
+        'criteria':object_schema(criteria),
+        'question':{'type':'string','maxLength':500,'description':'Один вопрос только при неясности, иначе пустая строка.'},
         'options':{'type':'array','maxItems':5,'items':{'type':'string','maxLength':100}},
-        'intent':{'type':'string','enum':INTENTS,'description':'question — информационный вопрос, не меняющий поиск; refine — новые пожелания; hold — явно пока не искать; search — начать; continue — продолжить; other — остальное.'},
+        'intent':{'type':'string','enum':INTENTS,'description':'question — информационный вопрос; refine — изменить условия; hold — пока не искать; search — начать; continue — продолжить; other — остальное.'},
     })
 
 
 def decode(frame, profile, payload, changes_schema):
     """Преобразует машинные поля; свободный текст здесь не разбирается."""
-    envelope = {k:v for k,v in frame.items() if k not in ('fields','criteria','places')}
-    envelope_schema = schema(changes_schema)
-    validation.validate(frame.get('places'),envelope_schema['properties']['places'])
-    envelope_schema['properties'] = {k:v for k,v in envelope_schema['properties'].items() if k not in ('fields','criteria','places')}
-    envelope_schema['required'] = list(envelope_schema['properties'])
-    validation.validate(envelope, envelope_schema)
+    native=isinstance(frame.get('fields'),dict)
+    native_schema=schema(changes_schema)
+    current=payload['messages'][-1]['seq']
+    if native:
+        validation.validate(frame['fields'],native_schema['properties']['fields'])
+        raw_criteria=frame.get('criteria')
+        validation.validate(raw_criteria,native_schema['properties']['criteria'])
+        fields=[{'field':k,'value':v,'source_seq':current} for k,v in frame['fields'].items() if v is not None]
+        criteria=[]
+        for key,value in raw_criteria.items():
+            if value is None:continue
+            if isinstance(value,str):
+                priority=value; actual=None if priority=='remove' else True
+            else:
+                priority=value['priority'];actual=value['value']
+            if priority=='unmentioned':continue
+            criteria.append({'key':key,'value':actual,'priority':priority,'source_seq':current})
+        frame={**frame,'fields':fields,'criteria':criteria,
+               'places':[{**row,'source_seq':current} for row in frame['places']]}
+    envelope={k:v for k,v in frame.items() if k not in ('fields','criteria','places')}
+    envelope_schema={**native_schema,'properties':{k:v for k,v in native_schema['properties'].items() if k not in ('fields','criteria','places')}}
+    envelope_schema['required']=list(envelope_schema['properties'])
+    validation.validate(envelope,envelope_schema)
+    place_schema=deepcopy(native_schema['properties']['places'])
+    place_schema['items']['properties']['source_seq']=SOURCE
+    place_schema['items']['required'].append('source_seq')
+    validation.validate(frame.get('places'),place_schema)
     if frame['intent']=='question':
-        # Информационный вопрос не даёт полномочий менять запрос, даже если модель
-        # повторила известные параметры в остальных полях. Карточка остаётся открытой.
         return {'intent':'question','decision':'unchanged','changes':{},'evidence':[], 'question':'','options':[]}
     seqs = {x['seq'] for x in payload['messages']}
     def source(row):
@@ -133,16 +161,18 @@ def decode(frame, profile, payload, changes_schema):
     question,options=frame['question'],frame['options']
     for row in frame['places']:
         seq=source(row)
-        text=next(x['text'] for x in payload['messages'] if x['seq']==seq).casefold()
+        text=' '.join(x['text'] for x in payload['messages'] if native or x['seq']==seq).casefold()
         if not row['words']:raise ValueError('Нужно исходное название территории')
-        seen_words=set()
+        seen_words=set();valid=True
         for word in row['words']:
-            raw=word['source'].strip().casefold(); lemma=word['lemma'].strip()
-            if not raw or raw not in text or raw in seen_words or not lemma or any(c.isspace() for c in lemma):
-                raise ValueError('Каждому исходному слову названия нужна одна начальная форма, без добавления слов')
+            raw=word['source'].strip().casefold();lemma=word['lemma'].strip()
+            if not raw or raw not in text or raw in seen_words or not lemma or any(c.isspace() for c in lemma):valid=False
             seen_words.add(raw)
         name=' '.join(w['lemma'].strip() for w in row['words']); normalized=name.casefold()
         matched=canonical.get(normalized) or word_sets.get(tuple(sorted(normalized.split())))
+        if not valid:
+            if native and matched in {profile.get('city'),*(profile.get('cities') or [])}:continue
+            raise ValueError('Каждому исходному слову названия нужна одна начальная форма, без добавления слов')
         if matched:
             places.append(matched)
         elif normalized in ambiguous:

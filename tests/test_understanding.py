@@ -9,6 +9,7 @@ from backend import db, sources
 from backend.agent import actions, qa, session, understanding as U
 from backend.agent.actions import request as R
 from backend.agent.profile import merge_profile
+from backend.agent import input_frame
 from backend.llm import LLMClient, LLMError, LLMResponse, ToolCall
 
 
@@ -40,6 +41,14 @@ def frame(*, places=None, fields=None, criteria=None, intent='refine'):
             'question':'','options':[],'intent':intent}
 
 
+def slots(*, fields=None, criteria=None, places=None, intent='refine'):
+    schema=input_frame.schema(U._schema())
+    return {'places':[{'words':[{'source':w,'lemma':w} for w in x.split()]} for x in places or []],
+            'fields':{**{k:None for k in schema['properties']['fields']['properties']},**(fields or {})},
+            'criteria':{**{k:None for k in schema['properties']['criteria']['properties']},**(criteria or {})},
+            'question':'','options':[],'intent':intent}
+
+
 
 
 class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
@@ -62,6 +71,34 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(s.profile['soft_criteria'],['poi:park'])
         self.assertTrue(s.profile['not_first_floor'] and s.profile['not_last_floor'])
         self.assertEqual(len(s.llm.seen),1)
+
+    async def test_nullable_slots_do_not_invent_constraints_and_preserve_priority(self):
+        s=self.agent('Самара, однушка или двушка до 10 млн, парк желателен.',slots(places=['Самара'],fields={
+            'rooms_options':[1,2],'budget_max':10_000_000,'housing':'secondary','payment':'cash'},
+            criteria={'poi:park':'preferred','not_first_floor':'required','not_last_floor':'required'},intent='search'))
+        await U.ensure(s)
+        self.assertEqual(s.profile['rooms_options'],[1,2])
+        self.assertEqual(s.profile['poi'],['park'])
+        self.assertEqual(s.profile['soft_criteria'],['poi:park'])
+        self.assertIsNone(s.profile['metro_max_minutes'])
+        self.assertEqual(len(s.llm.seen),1)
+
+    async def test_nullable_slots_clear_only_named_conditions(self):
+        s=self.agent('Парк уже не нужен, первый этаж можно.',slots(criteria={
+            'poi:park':'remove','not_first_floor':'remove'}),profile={
+            'poi':['park','school'],'soft_criteria':['poi:park'],'not_first_floor':True,'not_last_floor':True})
+        await U.ensure(s)
+        self.assertEqual(s.profile['poi'],['school'])
+        self.assertEqual(s.profile['soft_criteria'],[])
+        self.assertFalse(s.profile['not_first_floor'])
+        self.assertTrue(s.profile['not_last_floor'])
+
+    async def test_unchanged_geography_repeated_from_profile_does_not_require_another_question(self):
+        s=self.agent('Первый этаж теперь можно.',slots(places=['Самара'],criteria={'not_first_floor':'remove'}),profile={
+            'city':'Самара','rooms':2,'budget_max':9_000_000,'not_first_floor':True})
+        await U.ensure(s)
+        self.assertEqual(s.profile['city'],'Самара')
+        self.assertFalse(s.profile['not_first_floor'])
 
     async def test_typed_removal_preserves_other_conditions_and_priorities(self):
         s=self.agent('Парк не нужен, первый можно, последний нельзя.',frame(criteria=[
