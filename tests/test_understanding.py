@@ -168,6 +168,21 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
         await U.ensure(s)
         self.assertEqual(s.profile['city'],'Великий Новгород')
 
+    async def test_short_answer_resolves_an_existing_catalogue_choice(self):
+        s=self.agent('Великий',slots(places=['Великий']))
+        s.request_inputs[-1]['options']=['Великий Новгород','Нижний Новгород']
+        await U.ensure(s)
+        self.assertEqual(s.profile['city'],'Великий Новгород')
+
+    async def test_card_options_are_preserved_as_context_for_a_text_reply(self):
+        s=session.create_session('',ReviewModel())
+        future=asyncio.get_running_loop().create_future()
+        s.pending['clarify']=future
+        s.push('confirm',kind='clarify',text='Какой город?',chips=['Великий Новгород','Нижний Новгород'])
+        event=s.push('message',role='user',text='Великий')
+        s.accept_request(event['text'],event['seq'])
+        self.assertEqual(s.request_inputs[-1]['options'],['Великий Новгород','Нижний Новгород'])
+
     async def test_identical_field_repetitions_are_a_single_update(self):
         reply=frame(fields={'budget_max':5_000_000})
         reply['fields'].append(deepcopy(reply['fields'][0]))

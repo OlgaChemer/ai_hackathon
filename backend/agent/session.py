@@ -185,9 +185,10 @@ class Session:
         return True
 
     def accept_request(self, text, seq):
-        question = next((e.get("text", "") for e in reversed(self.history)
-                         if e.get("type") == "confirm" and e.get("kind") in self.pending), "")
-        self.request_inputs.append({"seq": seq, "text": text, "question": question})
+        question = next((e for e in reversed(self.history)
+                         if e.get("type") == "confirm" and e.get("kind") in self.pending), {})
+        self.request_inputs.append({"seq": seq, "text": text, "question": question.get('text',''),
+                                    "options": question.get('chips') or []})
         self.request_review = None
 
     async def receive_text(self, text: str, marks: dict | None = None) -> str:

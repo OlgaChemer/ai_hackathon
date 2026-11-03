@@ -157,6 +157,7 @@ def decode(frame, profile, payload, changes_schema):
     canonical={x.casefold():x for x in payload['supported_cities']}
     word_sets={tuple(sorted(x.casefold().split())):x for x in payload['supported_cities']}
     ambiguous={k.casefold():v for k,v in payload['ambiguous_catalog_names'].items()}
+    choices=[x for x in payload['messages'][-1].get('options',[]) if x in payload['supported_cities']]
     places=[]
     question,options=frame['question'],frame['options']
     for row in frame['places']:
@@ -170,6 +171,10 @@ def decode(frame, profile, payload, changes_schema):
             seen_words.add(raw)
         name=' '.join(w['lemma'].strip() for w in row['words']); normalized=name.casefold()
         matched=canonical.get(normalized) or word_sets.get(tuple(sorted(normalized.split())))
+        if not matched and choices:
+            words=set(normalized.split())
+            candidates=[x for x in choices if words <= set(x.casefold().split())]
+            if len(candidates)==1:matched=candidates[0]
         if not valid:
             if native and matched in {profile.get('city'),*(profile.get('cities') or [])}:continue
             raise ValueError('Каждому исходному слову названия нужна одна начальная форма, без добавления слов')
