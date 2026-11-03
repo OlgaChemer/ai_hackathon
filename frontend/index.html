@@ -7,11 +7,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css">
-  <link rel="stylesheet" href="appearance.css">
-  <link rel="stylesheet" href="approved-design.css">
-  <link rel="stylesheet" href="shell.css">
-  <link rel="stylesheet" href="ux-ui.css">
+  <link rel="stylesheet" href="styles.css?v=d41f847a6a63">
+<script type="importmap" id="asset-versions">{"imports":{"/js/account.js":"/js/account.js?v=aabff7ecbc29","/js/api.js":"/js/api.js?v=aa10ac1a60b8","/js/app.js":"/js/app.js?v=3bad1b432a82","/js/call.js":"/js/call.js?v=0beab1db0fae","/js/cards.js":"/js/cards.js?v=ad30508e426a","/js/chart.js":"/js/chart.js?v=81ebc01f0577","/js/chats.js":"/js/chats.js?v=a686fb6467a2","/js/economics.js":"/js/economics.js?v=acb715bc0fdf","/js/format.js":"/js/format.js?v=4850c2e5a062","/js/map.js":"/js/map.js?v=4e1541ae2d1b","/js/phone.js":"/js/phone.js?v=74a8d9666c36","/js/shell.js":"/js/shell.js?v=285f934a590b","/js/speech.js":"/js/speech.js?v=32b05aba6215","/js/state.js":"/js/state.js?v=c2e5bbedf5a3","/js/talk.js":"/js/talk.js?v=9e017d4d0173","/js/views.js":"/js/views.js?v=7a8d04c18748","/js/voice.js":"/js/voice.js?v=e5d04be1f47d","/js/voicechat.js":"/js/voicechat.js?v=59141cba66c9"}}</script>
 </head>
 <body data-page="welcome">
 <header class="site-header">
@@ -40,9 +37,8 @@
 <div class="site-subbar">
 <span class="site-section" id="pageLabel">Поиск квартиры</span>
 <button data-action="focus-city">Город поиска</button>
-<nav class="tabs" aria-label="Текущий подбор и экономика">
+<nav class="tabs" aria-label="Текущий подбор">
   <button class="tab" id="currentSearchLink" data-tab="deal" hidden>Продолжить подбор</button>
-  <button class="tab" data-tab="economics">Экономика для Сбера</button>
 </nav>
 </div>
 </header>
@@ -52,12 +48,24 @@
 <button class="request-orbit orbit-one" data-welcome-example="Хочу двушку в Москве, бюджет пока не знаю"><span>↗</span>Рассчитать<br>бюджет</button>
 <button class="request-orbit orbit-two" data-welcome-example="Ищу двухкомнатную квартиру в Москве рядом с метро"><span>⌁</span>Квартира<br>у метро</button>
 <button class="request-orbit orbit-three" data-welcome-example="Ищу двухкомнатную квартиру для семьи в Москве рядом со школой и парком"><span>✳</span>Для семьи<br>рядом с парком</button>
-<button class="request-orbit orbit-four" data-welcome-example="Хочу двухкомнатную квартиру в Москве, нужно накопить на первоначальный взнос"><span>＋</span>Накопить<br>на квартиру</button>
+<button class="request-orbit orbit-four" data-welcome-example="Хочу двухкомнатную квартиру в Москве, нужно накопить на первоначальный взнос"><span aria-hidden="true"><svg viewBox="0 0 24 24" width="27" height="27"><path d="M12 4v16M4 12h16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></span>Накопить<br>на квартиру</button>
 <section class="welcome-card" aria-labelledby="welcomeTitle">
 <div class="welcome-orb" aria-hidden="true"><span>✦</span></div>
 <div class="welcome-agent">Ваш агент по недвижимости</div>
 <h1 id="welcomeTitle">Какую квартиру<br>ищем?</h1>
-<div class="welcome-examples" aria-label="Примеры запросов"><button type="button" data-welcome-example="Ищу однокомнатную квартиру в Казани">Однокомнатная квартира в Казани <span aria-hidden="true">↗</span></button><button type="button" data-welcome-example="Ищу двухкомнатную квартиру в Москве до 15 млн ₽">Двухкомнатная в Москве до 15 млн ₽ <span aria-hidden="true">↗</span></button></div><form id="welcomeForm"><textarea id="welcomeQuery" aria-label="Первый запрос агенту" placeholder="Расскажите, где хотите жить и что для вас важно…" required></textarea><button class="btn" type="submit">Начать подбор <span aria-hidden="true">↗</span></button></form>
+<div class="welcome-examples" aria-label="Примеры запросов"><button type="button" data-welcome-example="Ищу однокомнатную квартиру в Казани">Однокомнатная квартира в Казани <span aria-hidden="true">↗</span></button><button type="button" data-welcome-example="Ищу двухкомнатную квартиру в Москве до 15 млн ₽">Двухкомнатная в Москве до 15 млн ₽ <span aria-hidden="true">↗</span></button></div>
+<form id="welcomeForm">
+  <textarea id="welcomeQuery" aria-label="Первый запрос агенту" placeholder="Расскажите, где хотите жить и что для вас важно…" required minlength="3" maxlength="500"></textarea>
+  <div class="welcome-actions">
+    <button class="mic" id="welcomeMicBtn" type="button" aria-label="Продиктовать запрос" aria-pressed="false" title="Сказать голосом"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z" fill="currentColor"/></svg></button>
+    <button class="talk-btn" id="welcomeTalkBtn" type="button" title="Разговаривать с агентом голосом, без кнопок">
+      <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M4 10v4M8 7v10M12 4v16M16 7v10M20 10v4" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></svg>
+      <span>Разговор</span>
+    </button>
+    <button class="btn" type="submit">Начать подбор <span aria-hidden="true">↗</span></button>
+  </div>
+  <p id="welcomeVoiceStatus" class="small muted" role="status"></p>
+</form>
 </section></div>
 
 </main>
@@ -86,6 +94,7 @@
 </label>
 <button type="submit" class="btn" data-action="portal-search">Найти квартиры</button>
 </form>
+<button type="button" class="home-voice" data-action="voice-search">🎙 Рассказать о квартире голосом</button>
 <div class="agg-sources">
 <span>Данные для подбора</span>
 <span class="agg-source">Циан</span>
@@ -140,15 +149,13 @@
 <form id="entryForm">
 <textarea id="entryQuery" aria-label="Первый запрос агенту" required minlength="3" maxlength="500" placeholder="Например: ищу квартиру для семьи в Москве…">
 </textarea>
-<button class="btn" type="submit">Начать подбор</button>
+<div class="entry-actions"><button class="mic" id="entryMicBtn" type="button" aria-label="Продиктовать пожелания" title="Сказать голосом">🎙</button><button class="btn" type="submit">Начать подбор</button></div><p id="entryVoiceStatus" class="small muted" role="status"></p>
 </form>
 
 </div>
 </dialog>
 
 <div id="agentApp" hidden>
-  <div class="workspace-heading"><div><h1>Ваш подбор</h1></div>
-    <button class="btn btn-ghost" data-action="open-chats">Все подборы ↗</button></div>
   <main id="view-deal" class="workspace layout">
     <aside id="chatPanel" class="chat" aria-label="Диалог с агентом">
       <div class="chat-head">
@@ -187,16 +194,21 @@
           <span id="talkHint">Говорите — отвечу, когда замолчите</span>
         </div>
         <button type="button" class="btn btn-ghost btn-small" id="talkEnd">Завершить</button>
+        <details class="talk-settings">
+          <summary>Голос и темп</summary>
+          <label>Голос<select id="talkVoice" aria-describedby="talkVoiceNote"></select></label>
+          <small id="talkVoiceNote"></small>
+          <label for="talkRate">Темп <output id="talkRateValue" for="talkRate">1×</output></label>
+          <input id="talkRate" type="range" min="0.85" max="1.15" step="0.05" value="1">
+          <button id="talkSample" type="button" class="btn btn-ghost btn-small">Послушать пример</button>
+        </details>
       </div>
     </aside>
 
     <section class="stage" aria-label="Ход сделки">
+      <div class="workspace-heading"><div><h1>Ваш подбор</h1></div>
+        <button class="btn btn-ghost" data-action="open-chats">Все подборы ↗</button></div>
       <div class="context" id="searchContext"></div>
-      <details class="stage-navigation">
-        <summary>Этапы сделки</summary>
-        <ol class="stepper" id="stepper" aria-label="Перейти к этапу сделки"></ol>
-      </details>
-      <div id="decisionHost" class="decision-host" aria-live="polite"></div>
       <div class="stage-body" id="stage"></div>
     </section>
   </main>
@@ -206,6 +218,6 @@
   <footer class="footnote">Решения о цене и сделке подтверждаете вы.</footer>
 
   </div>
-  <script type="module" src="js/app.js"></script>
+  <script type="module" src="js/app.js?v=3bad1b432a82"></script>
 </body>
 </html>

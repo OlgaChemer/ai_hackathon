@@ -18,7 +18,7 @@ def _bool(name: str, default: bool) -> bool:
 
 @dataclass(frozen=True)
 class Settings:
-    llm_provider: str = os.getenv("LLM_PROVIDER", "deepseek").strip().lower()
+    llm_provider: str = os.getenv("LLM_PROVIDER", "gigachat").strip().lower()
 
     deepseek_api_key: str = os.getenv("DEEPSEEK_API_KEY", "")
     deepseek_base_url: str = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
@@ -26,7 +26,7 @@ class Settings:
 
     gigachat_credentials: str = os.getenv("GIGACHAT_CREDENTIALS", "")
     gigachat_scope: str = os.getenv("GIGACHAT_SCOPE", "GIGACHAT_API_PERS")
-    gigachat_model: str = os.getenv("GIGACHAT_MODEL", "GigaChat-2-Max")
+    gigachat_model: str = os.getenv("GIGACHAT_MODEL", "GigaChat-3-Ultra")
     gigachat_auth_url: str = os.getenv(
         "GIGACHAT_AUTH_URL", "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
     )

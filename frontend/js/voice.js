@@ -1,7 +1,13 @@
-// Озвучка реплик (speechSynthesis) и распознавание речи продавца (webkitSpeechRecognition).
+// Озвучка реплик и распознавание речи продавца.
+import { speechText } from "./speech.js";
 
 let enabled = localStorageGet("voice", "1") === "1";
 let voices = [];
+let preferredVoice = localStorageGet("speechVoice", "");
+const storedRate = Number(localStorageGet("speechRate", "1"));
+let rate = Number.isFinite(storedRate) ? Math.max(0.85, Math.min(1.15, storedRate)) : 1;
+const voiceListeners = new Set();
+const pendingSpeech = new Set();
 
 function localStorageGet(k, d) {
   try { return localStorage.getItem(k) ?? d; } catch { return d; }
@@ -13,10 +19,11 @@ function localStorageSet(k, v) {
 function loadVoices() {
   if (!("speechSynthesis" in window)) return;
   voices = speechSynthesis.getVoices().filter((v) => v.lang?.toLowerCase().startsWith("ru"));
+  voiceListeners.forEach(listener => listener());
 }
 if ("speechSynthesis" in window) {
   loadVoices();
-  speechSynthesis.onvoiceschanged = loadVoices;
+  speechSynthesis.addEventListener("voiceschanged", loadVoices);
 }
 
 export const voice = {
@@ -24,29 +31,48 @@ export const voice = {
   set enabled(v) {
     enabled = v;
     localStorageSet("voice", v ? "1" : "0");
-    if (!v && "speechSynthesis" in window) speechSynthesis.cancel();
+    if (!v) this.stop();
   },
   supported: "speechSynthesis" in window,
+
+  get choices() { return voices.map(v => ({id: v.voiceURI, name: v.name})); },
+  get voiceId() { return preferredVoice; },
+  set voiceId(id) { preferredVoice = id; localStorageSet("speechVoice", id); },
+  get rate() { return rate; },
+  set rate(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return;
+    rate = Math.max(0.85, Math.min(1.15, n));
+    localStorageSet("speechRate", String(rate));
+  },
+  watchVoices(listener) { voiceListeners.add(listener); listener(); return () => voiceListeners.delete(listener); },
 
   // Возвращает Promise, который завершается, когда реплика прозвучала.
   // force — говорить, даже если озвучка звонка выключена (голосовой режим чата).
   speak(text, speaker = "agent", force = false) {
     if (!(force ? this.supported : this.enabled)) return Promise.resolve();
     return new Promise((resolve) => {
-      const u = new SpeechSynthesisUtterance(text.replace(/₽/g, "рублей"));
+      const spoken = speechText(text);
+      if (!spoken) { resolve(); return; }
+      const u = new SpeechSynthesisUtterance(spoken);
       u.lang = "ru-RU";
-      const pick = speaker === "agent" ? voices[0] : voices[1] || voices[0];
+      const primary = voices.find(v => v.voiceURI === preferredVoice) || voices.find(v => v.default) || voices[0];
+      const pick = speaker === "agent" ? primary : voices.find(v => v !== primary) || primary;
       if (pick) u.voice = pick;
-      u.rate = speaker === "agent" ? 1.12 : 1.05;
-      u.pitch = speaker === "agent" ? 1.05 : voices[1] ? 1 : 0.75;
-      const done = () => { clearTimeout(timer); resolve(); };
-      const timer = setTimeout(done, 2500 + text.length * 95); // страховка, если onend не придёт
+      u.rate = rate;
+      u.pitch = 1;
+      const done = () => { clearTimeout(timer); pendingSpeech.delete(done); resolve(); };
+      const timer = setTimeout(done, 2500 + spoken.length * 110 / rate);
+      pendingSpeech.add(done); // страховка, если onend не придёт
       u.onend = done;
       u.onerror = done;
-      speechSynthesis.speak(u);
+      try { speechSynthesis.speak(u); } catch { done(); }
     });
   },
-  stop() { if ("speechSynthesis" in window) speechSynthesis.cancel(); },
+  stop() {
+    if ("speechSynthesis" in window) speechSynthesis.cancel();
+    for (const done of [...pendingSpeech]) done(); // Safari может не прислать onend после cancel.
+  },
 };
 
 const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;

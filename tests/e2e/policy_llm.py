@@ -14,6 +14,13 @@ from backend.llm import LLMClient, LLMResponse, ToolCall
 from backend.sources.base import normalize_city
 
 
+QUESTION = re.compile(r"^\s*(?:а\s+|и\s+|скажи(?:те)?,?\s+)?(?:что|как|почему|зачем|сколько|когда|где|какой|какая|какое|какие|кто|чем|чего|откуда|можно ли|нужно ли|надо ли|правда ли|объясни|расскажи|подскажи)\b", re.I)
+
+def is_question(text):
+    """Только эвристика дублёра для тестов интерфейса; в продукте классифицирует модель."""
+    return bool(QUESTION.search(text.replace('ё','е')))
+
+
 def _call(name: str, **args) -> LLMResponse:
     return LLMResponse(text="", tool_calls=[ToolCall(name=name, arguments=args, id=f"call_{name}_{id(args)}")])
 
@@ -110,7 +117,6 @@ class PolicyLLM(LLMClient):
         last_name, last = _last_tool(messages)
         if messages[-1]["role"] == "user":  # новое сообщение клиента — записать, что в нём есть
             text = messages[-1]["content"]
-            from backend.agent.qa import is_question
             if is_question(text):
                 return LLMResponse(text="Отвечаю: деньги проходят через сервис безопасных расчётов. Продолжаем?")
             parsed = parse_request(text)
@@ -169,6 +175,10 @@ class PolicyLLM(LLMClient):
         return _call("show_selection")
 
     async def chat_json(self, messages: list[dict[str, Any]], *, tag: str = "", **kw) -> dict[str, Any]:
+        if tag == 'request_review':
+            from tests.fakes import review_reply
+            payload = json.loads(next(m['content'] for m in messages if m['role'] == 'user'))['data']
+            return review_reply(payload)
         sys_text = messages[0]["content"] if messages else ""
         user = messages[-1]["content"] if messages else ""
         try:

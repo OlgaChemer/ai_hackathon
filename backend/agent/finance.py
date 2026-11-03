@@ -14,24 +14,19 @@ from datetime import date
 
 from .mortgage import deal_costs
 from .numbers import fmt
+from ..calculation_policy import POLICY, FINGERPRINT, metadata
 
-PRODUCTS = {
-    "savings_account": {"name": "Накопительный счёт", "rate": 0.10, "low": 0.10, "high": 0.10,
-                        "note": "снять можно в любой момент"},
-    "deposit": {"name": "Вклад на 6–12 месяцев", "rate": 0.12, "low": 0.12, "high": 0.12,
-                "note": "ставка фиксирована, застрахован АСВ"},
-    "bonds": {"name": "Облигации (СберИнвестиции)", "rate": 0.13, "low": 0.09, "high": 0.16,
-              "note": "доход выше вклада, цена может колебаться"},
-    "equity": {"name": "Фонд акций (СберИнвестиции)", "rate": 0.16, "low": -0.10, "high": 0.30,
-               "note": "высокий потенциал и высокий риск"},
-}
+def programs_key(profile: dict) -> tuple:
+    """Ключ финансового расчёта не зависит от сессии или реестра инструментов."""
+    if profile.get('payment') == 'cash':
+        return FINGERPRINT, profile.get('budget_max'), 'cash'
+    return (FINGERPRINT,) + tuple(profile.get(k) for k in ('budget_max', 'city', 'payment', 'housing', 'children', 'youngest_age', 'matcap'))
 
-PROFILES = {
-    "conservative": {"title": "Консервативная", "gen": "консервативной", "mix": {"savings_account": 0.4, "deposit": 0.6}},
-    "moderate": {"title": "Умеренная", "gen": "умеренной", "mix": {"savings_account": 0.2, "deposit": 0.5, "bonds": 0.3}},
-    "aggressive": {"title": "Агрессивная", "gen": "агрессивной", "mix": {"savings_account": 0.1, "deposit": 0.3, "bonds": 0.35, "equity": 0.25}},
-}
-AGGRESSIVE_MIN_MONTHS = 24  # акции на коротком сроке — риск не успеть к сделке
+
+PRODUCTS = POLICY['savings']['products']
+PROFILES = POLICY['savings']['profiles']
+AGGRESSIVE_MIN_MONTHS = POLICY['savings']['aggressive_min_months']
+
 
 DEFAULT_INPUTS = {
     "monthly_income": 250_000,
@@ -41,9 +36,9 @@ DEFAULT_INPUTS = {
     "risk": "moderate",
 }
 
-CUSHION_MONTHS = 3      # подушка безопасности — не тратим на взнос
-CONTRIBUTION_SHARE = 0.7  # от свободных денег в месяц откладываем 70%
-DOWN_SHARE = 0.2
+CUSHION_MONTHS = POLICY['savings']['cushion_months']
+CONTRIBUTION_SHARE = POLICY['savings']['contribution_share']
+DOWN_SHARE = POLICY['mortgage']['default_down_share']
 
 
 def _rates(mix: dict) -> tuple[float, float, float]:
@@ -132,10 +127,10 @@ def plan(price: int, inputs: dict, today: date | None = None, matcap: int = 0) -
         for m in chosen["mix"]
     ]
     # пока ищем квартиру (~2 мес.), деньги на взнос работают
-    search_income = int(round(start * exp_rate / 12 * 2, -2))
+    search_income = int(round(start * exp_rate / 12 * POLICY['savings']['search_months'], -2))
 
     if not gap:
-        verdict = f"На взнос и расходы по сделке уже хватает. Пока ищем квартиру, деньги по {chosen['gen']} стратегии принесут ~{fmt(search_income)} за 2 месяца."
+        verdict = f"На взнос и расходы по сделке уже хватает. Пока ищем квартиру, деньги по {chosen['gen']} стратегии принесут ~{fmt(search_income)} за {POLICY['savings']['search_months']} мес."
     elif months is None:
         verdict = "С текущими пополнениями накопить на взнос не получится — нужно снизить бюджет или увеличить пополнения."
     else:
@@ -143,20 +138,20 @@ def plan(price: int, inputs: dict, today: date | None = None, matcap: int = 0) -
                    f"накопите за {months} мес. — к {ready_date.strftime('%m.%Y')}.")
 
     return {
-        "inputs": {"monthly_income": income, "monthly_expenses": expenses, "savings": savings,
+        "assumptions": metadata(), "inputs": {"monthly_income": income, "monthly_expenses": expenses, "savings": savings,
                    "horizon_months": horizon, "risk": risk},
-        "price": price, "down_payment": down, "deal_costs": costs, "need": need, "matcap": matcap,
+        "price": price, "down_share": DOWN_SHARE, "down_payment": down, "deal_costs": costs, "need": need, "matcap": matcap,
         "cushion": cushion, "available": start, "gap": gap,
-        "free_monthly": free, "monthly": monthly, "monthly_needed": monthly_needed,
+        "contribution_share": CONTRIBUTION_SHARE, "free_monthly": free, "monthly": monthly, "monthly_needed": monthly_needed,
         "months": months, "ready_date": ready_date.isoformat() if ready_date else None,
         "fits_horizon": months is not None and months <= horizon,
         "risk": risk, "risk_note": note, "strategies": strategies, "allocation": allocation,
         "search_income": search_income, "verdict": verdict,
-        "assumption": "Ставки и доходности — допущения для демо, не обещание дохода.",
+        "assumption": POLICY['note'],
     }
 
 
-def affordable(inputs: dict, rate: float, years: int = 30) -> dict:
+def affordable(inputs: dict, rate: float, years: int = POLICY['mortgage']['years']) -> dict:
     """Сколько клиент может себе позволить с ипотекой.
 
     Два ограничения: платёж не больше половины дохода и не больше свободных денег
@@ -173,12 +168,14 @@ def affordable(inputs: dict, rate: float, years: int = 30) -> dict:
     monthly = int(round(max(0, income - expenses) * CONTRIBUTION_SHARE, -3))
     available = _series(start, monthly, exp_rate, horizon)[-1]
 
-    payment_limit = min(income * 0.5, max(0, income - expenses))
+    payment_limit = min(income * POLICY['savings']['payment_income_share'], max(0, income - expenses))
     r = rate / 12
     per_ruble = r / (1 - (1 + r) ** (-years * 12))
     by_payment = payment_limit / per_ruble / (1 - DOWN_SHARE)
     # взнос 20% + страховка ~0,95% от кредита + фиксированные расходы ~15 тыс.
-    by_down = max(0, available - 14_900) / (DOWN_SHARE + 0.0095 * (1 - DOWN_SHARE))
+    costs = POLICY['mortgage']['costs']
+    fixed = costs['appraisal'] + costs['settlement'] + costs['registration']
+    by_down = max(0, available - fixed) / (DOWN_SHARE + costs['insurance_rate'] * (1 - DOWN_SHARE))
     budget = int(min(by_payment, by_down) // 100_000 * 100_000)
     return {
         "budget": budget,
@@ -195,8 +192,15 @@ def affordable(inputs: dict, rate: float, years: int = 30) -> dict:
 
 def bank_value(fin: dict, opened: dict[str, int]) -> list[dict]:
     """Оценка дохода Сбера от открытых продуктов за год (маржа на привлечённых средствах, комиссии)."""
-    margin = {"savings_account": 0.02, "deposit": 0.02, "bonds": 0.008, "equity": 0.015}
+    margin = POLICY['savings']['bank_margins']
     return [
         {"name": PRODUCTS[k]["name"], "amount": amount, "value": int(round(amount * margin[k], -2))}
         for k, amount in opened.items() if k in PRODUCTS
     ]
+
+
+def cash_preview(amount: int) -> dict:
+    rate = PRODUCTS['savings_account']['rate']
+    months = POLICY['savings']['search_months']
+    return {'rate': rate, 'months': months, 'income': int(round(amount * rate / 12 * months, -2)),
+            'assumptions': metadata()}

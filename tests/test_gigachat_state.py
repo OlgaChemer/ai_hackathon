@@ -1,6 +1,7 @@
 """Состояние функций GigaChat и доступность действий вместо повторных карточек."""
 import asyncio
 import unittest
+from unittest.mock import patch, AsyncMock
 
 from backend import db
 from backend.agent import actions, session
@@ -19,7 +20,10 @@ class GigaChatStateTest(unittest.TestCase):
             reply = LLMResponse('', [ToolCall('update_request', {'city': 'Казань', 'rooms': 2, 'budget_max': 9_000_000}, 'c1')],
                                 functions_state_id=STATE)
             s = session.create_session('Казань, двушка до 9 млн', ScriptedLLM(reply, say('Записал')))
-            await drive(s)
+            from backend import sources
+            from tests.test_llm_and_agent import listing
+            with patch.object(sources, 'collect', AsyncMock(return_value=([listing()], []))), patch.object(sources, 'more', AsyncMock(return_value=[])):
+                await drive(s)
             return session.restore_session(s.id, 'Продолжим', ScriptedLLM())
         restored = asyncio.run(go())
         converted = to_gigachat_messages(restored.messages, False)
@@ -60,10 +64,11 @@ class GigaChatStateTest(unittest.TestCase):
         self.assertEqual([m['role'] for m in result], ['assistant', 'function', 'assistant', 'function'])
         self.assertEqual([m['name'] for m in result if m['role'] == 'function'], ['first', 'second'])
 
-    def test_search_is_not_offered_before_confirmation(self):
+    def test_search_is_offered_after_initial_limit_confirmation(self):
         s = session.create_session('Квартира', ScriptedLLM())
         s.profile = {'city': 'Казань', 'rooms': 2, 'budget_max': 9_000_000, 'payment': 'cash'}
         self.assertNotIn('search_listings', [t.name for t in actions.tools(s)])
+        self.assertNotIn('call_seller', [t.name for t in actions.tools(s)])
         self.assertIn('confirm_red_lines', [t.name for t in actions.tools(s)])
         s.red_lines_ok = True
         self.assertIn('search_listings', [t.name for t in actions.tools(s)])
@@ -84,7 +89,10 @@ class GigaChatStateTest(unittest.TestCase):
             s = session.create_session('Квартира', ScriptedLLM(call('ask_housing'), call('ask_housing'), say('Ищу')))
             s.profile = {'city': 'Казань', 'rooms': 2, 'budget_max': 9_000_000, 'payment': 'cash'}
             s.red_lines_ok = True
-            await drive(s, {'housing': (True, {'housing': 'both'})})
+            from tests.test_llm_and_agent import listing
+            from backend import sources
+            with patch.object(sources, 'collect', AsyncMock(return_value=([listing()], []))), patch.object(sources, 'more', AsyncMock(return_value=[])):
+                await drive(s, {'housing': (True, {'housing': 'both'})})
             return s
         s = asyncio.run(go())
         self.assertEqual(s.profile['housing'], 'both')

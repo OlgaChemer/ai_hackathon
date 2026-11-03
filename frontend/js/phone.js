@@ -2,6 +2,7 @@
 // В линию идёт голос агента (синтез Exolve), голос продавца — на распознавание (Whisper). На сайте разговор не звучит.
 import JsSIP from "../vendor/jssip.esm.js";
 import { capturePhrase, transcribe } from "./voice.js";
+import { speechText } from "./speech.js";
 
 const STUN = ["stun:webrtc.exolve.ru:3478"];
 
@@ -230,7 +231,7 @@ export class PhoneCall {
   }
 
   async #synth(text) {
-    const res = await fetch("/api/tts", { method: "POST", headers: { "Content-Type": "application/json", ...pinHeaders() }, body: JSON.stringify({ text }) });
+    const res = await fetch("/api/tts", { method: "POST", headers: { "Content-Type": "application/json", ...pinHeaders() }, body: JSON.stringify({ text: speechText(text) }) });
     if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `Синтез речи не удался (${res.status})`);
     return res.arrayBuffer(); // декодируем после создания AudioContext по нажатию клиента
   }

@@ -3,7 +3,7 @@ import asyncio
 import dataclasses
 import json
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import httpx
 
@@ -137,17 +137,20 @@ class TurnTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_human_card_wait_does_not_use_active_budget(self):
         s = session.create_session('Квартира', ScriptedLLM())
-        turn = runtime.Turn(s.id, .04)
+        # Ожидание дольше бюджета, но сам бюджет допускает задержку записи карточки
+        # в SQLite на загруженной машине (40 мс периодически истекали ещё до паузы).
+        budget = .2
+        turn = runtime.Turn(s.id, budget)
         task = asyncio.create_task(turn.run(lambda: s.ask('clarify', 'Город', 'Какой город?'),
                                             kind='tool', name='ask_client'))
         self.tasks.append(task)
         while not s.pending:
             await asyncio.sleep(0)
-        await asyncio.sleep(.08)
+        await asyncio.sleep(budget * 1.5)
         self.assertFalse(task.done())
         s.resolve('clarify', True, {'text': 'Казань'})
         self.assertEqual((await task)['data']['text'], 'Казань')
-        self.assertLess(turn.elapsed, .04)
+        self.assertLess(turn.elapsed, budget)
 
     async def test_seller_wait_does_not_use_active_budget(self):
         queue = asyncio.Queue()
@@ -180,7 +183,7 @@ class TurnTest(unittest.IsolatedAsyncioTestCase):
         batch = LLMResponse('', [ToolCall('search_listings', {}, 'a'), ToolCall('show_selection', {}, 'b')],
                             functions_state_id='preserved')
         s = session.create_session('Квартира', ScriptedLLM(batch, say('Продолжаю')))
-        s.profile = {'city': 'Казань', 'rooms': 2, 'budget_max': 9_000_000}
+        s.profile = {'city': 'Казань', 'rooms': 2, 'budget_max': 9_000_000, 'payment':'cash'}
         s.red_lines_ok = True
 
         async def stuck(*a):
@@ -198,13 +201,19 @@ class TurnTest(unittest.IsolatedAsyncioTestCase):
             to_gigachat_messages(s.messages, False)  # нет потерянных/непарных результатов
             self.assertEqual(s.profile['budget_max'], 9_000_000)
             self.assertTrue(s.red_lines_ok)
+        from backend import sources
+        from tests.test_llm_and_agent import listing
+        with patch.object(sources, 'collect', AsyncMock(return_value=([listing()], []))), patch.object(sources, 'more', AsyncMock(return_value=[])):
+            s.llm.review_intent = 'continue'
             await s.receive_text('Продолжить')
-            event = await self.until(queue, lambda e: e.get('text') == 'Продолжаю')
-            self.assertTrue(event['await_reply'])
+            event = await self.until(queue, lambda e: e.get('kind') == 'selection' and e['type'] == 'confirm')
+            self.assertEqual(s.profile['budget_max'], 9_000_000)
+            self.assertTrue(s.shown)
+            to_gigachat_messages(s.messages, False)
 
     async def test_repeated_identical_action_stops_before_third_execution(self):
         replies = [LLMResponse('', [ToolCall('update_request', {'city': 'Казань'}, f'c{i}')]) for i in range(3)]
-        s = session.create_session('Квартира', ScriptedLLM(*replies, say('Продолжим')))
+        s = session.create_session('Квартира в Казани', ScriptedLLM(*replies, say('Продолжим')))
         queue = self.start(s)
         stopped = await self.until(queue, lambda e: e.get('await_reply'))
         self.assertIn('повтор', stopped['text'])

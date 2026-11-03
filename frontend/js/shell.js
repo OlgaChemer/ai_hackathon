@@ -1,7 +1,7 @@
 // Общая оболочка: страницы меняются без перезапуска диалога и дополнительных команд агенту.
+import { bindMic } from './voice.js';
 import { $, state } from './state.js';
 import { html, rub } from './format.js';
-import { mountEconomics } from './economics.js';
 
 let market = 'both';
 
@@ -37,7 +37,7 @@ export function showPage(page) {
     agent:'От пожеланий до сделки', economics:'Экономика для Сбера'}[page];
   $('entryDialog').close();
   syncShell();
-  if (page === 'economics') mountEconomics($('view-economics'));
+  if (page === 'economics') import('./economics.js').then(({mountEconomics}) => mountEconomics($('view-economics')));
   document.dispatchEvent(new CustomEvent('pagechange', {detail: {page}}));
 }
 
@@ -60,7 +60,7 @@ export function setChatExpanded(expanded) {
 }
 
 export function refreshContext(profile) {
-  const labels = profile ? [profile.city, profile.rooms != null ? `${profile.rooms === 0 ? 'Студия' : `${profile.rooms} комн.`}` : '',
+  const labels = profile ? [profile.city, profile.rooms != null ? `${profile.rooms === 0 ? 'Студия' : `${profile.rooms_options?.length ? profile.rooms_options.join('–') : profile.rooms} комн.`}` : '',
     profile.budget_max ? `до ${rub(profile.budget_max)}` : '',
     { new: 'Новостройки', secondary: 'Вторичка', both: 'Новостройки и вторичка' }[profile.housing]] : [];
   $('searchContext').innerHTML = labels.filter(Boolean).map(t => html`<span>${t}</span>`).join('');
@@ -68,6 +68,14 @@ export function refreshContext(profile) {
 
 export function initShell({ start }) {
   let launching = false;
+  bindMic($('welcomeMicBtn'), $('welcomeQuery'), {
+    onFinal: () => { $('welcomeVoiceStatus').textContent = 'Проверьте текст и нажмите «Начать подбор».'; },
+    onError: message => { $('welcomeVoiceStatus').textContent = message; },
+  });
+  bindMic($('entryMicBtn'), $('entryQuery'), {
+    onFinal: () => { $('entryVoiceStatus').textContent = 'Проверьте текст и нажмите «Начать подбор».'; },
+    onError: message => { $('entryVoiceStatus').textContent = message; },
+  });
   const selectMarket = (value) => {
     market = value;
     document.querySelectorAll('[data-market]').forEach(button => {
@@ -101,6 +109,7 @@ export function initShell({ start }) {
     const button = event.target.closest('[data-action]');
     if (!button) return;
     const action = button.dataset.action;
+    if (action === 'voice-search') { openEntry(); $('entryMicBtn').click(); }
     if (action === 'open-agent' || action === 'smart-search') openEntry();
     if (action === 'market') selectMarket(button.dataset.market);
     if (action === 'apartments') { selectMarket('both'); navigate('apartments'); }
@@ -123,6 +132,12 @@ export function initShell({ start }) {
     const budget = Number($('portalBudget').value);
     const housing = {both:'новостройки и вторичка', new:'только новостройки', secondary:'только вторичка'}[market];
     launch(`Ищу ${rooms === '0' ? 'студию' : `${rooms}-комнатную квартиру`} в ${city || 'Москве'}${budget > 0 ? ` до ${budget} млн рублей` : ', бюджет пока не знаю'}, ${housing}`);
+  });
+  $('welcomeQuery').addEventListener('keydown', event => {
+    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+      event.preventDefault();
+      $('welcomeForm').requestSubmit();
+    }
   });
   $('welcomeForm').addEventListener('submit', event => {
     event.preventDefault();

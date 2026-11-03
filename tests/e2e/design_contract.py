@@ -30,14 +30,15 @@ async def scenario(browser, base, width, shots):
             if request.method == 'POST' else None)
     await page.route('https://tile.openstreetmap.org/**', lambda route: route.fulfill(body=PIXEL, content_type='image/png'))
     await page.goto(base, wait_until='domcontentloaded')
+    await page.locator('.site-nav [data-action=apartments]').click()
     await page.fill('#portalCity', 'Казань')
     await page.fill('#portalBudget', '9')
     await page.locator('[data-action=portal-search]').click()
-    red_lines = page.locator('#decisionHost .confirm-red_lines')
+    red_lines = page.locator('#chatLog .confirm-red_lines')
     await red_lines.wait_for()
     assert len([url for url, body in posts if url.endswith('/api/session')]) == 1
     assert not await page.locator('#entryDialog').evaluate('node => node.open')
-    assert await page.locator('#chatLog .confirm:not(.is-done)').count() == 0
+    assert await page.locator('#stage .confirm, #stage .facts').count() == 0
     assert await page.evaluate('document.documentElement.scrollWidth <= innerWidth')
 
     # История возвращает активное подтверждение на прежнее место, с тем же диалогом.
@@ -50,23 +51,19 @@ async def scenario(browser, base, width, shots):
     if shots:
         await page.screenshot(path=str(shots / f'{width}-confirmation.png'))
     await voice_reply(page, 'да')
-    await page.locator('#decisionHost .confirm-payment').wait_for()
+    await page.locator('#chatLog .confirm-payment').wait_for()
     confirmed = next(body for url, body in posts if url.endswith('/confirm') and body['kind'] == 'red_lines')
     assert confirmed['approved'] is True and confirmed['data']['budget_max'] == 8_800_000
     assert confirmed['data']['_said'] == 'да'
     await page.locator('#chatLog .confirm-red_lines.is-done').wait_for(state='attached')
     assert await page.locator('#chatLog .confirm-red_lines button:not(:disabled)').count() == 0
-    if width < 860:
-        await page.locator('#chatToggle').click()
     await page.locator('#chatLog .confirm-red_lines .decision-archive summary').click()
     archived_budget = page.locator('#chatLog .confirm-red_lines [data-budget]')
     assert await archived_budget.is_visible() and await archived_budget.is_disabled()
     assert await archived_budget.input_value() == '8800000'
-    if width < 860:
-        await page.locator('#chatToggle').click()
 
     await voice_reply(page, 'копим на взнос')
-    family = page.locator('#decisionHost .confirm-family')
+    family = page.locator('#chatLog .confirm-family')
     await family.wait_for()
     await family.locator('[name=children]').select_option('1')
     await family.locator('[name=youngest_age]').fill('4')
@@ -77,7 +74,7 @@ async def scenario(browser, base, width, shots):
     assert {key: family_body['data'][key] for key in ('children', 'youngest_age', 'matcap')} == {
         'children': 1, 'youngest_age': 4, 'matcap': 737200}
 
-    finance = page.locator('#decisionHost .confirm-finance')
+    finance = page.locator('#chatLog .confirm-finance')
     await finance.wait_for()
     await finance.locator('[name=monthly_income]').fill('250000')
     await finance.locator('[name=monthly_expenses]').fill('120000')
@@ -88,13 +85,13 @@ async def scenario(browser, base, width, shots):
     assert finance_body['data']['savings'] == 1_500_000
     assert finance_body['data']['monthly_income'] == 250_000
     assert finance_body['data']['monthly_expenses'] == 120_000
-    assert await page.locator('#decisionHost .confirm').count() == 0
+    assert await page.locator('#chatLog .confirm:not(.is-done)').count() == 0
     assert await page.locator('#chatLog .confirm-finance.is-done').count() == 1
 
     # Навигация только меняет представление: никаких новых команд агенту.
     count = len(posts)
-    await page.locator('.stage-navigation summary').click()
-    await page.locator('[data-step="2"]').click()
+    if width < 860:
+        await page.locator('#chatToggle').click()
     await page.wait_for_selector('.loan-option')
     assert await page.locator('.loan-option').count() == 3
     assert await page.locator('[data-loan-choice], [data-send-loan], [data-edit-finance]').count() == 0
@@ -107,11 +104,10 @@ async def scenario(browser, base, width, shots):
     assert await page.evaluate('document.documentElement.scrollWidth <= innerWidth')
     if shots:
         await page.screenshot(path=str(shots / f'{width}-finance.png'))
-    await page.locator('[data-tab=economics]').click()
-    await page.wait_for_selector('#view-economics [data-kpis] .kpi')
-    assert await page.locator('#view-economics').is_visible()
-    await page.locator('[data-tab=deal]').click()
-    await page.locator('[data-step="4"]').click()
+    assert await page.locator('[data-tab=economics]').count() == 0
+    assert await page.locator('#stage .loan-option, #stage .facts, #stage .confirm').count() == 0
+    if width < 860:
+        await page.locator('#chatToggle').click()
     assert await page.locator('[data-selection=proceed]').is_enabled()
     assert len(posts) == count
     if shots:
@@ -130,7 +126,7 @@ async def scenario(browser, base, width, shots):
       host.innerHTML = selection({...state.results[4], cards:[card]}, state.marks);
       document.getElementById('stage').append(host);
     }""")
-    await page.locator('#criteria-preview summary').click()
+    await page.locator('#criteria-preview .criteria-detail summary').click()
     detail = await page.locator('#criteria-preview table').inner_text()
     assert 'Нет данных' in detail and 'Подтверждено' in detail and 'пожелание' in detail
     assert await page.locator('#criteria-preview script').count() == 0
@@ -147,7 +143,7 @@ async def scenario(browser, base, width, shots):
     }""")
     assert not errors, errors
     await context.close()
-    print(f'PASS {width}px: формы/голос, история, финансы, экономика и навигация; API сохранён', flush=True)
+    print(f'PASS {width}px: формы/голос, история, финансы в чате, квартиры справа и навигация; API сохранён', flush=True)
 
 
 async def main(base, shots):

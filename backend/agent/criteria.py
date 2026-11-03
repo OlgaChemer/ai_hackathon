@@ -75,3 +75,11 @@ def evaluate(profile: dict, x: dict) -> dict:
     score = sum(6 if r['status'] is True else -4 if r['status'] is False else 0 for r in rows if not r['required'])
     return {'status': 'rejected' if failed else 'unverified' if unknown else 'confirmed',
             'checks': rows, 'failed': failed, 'unknown': unknown, 'preference_score': score}
+
+
+def match(x, prefs):
+    return evaluate({**prefs.profile, "features": prefs.features, "poi": prefs.poi}, x)
+
+
+def selectable(x, prefs):
+    return match(x, prefs)['status'] != 'rejected'

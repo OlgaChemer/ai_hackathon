@@ -7,11 +7,12 @@ import time
 from ... import geo, sources
 from ...config import settings
 from .. import criteria as C
+from ..criteria import match, selectable
 from .. import mortgage as M
 from .. import preferences as P
 from ..features import FEATURE_WITH, FEATURES, feature_evidence, missing_info
 from ..numbers import fmt
-from ..pricing import fair_price, score_listing
+from ..pricing import fair_price, score_listing, value_rank
 from ..profile import in_districts, passes_hard_filters, rooms_text
 from . import ActionError, action
 
@@ -32,18 +33,10 @@ def wishes_text(prefs: P.Prefs) -> str:
     return ", ".join(parts)
 
 
-def fits(x: dict, prefs: P.Prefs, map_ok: bool = True) -> bool:
+def fits(x: dict, prefs: P.Prefs) -> bool:
     """Квартира выполняет все пожелания: удобства подтверждены (объявление или продавец), нужное — в 1 км по карте."""
     profile = {**prefs.profile, "features": prefs.features, "poi": prefs.poi}
     return C.evaluate(profile, x)['status'] == 'confirmed'
-
-
-def match(x, prefs):
-    return C.evaluate({**prefs.profile, "features": prefs.features, "poi": prefs.poi}, x)
-
-
-def selectable(x, prefs):
-    return match(x, prefs)['status'] != 'rejected'
 
 
 async def check_map(s, listings: list[dict], announce: bool = False) -> bool:
@@ -79,13 +72,14 @@ def score_into(pool: list[dict], comps: list[dict], profile: dict, meta: dict) -
 def ranked(pool: list[dict], meta: dict, prefs: P.Prefs) -> list[dict]:
     for x in pool:
         meta[x["id"]]["total"] = round(meta[x["id"]]["score"] + P.adjust(x, prefs) + match(x, prefs)["preference_score"], 1)
-    return sorted(pool, key=lambda x: (match(x, prefs)["status"] == "confirmed", meta[x["id"]]["total"]), reverse=True)
+        meta[x["id"]]["ranking"] = value_rank(x, prefs.profile, meta[x["id"]]["fair"], match(x, prefs), P.adjust(x, prefs))
+    return sorted(pool, key=lambda x: (match(x, prefs)["status"] == "confirmed", meta[x["id"]]["ranking"]["center_preferred"], meta[x["id"]]["ranking"]["value_score"], -x["price"], x["id"]), reverse=True)
 
 
 def card(x: dict, meta: dict, prefs: P.Prefs) -> dict:
     """Карточка квартиры для экрана."""
     m = meta[x["id"]]
-    return {**x, "fair": m["fair"], "score": m.get("total", m["score"]), "pay": m.get("pay"), "match": match(x, prefs),
+    return {**x, "fair": m["fair"], "score": m.get("total", m["score"]), "pay": m.get("pay"), "match": match(x, prefs), "ranking": m.get("ranking"),
             "features": [{"label": FEATURES[k][0], **feature_evidence(x, k)} for k in prefs.features],
             "nearby": geo.summary(x, prefs.poi),
             "unchecked": [geo.POI[k][0] for k in prefs.poi if k not in (x.get("nearby") or {})],
@@ -119,16 +113,6 @@ async def _more_pages(s, until) -> None:
         st["comps"] += extra
 
 
-def _finance_ready(s) -> None:
-    """Без способа оплаты и посчитанной ипотеки платёж у каждой квартиры и план сделки были бы догадкой."""
-    pay = s.profile.get("payment")
-    if not pay:
-        raise ActionError("Неизвестно, как клиент покупает — сначала ask_payment (от этого зависит платёж у каждой квартиры).")
-    if pay != "cash" and not s.mortgage:
-        raise ActionError("Ипотека не посчитана — сначала mortgage_programs (если семья неизвестна — перед этим ask_family).")
-    if pay == "mortgage_saving" and not s.finance:
-        raise ActionError("Клиент копит на взнос — сначала savings_plan.")
-
 
 # ------------------------------------------------------------------ действия
 
@@ -136,15 +120,14 @@ def _finance_ready(s) -> None:
 @action("search_listings", 3,
         "Найти объявления по запросу: Циан (вторичка и/или новостройки) + база агента; названный район; удобства "
         "и «что рядом» — только подтверждённые. Показывает клиенту экран поиска со справедливой ценой. "
-        "Нужны подтверждённые рамки. Возвращает, сколько нашлось и сколько выполняют пожелания.")
+        "Подтверждение рамок и ипотека для просмотра объявлений не нужны. Возвращает, сколько нашлось и сколько выполняют пожелания.")
 async def search_listings(s) -> dict:
-    if not s.red_lines_ok:
-        raise ActionError("Рамки не подтверждены — сначала confirm_red_lines.")
     p = s.profile
-    _finance_ready(s)
-    where = p["city"] + (f", {p['okrug']}" if p.get("okrug") else "")
-    market_txt = {"new": "новостройки", "both": "новостройки и вторичка"}.get(p.get("housing"), "вторичный рынок")
-    await s.say(f"Ищу на Циане: {where}, {rooms_text(p['rooms'])}, {market_txt}, до {fmt(p['budget_max'])}.")
+    where = ", ".join(dict.fromkeys([p["city"], *(p.get("cities") or [])])) + (f", {p['okrug']}" if p.get("okrug") else "")
+    market_txt = {None: "новостройки и вторичка", "new": "новостройки", "both": "новостройки и вторичка"}.get(p.get("housing"), "вторичный рынок")
+    room_label = "/".join(map(str, p["rooms_options"])) + "-комнатные" if len(p.get("rooms_options") or []) > 1 else rooms_text(p["rooms"])
+    await s.say(f"Ищу на Циане: {where}, {room_label}, {market_txt}, до {fmt(p['budget_max'])}.")
+    s.push("search_progress", on=True, text="Ищу объявления и сравниваю варианты…")
     listings, report = await sources.collect(p)
     known = sources.stored(p, exclude={x["id"] for x in listings})
     if known:
@@ -156,16 +139,24 @@ async def search_listings(s) -> dict:
     st = s.search = {"listings": listings, "pool": pool, "comps": comps, "report": report, "meta": {}, "pages": 1,
                      "named": p.get("districts") or [], "strict": False, "map_ok": True, "shown_ids": set(), "map_deadline": time.monotonic() + settings.places_budget_s, "map_revision": s.client_revision}
     if not pool:
-        s.push("result", step=3, kind="search", data={"report": report, "total": len(listings), "matched": 0, "rows": []})
+        alternatives = ["Рассмотреть меньше комнат", "Изменить район"]
+        if p.get("housing") in ("secondary", "new"):
+            alternatives.insert(0, "Посмотреть новостройки" if p["housing"] == "secondary" else "Посмотреть вторичку")
+        st["alternatives"] = alternatives
+        s.push("result", step=3, kind="search", data={"report": report, "total": len(listings), "matched": 0, "rows": [], "alternatives": alternatives})
+        s.push("search_progress", on=False)
         if report and all(r["status"] == "unavailable" for r in report):
             raise ActionError(f"Циан сейчас не отдаёт объявления ({report[0]['note']}), в базе агента подходящих нет.")
-        m = await sources.market(p)
+        m = s.market
         return {"found": len(listings), "in_budget": 0,
                 "market": {"min": m["min"], "typical_from": m["p25"], "typical_to": m["p75"]} if m else None,
-                "hint": "целых квартир в бюджете нет (доли и комнаты не показываю) — предложи поднять бюджет, "
+                "alternatives": alternatives,
+                "hint": "Покажи варианты изменения кнопками ask_client. Целых квартир в бюджете нет (доли и комнаты не показываю) — предложи поднять бюджет, "
                         "меньше комнат или весь город"}
     out: dict = {}
-    if st["named"]:  # район, который назвал клиент: догружаем страницы и оставляем только его, если хватает
+    if p.get("prefer_center"):
+        await _more_pages(s, lambda: False)  # ищем все допустимые комнатности, а не только свежую первую страницу
+    if st["named"] and not p.get("prefer_center"):  # район, который назвал клиент: догружаем страницы и оставляем только его, если хватает
         await _more_pages(s, lambda: sum(in_districts(x, st["named"]) for x in st["pool"]) >= BATCH)
         inside = [x for x in st["pool"] if in_districts(x, st["named"])]
         s.prefs.districts_plus |= {x["district"] for x in inside}
@@ -173,7 +164,7 @@ async def search_listings(s) -> dict:
             st["pool"], st["strict"] = inside, True
         out["in_named_districts"] = len(inside)
     st["map_ok"] = await check_map(s, st["pool"], announce=True)
-    await _more_pages(s, lambda: sum(fits(x, s.prefs) for x in st["pool"]) >= BATCH)
+    await _more_pages(s, lambda: sum(selectable(x, s.prefs) for x in st["pool"]) >= BATCH)
     good = [x for x in st["pool"] if selectable(x, s.prefs)]
     confirmed = sum(fits(x, s.prefs) for x in good)
     out.update(wishes=wishes_text(s.prefs), fit_wishes=confirmed, map_checked=st["map_ok"],
@@ -186,10 +177,11 @@ async def search_listings(s) -> dict:
         if r["status"] == "db":
             r["count"] = sum(1 for x in st["listings"] if x.get("stored_at"))
         else:
-            r["count"] = sum(1 for x in st["listings"] if not x.get("stored_at") and bool(x.get("is_new")) == r.get("new", False))
+            r["count"] = sum(1 for x in st["listings"] if not x.get("stored_at") and bool(x.get("is_new")) == r.get("new", False) and x.get("city") == r.get("city", p["city"]) and x.get("rooms") == r.get("rooms", p["rooms"]))
     s.push("result", step=3, kind="search", data={"report": report, "total": len(st["listings"]), "matched": len(good),
                                                    "rows": rows, "store": sources.store.stats(p), **out})
     over = sum(1 for x in good if st["meta"][x["id"]]["fair"]["overprice_pct"] > 1)
+    s.push("search_progress", on=False)
     await s.finish_step(3)
     return {"found": len(st["listings"]), "in_budget": len(st["pool"]), "selectable": len(good),
             "overpriced": over, "from_agent_db": len(known), "price_from": min((x["price"] for x in good), default=None),
@@ -269,3 +261,25 @@ async def show_selection(s) -> dict:
             "shown": [{"n": number[x["id"]], **brief(x, meta), "match": match(x, prefs)} for x in batch],
             "liked": [{"n": number.get(i), **brief(by_id[i], meta)} for i in prefs.liked],
             "disliked_count": len(prefs.disliked), "learned": prefs.learned(), "remaining": max(0, len(fresh) - BATCH)}
+
+
+@action("offer_search_alternatives", 3,
+        "Если подходящих квартир нет — предложить кнопками сменить рынок, район или комнатность. Условия без ответа не меняет.")
+async def offer_search_alternatives(s):
+    if not s.search:
+        raise ActionError("Сначала search_listings.")
+    options = s.search.get("alternatives") or []
+    if not options:
+        if s.profile.get("housing") == "secondary":
+            options.append("Посмотреть новостройки")
+        elif s.profile.get("housing") == "new":
+            options.append("Посмотреть вторичку")
+        options += ["Смягчить пожелания", "Изменить район", "Рассмотреть меньше комнат"]
+    reports = s.search.get("report") or []
+    unavailable = reports and all(r.get("status") == "unavailable" for r in reports)
+    if unavailable:
+        options = ["Повторить поиск", *options]
+    text = ("Не удалось получить выдачу от источника — это не означает, что квартир нет. Можно повторить запрос или изменить условия."
+            if unavailable else "Подходящих подтверждённых вариантов пока нет. Что готовы рассмотреть? Бюджет без вашего решения не увеличу.")
+    r = await s.ask("clarify", "Источник недоступен" if unavailable else "Расширить поиск?", text, chips=options)
+    return {"client_said": r["data"].get("text", ""), "hint": "запиши только выбранное изменение через update_request и повтори поиск"}

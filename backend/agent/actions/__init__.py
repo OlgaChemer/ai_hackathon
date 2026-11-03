@@ -13,6 +13,7 @@ from typing import Any, Awaitable, Callable
 
 from ...llm import Tool, ToolCall
 from .. import guard, validation
+from ..workflow import available, programs_current
 
 log = logging.getLogger(__name__)
 
@@ -24,7 +25,7 @@ class ActionError(Exception):
 @dataclass(frozen=True)
 class Action:
     name: str
-    step: int | None            # шаг степпера, который действие делает активным
+    step: int | None            # этап диалога, который действие делает активным
     description: str
     parameters: dict[str, Any]  # JSON Schema параметров
     run: Callable[..., Awaitable[dict]]
@@ -47,46 +48,32 @@ def tools(s=None) -> list[Tool]:
     return [Tool(a.name, a.description, a.parameters) for a in REGISTRY.values() if s is None or available(s, a.name)]
 
 
-def available(s, name: str) -> bool:
-    """Модель выбирает действия среди разрешённых текущим состоянием, порядок не диктуется."""
-    p = s.profile
-    ready = bool(p.get("city") and p.get("rooms") is not None and p.get("budget_max"))
-    finance = p.get("payment") == "cash" or (s.mortgage is not None and
-               (p.get("payment") != "mortgage_saving" or s.finance is not None))
-    rules = {
-        # Подтверждение рамок завершает вводную анкету. Если поиск ничего не даст,
-        # снова разрешаем обсудить изменение условий.
-        "ask_client": not ready or not s.red_lines_ok or s.search is not None,
-        "confirm_red_lines": ready and not s.red_lines_ok,
-        "market_prices": bool(p.get("city") and p.get("rooms") is not None),
-        "ask_payment": not p.get("payment"),
-        "ask_housing": not p.get("housing"),
-        "ask_family": p.get("children") is None and p.get("payment") != "cash",
-        "mortgage_programs": ready and bool(p.get("payment")) and
-                             (p.get("payment") == "cash" or p.get("children") is not None),
-        "savings_plan": ready and p.get("payment") == "mortgage_saving",
-        "search_listings": ready and s.red_lines_ok and finance,
-        "show_selection": s.search is not None and s.red_lines_ok,
-        "probe_budget": s.search is not None,
-        "call_seller": s.search is not None and s.red_lines_ok,
-        "confirm_price": bool(s.calls) and s.red_lines_ok,
-        "plan_viewing": bool(s.agreed) and s.red_lines_ok,
-        "prepare_deal": bool(s.chosen) and s.red_lines_ok and s.status.get(8) != "done",
-    }
-    return bool(rules.get(name, True))
-
-
 async def execute(s, call: ToolCall) -> dict:
     """Выполнить действие, которое выбрала модель. Ошибки не роняют агента — модель получает объяснение."""
     _load()
     a = REGISTRY.get(call.name) if isinstance(call.name, str) else None
     if a is None:
         return {"error": f"Нет действия с таким именем. Доступны: {', '.join(REGISTRY)}"}
-    if not available(s, call.name):
+    # Семантический разбор выполняется до проверки допуска: новые условия могут отозвать согласия.
+    if s.request_inputs:
+        from .. import understanding
+        # Запрос извлекается из принятого ввода, независимо от аргументов планировщика.
+        checked = await understanding.ensure(s)
+        if checked and checked.get("needs_clarification"):
+            return checked
+        if call.name == 'update_request':
+            if a.step:
+                await s.step(a.step)
+            if checked and checked.get('profile_result'):
+                return checked['profile_result']
+            return await a.run(s)  # уже проверенный ввод; повторная догадка не применяется
+    replay = (call.name == "confirm_red_lines" and s.red_lines_ok) or (
+        call.name == "mortgage_programs" and programs_current(s))
+    if not replay and not available(s, call.name):
         names = ", ".join(a.name for a in REGISTRY.values() if available(s, a.name))
         hint = ""
         if call.name == "search_listings":
-            hint = "Для поиска нужны confirm_red_lines, ask_payment и, при ипотеке, ask_family, mortgage_programs (savings_plan, если взнос ещё копят). "
+            hint = "Для поиска нужны город, комнаты и бюджет (update_request), confirm_red_lines и способ покупки (ask_payment). "
         return {"error": f"{hint}Действие недоступно в текущем состоянии. Доступны: {names}"}
     args = call.arguments
     try:
@@ -98,7 +85,7 @@ async def execute(s, call: ToolCall) -> dict:
     if not verdict.ok or guard.output(args, limit=False) != args:
         guard.note(s, "tool", verdict.category or "unsafe_output", "")
         return {"error": "Параметры действия отклонены проверкой безопасности."}
-    if a.step:
+    if a.step and not replay:
         await s.step(a.step)
     try:
         return await a.run(s, **args)

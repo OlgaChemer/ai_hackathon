@@ -19,10 +19,10 @@ FEATURED_CITIES = cian.FEATURED_CITIES  # проверены на живом Ц�
 
 def markets(profile: dict) -> list[bool]:
     """Где искать: [False] — вторичка, [True] — новостройки, оба — если клиент выбрал «и там, и там»."""
-    return {"new": [True], "both": [False, True]}.get(profile.get("housing"), [False])
+    return {None: [False, True], "new": [True], "both": [False, True]}.get(profile.get("housing"), [False])
 
 
-async def collect(profile: dict) -> tuple[list[dict], list[dict]]:
+async def _collect_one(profile: dict) -> tuple[list[dict], list[dict]]:
     """Возвращает (объявления, отчёт по рынкам): вторичка и/или новостройки — по выбору клиента."""
     items: list[dict] = []
     report: list[dict] = []
@@ -49,7 +49,7 @@ async def market(profile: dict) -> dict | None:
     return await cian.market(profile["city"], profile["rooms"], profile.get("okrug"), profile.get("housing") == "new")
 
 
-def comparables(profile: dict) -> list[dict]:
+def _comparables_one(profile: dict) -> list[dict]:
     """Все известные объявления того же города и комнатности (срез + база агента за месяц) — основа справедливой цены."""
     if not cian.supported(profile.get("city")):
         return []
@@ -62,7 +62,7 @@ def comparables(profile: dict) -> list[dict]:
     return list(known.values())
 
 
-async def more(profile: dict, page: int) -> list[dict]:
+async def _more_one(profile: dict, page: int) -> list[dict]:
     """Следующая страница живой выдачи (если площадка отвечает)."""
     out: list[dict] = []
     for new in markets(profile):
@@ -76,9 +76,44 @@ async def more(profile: dict, page: int) -> list[dict]:
     return store.apply_corrections(out)
 
 
-def stored(profile: dict, exclude: set[str] = frozenset()) -> list[dict]:
+def _stored_one(profile: dict, exclude: set[str] = frozenset()) -> list[dict]:
     """Объявления из базы агента по запросу — по выбранным рынкам."""
     return [x for new in markets(profile) for x in store.stored(profile, exclude, new=new)]
+
+
+def queries(profile: dict):
+    """Each explicitly accepted city/room variant gets its own Cian and DB query."""
+    for city in dict.fromkeys([profile.get("city"), *(profile.get("cities") or [])]):
+        for rooms in profile.get("rooms_options") or [profile.get("rooms")]:
+            yield {**profile, "city": city, "rooms": rooms}
+
+
+def unique(items):
+    return list({x["id"]: x for x in items}.values())
+
+
+async def collect(profile: dict):
+    items, reports = [], []
+    for q in queries(profile):
+        got, report = await _collect_one(q)
+        items.extend(got)
+        reports.extend({**r, "city": q["city"], "rooms": q["rooms"]} for r in report)
+    return unique(items), reports
+
+
+async def more(profile: dict, page: int):
+    items = []
+    for q in queries(profile):
+        items.extend(await _more_one(q, page))
+    return unique(items)
+
+
+def stored(profile: dict, exclude: set[str] = frozenset()):
+    return unique([x for q in queries(profile) for x in _stored_one(q, exclude)])
+
+
+def comparables(profile: dict):
+    return unique([x for q in queries(profile) for x in _comparables_one(q)])
 
 
 async def verify(listing: dict) -> dict:

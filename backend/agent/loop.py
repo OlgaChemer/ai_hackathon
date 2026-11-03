@@ -12,14 +12,15 @@ import json
 import uuid
 
 from .. import geo
-from ..llm import LLMError
+from ..llm import LLMError, LLMResponse, ToolCall
 from ..llm.base import LLMBusy
 from ..config import settings
 from ..runtime import Turn, TurnStopped, record
-from . import actions, guard, prompts
+from . import actions, guard, prompts, understanding
 from .features import FEATURES
 from .numbers import fmt
 from .profile import missing_required
+from .workflow import next_search_action
 from .session import close_dangling_calls
 
 MAX_ACTIONS_IN_ROW = 14  # действий подряд без ответа клиенту — дальше модель должна заговорить с клиентом
@@ -30,7 +31,7 @@ def state_brief(s) -> str:
     p = s.profile
     lines = []
     if p:
-        known = {k: v for k, v in p.items() if k not in ("summary", "market") and v not in (None, [], "")}
+        known = {k: v for k, v in p.items() if not k.startswith("_") and k not in ("summary", "market") and v not in (None, [], "")}
         if known.get("features"):
             known["features"] = [FEATURES[k][0] for k in known["features"]]
         if known.get("poi"):
@@ -54,32 +55,68 @@ def state_brief(s) -> str:
     for lid, c in s.calls.items():
         lines.append(f"Звонок {lid}: {'договорились' if c['status'] == 'agreed' else 'не договорились'} на {fmt(c['price'])}"
                      + (", цену подтвердил клиент" if lid in s.agreed else "") + (", квартира выбрана" if s.chosen == lid else ""))
+    if s.request_intent:
+        lines.append("Проверенное намерение клиента: " + s.request_intent + ".")
     return "\n".join(lines)
 
 
 async def think(s, with_actions: bool):
-    messages = [{"role": "system", "content": prompts.AGENT_SYSTEM + "\n" + guard.POLICY},
+    messages = [{"role": "system", "content": prompts.AGENT_SYSTEM + ("\n" + prompts.VOICE_STYLE if s.voice_mode else "") + "\n" + guard.POLICY},
                 guard.data_message("session_state", state_brief(s)), *guard.output(s.messages, limit=False)]
     return await s.llm.chat(messages, tools=actions.tools(s) if with_actions else None, temperature=0.3, max_tokens=900,
                             tag="agent")
+
 
 
 async def run(s) -> None:
     """Агент работает, пока открыт диалог: отвечает, действует, ждёт клиента. Остановить — отменить задачу."""
     s.push("provider", provider=s.llm.name, model=s.llm.model, degraded=False)
     if s.query:
-        s.push("message", role="user", text=s.query)
+        initial = s.push("message", role="user", text=s.query)
         if s.refuse(s.query):
             s.messages.append({"role": "user", "content": await s.inbox.get()})
         else:
+            s.accept_request(initial["text"], initial["seq"])
             s.messages.append({"role": "user", "content": s.query})
     turn = Turn(s.id, settings.agent_turn_timeout_s, s.signal)
+    forced = None
+    auto_progress = set()
     while True:
         s.signal("typing", on=True)
         interrupted_call = None
         try:
-            resp = await turn.run(lambda: think(s, with_actions=turn.tool_calls < MAX_ACTIONS_IN_ROW),
-                                  kind="llm", name="agent")
+            # Ответ в открытой карточке уже проверен HTTP-обработчиком: применяем к границе хода.
+            if s.request_review and s.request_review['seq'] > s.request_review_seq:
+                checked = await turn.run(lambda: understanding.ensure(s), kind="tool", name="review_input")
+                if checked and checked.get("needs_clarification"):
+                    s.messages.extend([{"role":"assistant","content":checked['question']},
+                                       {"role":"user","content":checked['client_said']}])
+                    s.remember()
+                    continue
+            intake = next_search_action(s)
+            if intake in ("confirm_red_lines", "ask_payment"):
+                forced = intake
+            if forced:
+                resp = LLMResponse("", [ToolCall(forced, {}, f"progress_{uuid.uuid4().hex[:8]}")])
+                record("search_recovery", session=s.id, action=forced)
+                forced = None
+            else:
+                resp = await turn.run(lambda: think(s, with_actions=turn.tool_calls < MAX_ACTIONS_IN_ROW),
+                                      kind="llm", name="agent")
+            if not resp.tool_calls and any(x['seq'] > s.request_review_seq for x in s.request_inputs):
+                checked = await turn.run(lambda: understanding.ensure(s), kind="tool", name="review_input")
+                if checked and checked.get("needs_clarification"):
+                    s.messages.extend([{"role":"assistant","content":checked['question']},
+                                       {"role":"user","content":checked['client_said']}])
+                    s.remember()
+                    continue
+            next_action = next_search_action(s)
+            if not resp.tool_calls and next_action and next_action not in auto_progress and turn.tool_calls < MAX_ACTIONS_IN_ROW:
+                s.messages.append({"role": "assistant", "content": guard.output(resp.text or "", s),
+                    **({"functions_state_id": resp.functions_state_id} if resp.functions_state_id else {})})
+                auto_progress.add(next_action)
+                forced = next_action
+                continue
             if resp.tool_calls:
                 if len(resp.tool_calls) > MAX_ACTIONS_IN_ROW - turn.tool_calls:
                     raise TurnStopped("tool_limit")
@@ -93,6 +130,7 @@ async def run(s) -> None:
                 if resp.text.strip():
                     await s.say(resp.text.strip())
                 s.signal("typing", on=False)
+                searched = False
                 for call in calls:
                     interrupted_call = call.name
                     turn.check_repeat(call.name, call.arguments)
@@ -100,11 +138,20 @@ async def run(s) -> None:
                     # В логе только известное имя действия, без аргументов модели.
                     name = call.name if call.name in actions.REGISTRY else "unknown"
                     result = await turn.run(lambda: actions.execute(s, call), kind="tool", name=name)
+                    if call.name == "search_listings" and not result.get("error"):
+                        searched = True
+                    if call.name == "update_request" and result.get("already_reviewed"):
+                        searched = True
                     s.messages.append({"role": "tool", "tool_call_id": call.id, "content": json.dumps(guard.output(guard.sanitize(result), limit=False), ensure_ascii=False, default=str)})
                     if s.client_revision != revision:
                         turn.finish("client_answer")
+                        auto_progress.clear()
                         turn = Turn(s.id, settings.agent_turn_timeout_s, s.signal)
                 s.remember()
+                if searched:
+                    forced = next_search_action(s)
+                    if forced:
+                        auto_progress.add(forced)
                 continue
             s.signal("typing", on=False)
             text = guard.output(resp.text.strip(), s)
@@ -119,7 +166,17 @@ async def run(s) -> None:
             turn.finish(reason)
             s.signal("typing", on=False)
             s.signal("model_wait", on=False)
-            if isinstance(exc, LLMBusy):
+            s.push("search_progress", on=False)
+            recovery = next_search_action(s)
+            if reason == "repeated_tool" and recovery and recovery not in auto_progress:
+                s.messages = close_dangling_calls(s.messages, "повтор без прогресса; продолжаю безопасный поиск")
+                auto_progress.add(recovery)
+                forced = recovery
+                turn = Turn(s.id, settings.agent_turn_timeout_s, s.signal)
+                continue
+            if isinstance(exc, understanding.UnderstandingError):
+                text = "Не удалось надёжно проверить условия. Уточните запрос — прежние условия сохранены."
+            elif isinstance(exc, LLMBusy):
                 text = "Сейчас много обращений, модель занята. Напишите чуть позже — продолжу с сохранёнными условиями."
             elif isinstance(exc, LLMError):
                 s.push("provider", provider=s.llm.name, model=s.llm.model, degraded=True, reason="Модель временно недоступна")
@@ -140,6 +197,7 @@ async def run(s) -> None:
             s.remember()
         s.messages.append({"role": "user", "content": await s.inbox.get()})
         turn = Turn(s.id, settings.agent_turn_timeout_s, s.signal)
+        auto_progress.clear()
         s.push("provider", provider=s.llm.name, model=s.llm.model, degraded=False)
 
 

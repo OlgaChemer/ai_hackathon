@@ -1,4 +1,4 @@
-// Контроллер: лента событий агента -> чат, степпер, экраны этапов; жизнь диалога (открыть, продолжить, новый).
+// Контроллер: события агента, результаты в чате, подборка и жизнь диалога.
 import { initAccount } from "./account.js";
 import { api } from "./api.js";
 import { addGuard, addLine, createCall, renderCall, setPhase, setStatus, setTyping, showLearned, showSellerInput, updatePrices } from "./call.js";
@@ -13,71 +13,55 @@ import * as V from "./views.js";
 import { SELECTION_PROMPT, initVoiceChat, phoneActive, sayPrompt, talk } from "./voicechat.js";
 import { bindMic, recorder, voice } from "./voice.js";
 
-const STEPS = ["Запрос", "Финансы", "Поиск", "Подбор", "Проверка", "Звонок", "Просмотр", "Сделка", "Итог"];
-const stepper = $("stepper");
-
 let gen = 0; // поколение диалога: события старого диалога отбрасываются
 let queue = [];
 let pumping = false;
 const HANGUP = "(положил трубку)"; // сервер понимает это как конец разговора
 
-// ------------------------------------------------------------------ чат
-
-// ------------------------------------------------------------------ голосовой режим
-
-// ------------------------------------------------------------------ степпер и сцена
-
-function renderStepper() {
-  stepper.innerHTML = STEPS.map((t, i) => {
-    const n = i + 1;
-    const st = state.status[n];
-    const cls = [st === "active" ? "is-active" : "", st === "done" ? "is-done" : "", state.view === n ? "is-viewing" : ""].join(" ");
-    const dot = st === "done" ? "✓" : n;
-    return html`<li class="${cls}"><button data-step="${n}" ${st === "idle" ? "disabled" : ""} aria-current="${state.view === n ? "step" : "false"}"><span class="dot">${dot}</span>${t}</button></li>`;
-  }).join("");
-}
+// ------------------------------------------------------------------ результаты и подборка
 
 function viewFor(n) {
   const r = state.results;
   switch (n) {
-    case 1: return r[1] ? V.profile(r[1]) : V.waiting("Разбираю запрос", "Город, бюджет, комнаты и ваши пожелания. Если чего-то не хватит — спрошу.");
-    case 2: return r[2] ? V.finance(r[2], state.opened, state.strategy) : V.waiting("Финансы", "Ответьте в чате, как планируете покупать: наличными, в ипотеку или ещё копите на взнос.");
-    case 3: return r[3] ? V.search(r[3]) : V.waiting("Ищу объявления", "Запрашиваю Циан и считаю справедливую цену по похожим квартирам.");
-    case 4: return r[4] ? V.selection(r[4], state.marks) : V.waiting("Подбор", "Готовлю подборку.");
-    case 5: return r[5] ? V.legal(r[5]) : V.waiting("Проверка", "Смотрю риски по данным объявления.");
-    case 7: return r[7] ? V.viewing(r[7]) : V.waiting("Просмотр", "Договариваюсь о времени.");
-    case 8: return r[8] ? V.deal(r[8]) : V.waiting("Оформление", "Собираю план сделки.");
-    case 9: return r[9] ? V.summary(r[9]) : V.waiting("Итог", "Завершаю сделку.");
-    default: return V.welcome(config.cities);
+    case 1: return V.profile(r[1]);
+    case 2: return V.finance(r[2], state.opened, state.strategy);
+    case 5: return V.legal(r[5]);
+    case 7: return V.viewing(r[7]);
+    case 8: return V.deal(r[8]);
+    case 9: return V.summary(r[9]);
+    default: return null;
   }
 }
 
 function renderStage() {
   unmountMap(stage.querySelector("[data-map]"));
-  stage.innerHTML = "";
-  if (state.view === 6) {
-    stage.append(state.call ? renderCall(state.call, submitSeller) : el(V.waiting("Звонок", "Готовлю звонок продавцу.")));
-  } else {
-    stage.innerHTML = viewFor(state.view);
-    const chart = stage.querySelector("[data-chart]");
-    if (chart && state.results[2]?.finance) savingsChart(chart, state.results[2].finance, chart.dataset.selected);
-    const map = stage.querySelector("[data-map]");
-    if (map && state.results[4]?.cards) mountMap(map, state.results[4].cards);
-    syncSelectionButtons();
-  }
-  renderStepper();
+  stage.innerHTML = state.results[4] ? V.selection(state.results[4], state.marks)
+    : state.searching ? ""
+    : V.waiting("Здесь появятся квартиры", "Расскажите агенту о бюджете, городе и пожеланиях. Профиль и решения останутся в чате.");
+  if (state.searching) {
+    stage.setAttribute("aria-busy", "true");
+    stage.prepend(el(html`<div class="search-progress" role="status"><span class="search-spinner" aria-hidden="true"></span>${state.searching}</div>`));
+  } else stage.removeAttribute("aria-busy");
+  const map = stage.querySelector("[data-map]");
+  if (map && state.results[4]?.cards) mountMap(map, state.results[4].cards);
+  syncSelectionButtons();
+}
+
+function renderChatResult(step) {
+  if (!state.results[step]) return;
+  const markup = viewFor(step);
+  if (!markup) return;
+  let node = chatLog.querySelector(`[data-chat-result="${step}"]`);
+  if (!node) { node = document.createElement("div"); node.dataset.chatResult = step; node.className = "chat-result"; chatLog.append(node); }
+  node.innerHTML = markup;
+  const chart = node.querySelector("[data-chart]");
+  if (chart && state.results[2]?.finance) savingsChart(chart, state.results[2].finance, chart.dataset.selected);
+  chatLog.scrollTop = chatLog.scrollHeight;
 }
 
 /** Кнопки подборки активны, только пока агент ждёт выбора. */
 function syncSelectionButtons() {
   stage.querySelectorAll("[data-selection]").forEach((b) => (b.disabled = state.awaiting !== "selection"));
-}
-
-function show(n) {
-  if (state.view !== n) {
-    state.view = n;
-    renderStage();
-  } else renderStepper();
 }
 
 // ------------------------------------------------------------------ настоящий звонок (МТС Exolve)
@@ -110,41 +94,42 @@ async function listenPhone(call, myGen) {
 // ------------------------------------------------------------------ события агента
 
 async function handle(ev, myGen) {
+  if (ev.seq && ev.type !== "replay_end" && ev.seq <= state.lastSeq) return;
   const call = state.call;
   const quiet = Boolean(ev.replay); // история диалога: рисуем сразу, без пауз, голоса и звонка
   const pause = (ms) => (quiet ? null : sleep(ms));
   if (ev.seq) state.lastSeq = Math.max(state.lastSeq, ev.seq);
   switch (ev.type) {
     case "provider": setProvider(ev); break;
+    case "search_progress":
+      state.searching = ev.on ? ev.text || "Ищу и сравниваю квартиры…" : null;
+      if (!quiet) renderStage();
+      break;
     case "message":
       addMsg(ev.role, ev.text);
       if (ev.await_reply) setChatExpanded(true);
       if (!quiet && ev.role === "agent" && talk.on && !phoneActive()) talk.say(ev.text);
       await pause(ev.role === "agent" ? 300 : 0);
       break;
-    case "step":
-      state.status[ev.step] = ev.status === "pending" ? "active" : ev.status;
-      if (quiet) { if (ev.status === "active") state.view = ev.step; break; } // экран нарисуем один раз в конце истории
-      if (ev.status === "active") show(ev.step); else renderStepper();
-      await pause(150);
-      break;
     case "result":
       state.results[ev.step] = ev.data;
       if (ev.kind === "profile") refreshContext(ev.data);
+      if (![3, 4, 6].includes(ev.step)) renderChatResult(ev.step);
       if (ev.kind === "selection") setChatExpanded(false);
       if (ev.kind === "finance") state.strategy = ev.data.finance?.risk || null;
       if (ev.kind === "selection") {
         state.marks = { liked: new Set(ev.data.liked || []), disliked: new Set(ev.data.disliked || []) };
       }
-      state.view = ev.step;
       if (!quiet) renderStage();
       await pause(ev.kind === "selection" ? 0 : 500);
       break;
     case "confirm":
-      setChatExpanded(false);
+      if (ev.kind !== "selection") setChatExpanded(true);
       if (ev.kind === "call") {
         state.call = createCall(ev);
-        state.view = 6;
+        const callNode = renderCall(state.call, submitSeller);
+        callNode.classList.add("chat-call");
+        chatLog.append(callNode);
         if (!quiet) renderStage();
       }
       if (ev.kind !== "clarify") state.awaiting = ev.kind === "selection" ? "selection" : null;
@@ -155,17 +140,16 @@ async function handle(ev, myGen) {
       }
       confirmCard(ev);
       break;
-    case "resolved": resolved(ev); setChatExpanded(false); break;
+    case "resolved": resolved(ev); break;
     case "product_opened":
       state.opened[ev.product] = ev.amount;
-      if (!quiet && state.view === 2) renderStage();
+      if (!quiet && state.results[2]) renderChatResult(2);
       break;
     case "call_start":
       if (!call) break;
       call.started = true;
       call.mode = ev.mode;
-      if (quiet) { state.view = 6; break; }
-      if (state.view !== 6) show(6); else renderStage();
+      if (quiet) break;
       setStatus(call, "Идёт звонок · запись");
       setTyping(call, "agent");
       break;
@@ -287,6 +271,8 @@ function finish() {
   state.streamEnded = true;
   state.es?.close();
   showThinking(false);
+  state.searching = null;
+  renderStage();
   setComposer();
   refreshChats();
 }
@@ -323,7 +309,7 @@ function leaveChat() {
   queue = [];
   resetState();
   chatLog.innerHTML = "";
-  $("decisionHost").replaceChildren();
+
   document.querySelector("section.stage").classList.remove("has-decision");
   $("chatPeek").textContent = "";
   refreshContext(null);
@@ -423,9 +409,9 @@ async function sendText(text) {
     }
     // вопрос агенту («что такое СБР?») или отклонённое фильтром сообщение карточку не закрывают:
     // подборка и подтверждение ждут дальше, их кнопки должны работать
-    if (r.handled_as === "question" || r.handled_as === "blocked") return;
+    if (["question", "blocked", "unresolved"].includes(r.handled_as)) return;
     if (state.awaiting === "clarify") {
-      $("decisionHost").querySelectorAll(".confirm-clarify:not(.is-done)").forEach((c) => c.classList.add("is-done"));
+      $("chatLog").querySelectorAll(".confirm-clarify:not(.is-done)").forEach((c) => c.classList.add("is-done"));
     }
     state.awaiting = null;
   } catch (e) {
@@ -483,10 +469,7 @@ bindMic($("micBtn"), $("query"), {
 });
 $("micBtn").hidden = false;
 
-stage.addEventListener("click", async (e) => {
-  const ex = e.target.closest("[data-example]");
-  if (ex) return start(ex.dataset.example);
-
+async function handleResultClick(e) {
   const vote = e.target.closest("[data-vote]");
   if (vote) return setVote(vote.closest("[data-id]").dataset.id, vote.dataset.vote, true);
   const sel = e.target.closest("[data-selection]");
@@ -495,7 +478,7 @@ stage.addEventListener("click", async (e) => {
   const strat = e.target.closest("[data-strategy]");
   if (strat) {
     state.strategy = strat.dataset.strategy;
-    return renderStage();
+    return renderChatResult(2);
   }
   const open = e.target.closest("[data-open]");
   if (open && state.sid) {
@@ -503,7 +486,9 @@ stage.addEventListener("click", async (e) => {
     try { await api.product(state.sid, open.dataset.open, Number(open.dataset.amount)); }
     catch (err) { open.disabled = false; addMsg("error", `Не удалось: ${err.message}`); }
   }
-});
+ }
+stage.addEventListener("click", handleResultClick);
+chatLog.addEventListener("click", handleResultClick);
 /** Отметка «нравится / не то». toggle — повторное нажатие снимает отметку (клик); голосом — просто ставим. */
 function setVote(id, dir, toggle) {
   const { liked, disliked } = state.marks;
@@ -523,11 +508,8 @@ function setVote(id, dir, toggle) {
 }
 
 initCards({ sendText });
-initVoiceChat({ sendText, selectionAction, setVote, submitSeller });
-
-stepper.addEventListener("click", (e) => {
-  const b = e.target.closest("button[data-step]");
-  if (b && !b.disabled) show(Number(b.dataset.step));
+initVoiceChat({ sendText, selectionAction, setVote, submitSeller,
+  newChat: () => { newChat(); setChatExpanded(true); },
 });
 
 $("resumeCallAudio").addEventListener("click", () => {
@@ -568,11 +550,9 @@ else {
   route();
 }
 api.health().then((h) => {
-  config.cities = { featured: h.featured_cities || [], total: (h.cities || []).length };
   recorder.available = Boolean(h.stt?.installed && h.stt.status !== "error");
   config.phoneReady = Boolean(h.phone?.configured);
   config.sellerPhoneDefault = h.phone?.seller_phone || "";
   setProvider(h);
-  if (state.view === 0) renderStage();
 })
   .catch(() => setProvider({ provider: "offline", reason: "сервер недоступен" }));

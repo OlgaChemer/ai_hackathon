@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import date
 
 from ... import economics, sources
+from ...calculation_policy import POLICY, metadata
 from .. import criteria as C
 from .. import finance as F
 from .. import mortgage as M
@@ -67,8 +68,12 @@ async def apply_corrections(s, listing: dict, corrections: dict, persist: bool) 
         "не выше лимита клиента (код не даст) и договаривается о просмотре. Возвращает итог: цена, что узнал, просмотр.",
         **ID)
 async def call_seller(s, listing_id: str) -> dict:
+    if not s.profile.get("payment"):
+        raise ActionError("Сначала выясни способ покупки — ask_payment, затем звонок продавцу.")
     if not s.red_lines_ok:
         raise ActionError("Рамки не подтверждены — сначала confirm_red_lines.")
+    if not any(card['id'] == listing_id for card in s.shown):
+        raise ActionError("Сначала show_selection: звонить можно только по квартире из текущей подборки.")
     x = _listing(s, listing_id)
     check = legal_check(x)
     s.push("result", step=5, kind="legal", data={"checks": [check], "listings": [card(x, s.search["meta"], s.prefs)]
@@ -194,7 +199,7 @@ async def prepare_deal(s, listing_id: str) -> dict:
         raise ActionError("Клиент ещё не выбрал эту квартиру — сначала plan_viewing.")
     x = _listing(s, listing_id)
     price, p = s.agreed[listing_id], s.profile
-    down = None if p.get("payment") == "cash" else (s.finance["down_payment"] if s.finance else int(p["budget_max"] * 0.2))
+    down = None if p.get("payment") == "cash" else (s.finance["down_payment"] if s.finance else int(p["budget_max"] * POLICY['mortgage']['default_down_share']))
     pay = M.listing_payment(x, p, price=price, down_share=down / price) if down else None
     plan = deal_plan(x, price, down, rate=pay["rate"] if pay else None, program=pay["title"] if pay else None)
     s.push("result", step=8, kind="deal", data=plan)
@@ -212,11 +217,13 @@ async def prepare_deal(s, listing_id: str) -> dict:
     await s.finish_step(8)
     savings = x["price"] - price
     econ = economics.unit(economics.Inputs(price=x["price"], savings_pct=max(0, savings) / x["price"],
-                                           ltv=0 if plan["cash"] else 0.8))
+                                           ltv=plan["loan"] / price))
     fin_lines = F.bank_value(s.finance or {}, s.opened)
     summary = {
         "listing": x, "base_price": x["price"], "final_price": price, "savings": savings,
-        "fee": round(max(0, savings) * 0.15), "net": round(max(0, savings) * 0.85),
+        "assumptions": metadata(), "fee_rate": POLICY['economics']['fee_pct'],
+        "fee": round(max(0, savings) * POLICY['economics']['fee_pct']),
+        "net": round(max(0, savings) * (1 - POLICY['economics']['fee_pct'])),
         "monthly_saved": plan["monthly_saved"], "hours_saved": "60–70 ч",
         "sber": {"revenue": econ["revenue"], "contribution": econ["contribution"], "lines": econ["lines"],
                  "finance": fin_lines, "finance_total": sum(v["value"] for v in fin_lines)},

@@ -122,6 +122,18 @@ class GigaChatAdapterTest(unittest.TestCase):
         self.assertIn("JSON", msgs[0]["content"])
         self.assertEqual(to_gigachat_functions([Tool("a", "b", {})])[0], {"name": "a", "description": "b", "parameters": {}})
 
+    def test_native_json_schema_is_sent_to_gigachat(self):
+        schema = {'type':'object','properties':{'ok':{'type':'boolean'}},'required':['ok'],'additionalProperties':False}
+        def handler(req):
+            if req.url.path.endswith('/oauth'):
+                return httpx.Response(200,json={'access_token':'tok','expires_at':4102444800000})
+            body=json.loads(req.content)
+            self.assertEqual(body['response_format'], {'type':'json_schema','schema':schema,'strict':True})
+            self.assertEqual(body['messages'][0]['content'], 'Проверь')
+            return httpx.Response(200,json={'choices':[{'message':{'content':'{"ok":true}'}}]})
+        result=run(self.make_client(handler).chat_json([{'role':'system','content':'Проверь'}],json_schema=schema))
+        self.assertEqual(result, {'ok':True})
+
 
 class CianParsingTest(unittest.TestCase):
     PAGE = ('<title>Купить квартиру в Казани</title><script>x={"offers":[{"cianId":42,"totalArea":"51.2",'
@@ -147,11 +159,16 @@ class CianParsingTest(unittest.TestCase):
 
 
 class AgentToolsTest(unittest.TestCase):
+    def test_bargaining_does_not_invent_financing_or_transaction_terms(self):
+        x = listing(days_on_market=0)
+        fp = {"overprice_pct": 0, "cheaper_comps": 0}
+        self.assertEqual(PR.bargaining_arguments(x, fp), [])
+
     def test_profile_merge_and_missing(self):
         p = PF.merge_profile({"rooms": 2, "poi": ["school", "unknown"], "features": ["balcony", "balcony_loggia"]})
         self.assertEqual(PF.missing_required(p), ["city", "budget_max"])
         self.assertEqual((p["poi"], p["features"]), (["school"], ["balcony_loggia"]))  # неизвестное — прочь, «оба» включает «любой»
-        p = PF.merge_profile({"city": "в Казани", "budget_max": 9, "rooms": None}, p)
+        p = PF.merge_profile({"city": "в Казани", "budget_max": 9_000_000, "rooms": None}, p)
         self.assertEqual((p["city"], p["budget_max"], p["rooms"]), ("Казань", 9_000_000, 2))  # пустое не стирает сказанное
         self.assertEqual(PF.missing_required(p), [])
 
@@ -359,7 +376,7 @@ class WishesAndMapTest(unittest.TestCase):
         no_school = listing(description="Есть гардеробная", nearby={"school": None})
         unknown = listing(description="Хорошая квартира", nearby={"school": {"name": "Школа", "dist": 300}})
         self.assertEqual([fits(x, prefs) for x in (good, no_school, unknown)], [True, False, False])
-        self.assertFalse(fits(no_school, prefs, map_ok=False))  # общая ошибка карты не отменяет уже известное отсутствие школы
+        self.assertFalse(fits(no_school, prefs))  # общая ошибка карты не отменяет уже известное отсутствие школы
 
     def test_seller_reply_with_price_skips_llm(self):
         x = listing()

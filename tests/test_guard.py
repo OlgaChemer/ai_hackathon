@@ -191,13 +191,19 @@ class GuardTest(unittest.TestCase):
 
     def test_changed_request_invalidates_previous_deal(self):
         async def go():
-            s = session.create_session('Квартира', ScriptedLLM())
-            await actions.execute(s, ToolCall('update_request', {'city': 'Казань', 'rooms': 2, 'budget_max': 9_000_000}))
+            s = session.create_session('', ScriptedLLM())
+            text = 'Казань, 2 комнаты до 9 млн'
+            event = s.push('message', role='user', text=text)
+            s.accept_request(text, event['seq'])
+            await actions.execute(s, ToolCall('update_request', {}))
             s.red_lines_ok = True
             s.chosen = 'cian-1'
             s.calls = {'cian-1': {'price': 8_000_000}}
             s.agreed = {'cian-1': 8_000_000}
-            await actions.execute(s, ToolCall('update_request', {'budget_max': 7_000_000}))
+            text = 'Теперь бюджет до 7 млн'
+            event = s.push('message', role='user', text=text)
+            s.accept_request(text, event['seq'])
+            await actions.execute(s, ToolCall('update_request', {}))
             self.assertFalse(s.red_lines_ok)
             self.assertFalse(s.agreed)
             self.assertFalse(s.calls)

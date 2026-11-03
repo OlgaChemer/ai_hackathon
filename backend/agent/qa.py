@@ -5,7 +5,6 @@
 """
 from __future__ import annotations
 
-import re
 
 from ..llm import LLMError
 from ..llm.base import LLMBusy
@@ -13,20 +12,15 @@ from ..config import settings
 from ..runtime import Turn, TurnStopped
 from . import guard, prompts
 from .numbers import fmt
-
-# вопрос — фраза с вопросительного слова; «а если трёшку?» — не вопрос, а новое условие поиска
-QUESTION = re.compile(r"^\s*(?:а\s+|и\s+|скажи(?:те)?,?\s+)?(?:что|как|почему|зачем|сколько|когда|где|какой|какая|какое|какие|"
-                      r"кто|чем|чего|откуда|можно ли|нужно ли|надо ли|правда ли|объясни|расскажи|подскажи)\b", re.I)
-
-
-def is_question(text: str) -> bool:
-    return bool(QUESTION.search(text.replace("ё", "е")))
+from ..calculation_policy import POLICY, metadata
 
 
 def build_context(s) -> dict:
     """Выжимка сессии для ответа: запрос, финансы, ипотека, подборка, текущая квартира, итог торга."""
     p = s.profile or {}
-    ctx: dict = {"шаг": s.stage}
+    ctx: dict = {"шаг": s.stage, "допущения расчёта": {
+        **metadata(), "ипотека": POLICY['mortgage'], "продукты": POLICY['savings']['products'],
+        "доля платы от экономии": POLICY['economics']['fee_pct']}}
     if p.get("city"):
         ctx["запрос"] = p.get("summary") or {k: p.get(k) for k in ("city", "rooms", "budget_max")}
         ctx["способ оплаты"] = {"cash": "наличные", "mortgage_ready": "ипотека, взнос есть",
@@ -58,7 +52,7 @@ def build_context(s) -> dict:
 
 
 async def answer(s, text: str) -> None:
-    system = prompts.QA_SYSTEM + "\n" + guard.POLICY
+    system = prompts.QA_SYSTEM + ("\n" + prompts.VOICE_STYLE if s.voice_mode else "") + "\n" + guard.POLICY
     turn = Turn(s.id, settings.agent_turn_timeout_s, s.signal)
     try:
         resp = await turn.run(lambda: s.llm.chat([{"role": "system", "content": system}, guard.data_message("session_context", build_context(s)),

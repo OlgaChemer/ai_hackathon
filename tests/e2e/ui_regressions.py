@@ -21,7 +21,20 @@ async def main(base):
         await page.route('https://tile.openstreetmap.org/**', lambda route: route.fulfill(body=PIXEL, content_type='image/png'))
         await page.goto(base, wait_until='domcontentloaded')
         await page.locator('.cookie-note button').click()
-        assert await page.locator('#aggregatorHome').is_visible()
+        assert await page.locator('#welcomePage').is_visible()
+        assert await page.locator('[data-tab=economics]').count() == 0
+        # Главная использует тот же настоящий bindMic, распознавание в тесте подменено.
+        await page.evaluate("""async () => {
+          const {recorder} = await import('/js/voice.js');
+          window.savedListen = recorder.listen;
+          recorder.available = recorder.supported = true;
+          recorder.listen = () => ({stop(){}, result:Promise.resolve({text:'Хочу квартиру в Самаре до 10 млн'})});
+        }""")
+        await page.locator('#welcomeMicBtn').click()
+        await page.wait_for_function("document.getElementById('welcomeQuery').value.includes('Самаре')")
+        assert 'Проверьте текст' in await page.locator('#welcomeVoiceStatus').inner_text()
+        await page.evaluate("""async () => { const {recorder} = await import('/js/voice.js'); recorder.listen = window.savedListen; }""")
+        await page.locator('.site-nav [data-action=apartments]').click()
         await page.locator('[data-market=secondary]').click()
         await page.fill('#portalCity', 'Казань')
         await page.fill('#portalBudget', '9')
@@ -34,7 +47,7 @@ async def main(base):
         assert await page.locator('#sendBtn').is_enabled()
         await page.unroute('**/api/session')
         await page.goto(base, wait_until='domcontentloaded')
-        await page.locator('.agent-launcher').click()
+        await page.locator('.site-nav [data-action=smart-search]').click()
         await page.fill('#entryQuery', 'Двушка в Казани до 9 млн, наличными')
         await page.locator('#entryForm button[type=submit]').click()
         await page.get_by_role('button', name='Подтвердить рамки', exact=True).last.click(timeout=30_000)
@@ -43,6 +56,31 @@ async def main(base):
         assert not await page.locator('#chatPanel').evaluate("node => node.classList.contains('expanded')")
         assert await page.evaluate('document.documentElement.scrollWidth <= innerWidth')
         assert 'CARTO' not in await page.locator('.leaflet-control-attribution').inner_text()
+        assert await page.locator('.leaflet-control-attribution svg').count() == 0
+        # Реальный сигнал поиска меняет правую область, даже если старая подборка ещё видна.
+        await page.evaluate("""async () => {
+          const {state}=await import('/js/state.js');
+          window.savedSelection=state.results[4];
+          delete state.results[4];
+          state.es.onmessage(new MessageEvent('message',{data:JSON.stringify({type:'search_progress',on:true,text:'Проверяю квартиры…'})}));
+        }""")
+        await page.wait_for_selector('#stage .search-spinner')
+        assert await page.locator('#stage').get_attribute('aria-busy') == 'true'
+        assert await page.locator('#stage .search-progress').count()==1
+        assert await page.locator('#stage .waiting-panel').count()==0
+        # При уточнении запроса прежние квартиры остаются под тем же единственным индикатором.
+        await page.evaluate("""async () => {
+          const {state}=await import('/js/state.js');
+          state.results[4]=window.savedSelection;
+          state.es.onmessage(new MessageEvent('message',{data:JSON.stringify({type:'search_progress',on:true,text:'Проверяю квартиры…'})}));
+        }""")
+        await page.wait_for_selector('#stage [data-selection=proceed]')
+        assert await page.locator('#stage .search-progress').count()==1
+        await page.evaluate("""async () => {
+          const {state}=await import('/js/state.js');
+          state.es.onmessage(new MessageEvent('message',{data:JSON.stringify({type:'search_progress',on:false})}));
+        }""")
+        await page.wait_for_selector('#stage .search-spinner', state='detached')
         await page.screenshot(path='/tmp/ui-mobile-selection.png', full_page=True)
         # Обычный текстовый вопрос модели должен снова открыть свёрнутый мобильный чат.
         await page.evaluate("""async () => {
@@ -165,6 +203,14 @@ async def main(base):
           return events;
         }""")
         print('PASS: Safari audio lifecycle:', result)
+        # Повторная доставка одного события SSE не создаёт второе сообщение.
+        await page.evaluate("""async () => {
+          const {state}=await import('/js/state.js');
+          const event={type:'message',role:'agent',text:'Проверка однократной доставки',seq:state.lastSeq+1000,replay:true};
+          for(let i=0;i<2;i++)state.es.onmessage(new MessageEvent('message',{data:JSON.stringify(event)}));
+        }""")
+        await page.wait_for_function("document.querySelector('#chatLog').textContent.includes('Проверка однократной доставки')")
+        assert await page.locator('#chatLog .msg').filter(has_text='Проверка однократной доставки').count()==1
         assert not errors, errors
         await browser.close()
         print('ИТОГО: 4/4 группы проверок')

@@ -6,7 +6,7 @@ import re
 
 def parse_money(text: str) -> int | None:
     """'9 млн' -> 9000000, '8,7 млн' -> 8700000, '8 700 000' -> 8700000, '8700 тыс' -> 8700000."""
-    t = text.lower().replace(" ", " ")
+    t = text.lower()
     m = re.search(r"(\d+(?:[.,]\d+)?)\s*(?:млн|миллион|лям)", t)
     if m:
         value = float(m.group(1).replace(",", "."))
@@ -46,10 +46,6 @@ def parse_price_near(text: str, ref: int) -> int | None:
 
 def fmt(v: int | float) -> str:
     return f"{int(round(v)):,}".replace(",", " ") + " ₽"
-
-
-def mln(v: float) -> str:
-    return f"{v / 1e6:.1f}".replace(".0", "").replace(".", ",") + " млн ₽"
 
 
 def plural(n: int, one: str, few: str, many: str) -> str:

@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .. import db
-from ..runtime import human_wait
+from ..runtime import TurnStopped, human_wait
 from ..db import repo
 from ..llm import LLMClient
 from . import finance as F
@@ -38,6 +38,10 @@ class Session:
     llm: LLMClient
     visitor_id: str | None = None
     user_id: int | None = None
+    request_inputs: list[dict] = field(default_factory=list)
+    request_review_seq: int = 0
+    request_review: dict | None = None
+    request_intent: str | None = None
     client_revision: int = 0  # только принятые сообщения/решения клиента
     seq: int = 0                      # номер последнего события диалога
     history: list[dict] = field(default_factory=list)  # события этого запуска (если база недоступна)
@@ -50,6 +54,8 @@ class Session:
     messages: list[dict] = field(default_factory=list)  # память: разговор агента с моделью (формат OpenAI)
     status: dict[int, str] = field(default_factory=dict)  # шаги степпера: номер -> active | done
 
+    voice_mode: bool = False           # стиль ответа; не параметр подбора и не согласие
+
     # --- состояние сделки (его меняют действия агента)
     profile: dict = field(default_factory=dict)
     red_lines_ok: bool = False          # клиент подтвердил рамки: без этого ни поиска, ни звонка
@@ -57,6 +63,8 @@ class Session:
     market: dict | None = None
     finance: dict | None = None
     mortgage: dict | None = None
+    programs_key: tuple | None = None
+    programs_result: dict | None = None
     search: dict | None = None          # результат поиска: listings, pool, meta, comps, report, map_ok, pages
     shown: list = field(default_factory=list)       # последняя подборка (карточки)
     calls: dict[str, dict] = field(default_factory=dict)     # итоги звонков по id объявления
@@ -87,13 +95,18 @@ class Session:
         self.push("message", role="agent", text=verdict.reply)
         return verdict.category
 
-    def invalidate_deal(self):
+    def invalidate_deal(self, *, keep_limit=False):
         """Согласия относятся к прежним условиям и не могут разрешать новую сделку."""
-        self.red_lines_ok = False
+        if not keep_limit:
+            self.red_lines_ok = False
+        if self.programs_key != F.programs_key(self.profile):
+            self.programs_key = self.programs_result = None
+            self.profile.pop('_programs_cache',None)
+            self.mortgage = self.finance = None
         self.search = None
         self.calls.clear()
         self.agreed.clear()
-        self.chosen = self.current = self.mortgage = self.finance = None
+        self.chosen = self.current = None
         self.shown = []
         self.journal.clear()
 
@@ -167,6 +180,11 @@ class Session:
             raise guard.InputRejected(str(exc)) from exc
         if self.refuse(data, "confirmation"):
             raise guard.InputRejected("Ответ отклонён. Карточка остаётся открытой — измените текст.")
+        if data.get("text") and (approved is None or kind == "clarify"):
+            # /confirm тоже может передать текстовый ответ; receive_text уже записал его сам.
+            if not self.request_inputs or self.request_inputs[-1]['text'] != data['text'] or self.request_inputs[-1]['seq'] <= self.request_review_seq:
+                event = self.push("message", role="user", text=data['text'])
+                self.accept_request(event['text'], event['seq'])
         self.client_revision += 1
         label, said = data.pop("_label", None), data.pop("_said", None)
         if said:
@@ -175,24 +193,40 @@ class Session:
         fut.set_result({"approved": approved, "data": data})
         return True
 
+    def accept_request(self, text, seq):
+        question = next((e for e in reversed(self.history)
+                         if e.get("type") == "confirm" and e.get("kind") in self.pending), {})
+        self.request_inputs.append({"seq": seq, "text": text, "question": question.get('text',''),
+                                    "options": question.get('chips') or []})
+        self.request_review = None
+
     async def receive_text(self, text: str, marks: dict | None = None) -> str:
-        """Сообщение клиента. Ждёт карточка — вопрос («что такое СБР?») получает ответ сбоку, а другой текст
-        закрывает карточку (агент сам поймёт, что клиент имел в виду). Карточек нет — сообщение агенту."""
-        self.push("message", role="user", text=text)
+        ev = self.push("message", role="user", text=text)
         if self.refuse(text):
             return "blocked"
-        self.client_revision += 1
+        self.accept_request(ev["text"], ev["seq"])
         if self.pending:
-            if qa.is_question(text):
+            from . import understanding
+            from ..llm import LLMError
+            try:
+                review = await understanding.prepare_from_http(self)
+            except (LLMError, TurnStopped):
+                await self.say("Не удалось надёжно разобрать сообщение. Попробуйте ещё раз — текущая карточка и условия сохранены.")
+                return "unresolved"
+            if review and review['intent'] == 'question' and review['decision'] != 'clarify':
+                self.request_review_seq = review['seq']
                 if self.qa_task is None or self.qa_task.done():
                     self.qa_task = asyncio.create_task(qa.answer(self, text))
                 return "question"
-            kind = next(iter(self.pending))
-            data = {"text": text}
-            if kind == "selection":
-                data.update(action="text", liked=(marks or {}).get("liked", []), disliked=(marks or {}).get("disliked", []))
-            self.resolve(kind, None, data)
-            return "answer"
+            self.client_revision += 1
+            kind = next(iter(self.pending), None)
+            if kind:
+                data = {"text": text}
+                if kind == "selection":
+                    data.update(action="text", liked=(marks or {}).get("liked", []), disliked=(marks or {}).get("disliked", []))
+                if self.resolve(kind, None, data):
+                    return "answer"
+        self.client_revision += 1
         self.inbox.put_nowait(text)
         return "message"
 
@@ -233,6 +267,28 @@ def restore_session(chat_id: str, text: str, llm: LLMClient) -> Session:
     s = Session(id=chat_id, query=text.strip(), llm=llm, visitor_id=vid, user_id=uid, seq=last_seq or 0)
     s.profile = dict(profile or {})
     s.messages = close_dangling_calls(list(memory or []))
+    if '_approved_budget_max' not in s.profile:
+        # Старый формат: доверяем только результатам серверных инструментов, не репликам.
+        names, approved = {}, None
+        for message in s.messages:
+            for call in message.get('tool_calls') or []:
+                names[call['id']] = call['function']['name']
+            if message.get('role') != 'tool':continue
+            try:result=json.loads(message.get('content','{}'))
+            except (TypeError,ValueError):continue
+            if not isinstance(result,dict):continue
+            if names.get(message.get('tool_call_id'))=='confirm_red_lines' and 'approved' in result:
+                approved=result.get('budget_max') if result['approved'] else None
+            if names.get(message.get('tool_call_id'))=='update_request' and approved:
+                amount=result.get('profile',{}).get('budget_max')
+                if amount is not None and amount!=approved:approved=None
+        s.profile['_approved_budget_max']=approved
+    s.red_lines_ok = bool(s.profile.get('_approved_budget_max') and
+                          s.profile['_approved_budget_max'] == s.profile.get('budget_max'))
+    cache=s.profile.get('_programs_cache') or {}
+    if s.profile.get('payment')=='cash' and cache.get('key') and isinstance(cache.get('result'),dict):
+        if tuple(cache['key'])==F.programs_key(s.profile):
+            s.programs_key,s.programs_result=tuple(cache['key']),cache['result']
     s.prefs.sync(s.profile)
     SESSIONS[chat_id] = s
     db.safe(repo.update_chat, chat_id, status="running")

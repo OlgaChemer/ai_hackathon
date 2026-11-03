@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -16,6 +17,10 @@ from typing import Any
 
 class LLMError(RuntimeError):
     """Ошибка обращения к модели (сеть, авторизация, формат)."""
+
+
+class StructuredOutputError(LLMError):
+    """Модель ответила, но не вернула допустимый JSON."""
 
 
 class LLMBusy(LLMError):
@@ -58,6 +63,7 @@ class LLMClient(ABC):
         *,
         tools: list[Tool] | None = None,
         json_mode: bool = False,
+        json_schema: dict | None = None,
         temperature: float = 0.3,
         max_tokens: int = 800,
         tag: str = "",
@@ -83,13 +89,13 @@ def parse_json_loose(text: str) -> dict[str, Any]:
     except json.JSONDecodeError:
         start, end = text.find("{"), text.rfind("}")
         if start == -1 or end <= start:
-            raise LLMError(f"Модель вернула не JSON: {text[:200]}")
+            raise StructuredOutputError(f"Модель вернула не JSON: {text[:200]}")
         try:
             data = json.loads(text[start : end + 1])
         except json.JSONDecodeError as exc:
-            raise LLMError(f"Модель вернула не JSON: {text[:200]}") from exc
+            raise StructuredOutputError(f"Модель вернула не JSON: {text[:200]}") from exc
     if not isinstance(data, dict):
-        raise LLMError("Ожидался JSON-объект")
+        raise StructuredOutputError("Ожидался JSON-объект")
     return data
 
 
@@ -109,6 +115,8 @@ async def post_with_retry(http, url: str, *, attempts: int = 3, provider: str = 
             last = LLMError(f"{provider} {r.status_code}")
         except httpx.TransportError as exc:  # таймауты, обрыв keep-alive, DNS
             last = exc
+            logging.getLogger(__name__).warning('%s transport failure: %s (attempt %s/%s)',
+                                                provider, type(exc).__name__, i + 1, attempts)
         if i < attempts - 1:
             await asyncio.sleep(0.5 * (i + 1))
     raise LLMError(f"{provider} недоступен: {type(last).__name__} {last}".strip())

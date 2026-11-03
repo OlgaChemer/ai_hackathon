@@ -1,26 +1,9 @@
 // Отрисовка панелей этапов (кроме звонка — он в call.js, и графика — chart.js).
-import { html, rub, mln, pct, plural, shortDate } from "./format.js";
+import { html, rub, mln, pct, shortDate } from "./format.js";
 import { POI_COLORS } from "./map.js";
-
-const EXAMPLES = [
-  "Ищу 2-комнатную в Казани до 9 млн, у нас ребёнок — нужна школа рядом",
-  "Двушка в Новосибирске до 7 млн, не первый этаж, кухня от 9 метров",
-  "Однокомнатная квартира в Казани",
-];
 
 const ICON_UP = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M7 10v11H3V10h4zm2 11h8.3a2 2 0 0 0 2-1.6l1.4-7A2 2 0 0 0 18.7 10H14l.7-3.6a2 2 0 0 0-.5-1.8L13 3.4 8.6 8.6A2 2 0 0 0 8 10v9a2 2 0 0 0 1 2z" fill="currentColor"/></svg>';
 const ICON_DOWN = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M17 14V3h4v11h-4zm-2-11H6.7a2 2 0 0 0-2 1.6l-1.4 7A2 2 0 0 0 5.3 14H10l-.7 3.6a2 2 0 0 0 .5 1.8l1.2 1.2 4.4-5.2A2 2 0 0 0 16 14V5a2 2 0 0 0-1-2z" fill="currentColor"/></svg>';
-
-export function welcome(cities = {}) {
-  return html`
-  <section class="panel welcome">
-    <h1>Какую квартиру ищем?</h1>
-
-    <div class="examples">
-      ${html.raw(EXAMPLES.map((e) => html`<button class="example" data-example="${e}">${e}</button>`).join(""))}
-    </div>
-  </section>`;
-}
 
 export function waiting(title, text) {
   return html`<section class="panel waiting-panel"><h2 class="panel-title">${title}</h2><p class="panel-lead">${text}</p></section>`;
@@ -44,17 +27,17 @@ function marketBlock(p) {
 }
 
 export function profile(p) {
-  const rooms = p.rooms === 0 ? "студия" : p.rooms;
+  const rooms = p.rooms_options?.length > 1 ? p.rooms_options.join("–") : p.rooms === 0 ? "студия" : p.rooms ?? "уточню";
   return html`
   <section class="panel">
     <h2 class="panel-title">Задача понята</h2>
-    <p class="panel-lead">${p.summary}</p>
+    <p class="panel-lead">${p.summary || "Уточняю параметры — известные пожелания уже сохранены."}</p>
     <dl class="facts">
-      <div><dt>Город</dt><dd>${p.city}${p.okrug ? `, ${p.okrug}` : ""}</dd></div>
+      <div><dt>Город</dt><dd>${[p.city, ...(p.cities || []).filter(c => c !== p.city)].filter(Boolean).join(", ") || "уточню"}${p.okrug ? `, ${p.okrug}` : ""}</dd></div>
       <div><dt>Комнат</dt><dd>${rooms}</dd></div>
-      <div><dt>Бюджет до</dt><dd class="num">${rub(p.budget_max)}${html.raw(p.budget_source ? html`<small class="dd-note">${p.budget_source}</small>` : "")}</dd></div>
+      <div><dt>Бюджет до</dt><dd class="num">${p.budget_max ? rub(p.budget_max) : "уточню"}${html.raw(p.budget_source ? html`<small class="dd-note">${p.budget_source}</small>` : "")}</dd></div>
       <div><dt>Районы</dt><dd>${p.districts?.length ? p.districts.join(", ") : "любые"}</dd></div>
-      <div><dt>Школа рядом</dt><dd>${p.near_school ? "важно" : "не важно"}</dd></div>
+      <div><dt>Расположение</dt><dd>${p.prefer_center ? "желательно ближе к центру" : "по вашим пожеланиям"}</dd></div>
       <div><dt>Кухня</dt><dd>${p.kitchen_min ? `от ${p.kitchen_min} м²` : "любая"}</dd></div>
       <div><dt>Рынок</dt><dd>${{ new: "новостройки", both: "новостройки и вторичка", secondary: "вторичный" }[p.housing] || "уточню"}</dd></div>
     </dl>
@@ -67,14 +50,15 @@ export function profile(p) {
 
 export function finance(d, opened = {}, selected) {
   if (d.mode === "cash") {
+    const preview = d.savings_preview;
     return html`
     <section class="panel">
       <h2 class="panel-title">Покупка без ипотеки</h2>
       <p class="panel-lead">Ипотека и план накоплений не нужны. Деньги продавцу уйдут через сервис безопасных расчётов — только после регистрации права в Росреестре.</p>
       <div class="alloc">
         <div class="alloc-row">
-          <div><strong>Накопительный счёт — пока ищем квартиру</strong><small>по желанию: деньги доступны в любой момент и приносят доход (${pct(0.10)} годовых — допущение)</small></div>
-          <div class="num">${rub(d.price)}<small>до ${rub(Math.round((d.price * 0.10 / 12) * 2 / 100) * 100)} за 2 месяца</small></div>
+          <div><strong>Накопительный счёт — пока ищем квартиру</strong><small>по желанию: деньги доступны в любой момент и приносят доход (${preview ? `${pct(preview.rate)} годовых — допущение` : "условия уточняются при обновлении расчёта"})</small></div>
+          <div class="num">${rub(d.price)}<small>${preview ? `до ${rub(preview.income)} за ${preview.months} мес.` : "обновите расчёт для оценки дохода"}</small></div>
           <button class="btn ${opened.savings_account ? "btn-ghost" : "btn-primary"} btn-small" data-open="savings_account" data-amount="${d.price}" ${opened.savings_account ? "disabled" : ""}>${opened.savings_account ? "Открыт" : "Открыть"}</button>
         </div>
       </div>
@@ -91,10 +75,10 @@ export function finance(d, opened = {}, selected) {
     <h2 class="panel-title">Финансовая подготовка</h2>
     <p class="panel-lead">${f.verdict}</p>
     <div class="fin-kpis">
-      <div><span class="k">Нужно на взнос 20% и сделку</span><b class="num">${rub(f.need)}</b>${html.raw(f.matcap ? html`<small>маткапитал ${rub(f.matcap)} уже учтён</small>` : "")}</div>
+      <div><span class="k">Нужно на взнос${f.down_share != null ? ` ${pct(f.down_share)}` : ""} и сделку</span><b class="num">${rub(f.need)}</b>${html.raw(f.matcap ? html`<small>маткапитал ${rub(f.matcap)} уже учтён</small>` : "")}</div>
       <div><span class="k">Можно направить сейчас</span><b class="num">${rub(f.available)}</b><small>подушка ${rub(f.cushion)} остаётся</small></div>
       <div class="${f.gap ? "is-gap" : "is-ok"}"><span class="k">${f.gap ? "Не хватает" : "Хватает с запасом"}</span><b class="num">${rub(f.gap || f.available - f.need)}</b></div>
-      <div><span class="k">Откладывать в месяц</span><b class="num">${rub(f.monthly)}</b><small>70% от свободных ${rub(f.free_monthly)}</small></div>
+      <div><span class="k">Откладывать в месяц</span><b class="num">${rub(f.monthly)}</b><small>${f.contribution_share != null ? `${pct(f.contribution_share)} от свободных` : "из свободных"} ${rub(f.free_monthly)}</small></div>
     </div>
     <div class="strategy-tabs" role="radiogroup" aria-label="Стратегия">
       ${html.raw(f.strategies.map((s) => html`
@@ -158,7 +142,7 @@ function programs(p) {
     <p class="panel-lead">${p.explanation}</p>
     <div class="scenarios">${html.raw(cards.join(""))}</div>
     ${html.raw(cap)}
-    <p class="hint">${p.assumption}${p.programs.some((c) => c.monthly_after_subsidy) ? " * Льготная ставка субсидируется не дольше 15 лет; дальше — по договору с банком (в расчёте условно 12%)." : ""}</p>
+    <p class="hint">${p.assumption}${p.subsidy_years && p.post_subsidy_rate != null && p.programs.some((c) => c.monthly_after_subsidy) ? ` * Льготный период в расчёте — ${p.subsidy_years} лет, затем условная ставка ${pct(p.post_subsidy_rate)}.` : ""}</p>
   </section>`;
 }
 
@@ -193,51 +177,10 @@ function mortgage(m) {
   </section>`;
 }
 
-// ------------------------------------------------------------------ поиск и цена
-
-function sourceChip(r) {
-  const label = { live: "живые данные", cached: "кеш сессии", snapshot: "сохранённый срез", unavailable: "недоступен", db: "видели за неделю" }[r.status] || r.status;
-  const cls = r.status === "unavailable" ? "tag-red" : r.status === "snapshot" ? "tag-amber" : "tag-green";
-  return html`<span class="source-chip"><b>${r.source}</b> ${r.count} ${plural(r.count, "объявление", "объявления", "объявлений")} <span class="tag ${cls}">${label}</span></span>`;
-}
-
-export function search(d) {
-  const rows = d.rows || [];
-  if (!rows.length) {
-    return html`<section class="panel"><h2 class="panel-title">Поиск</h2><div class="sources">${html.raw(d.report.map(sourceChip).join(""))}</div>
-      <p class="panel-lead">${d.report.map((r) => `${r.source}: ${r.note}`).join("; ")}</p></section>`;
-  }
-  const lo = Math.min(...rows.map((r) => Math.min(r.low, r.price))) * 0.985;
-  const hi = Math.max(...rows.map((r) => Math.max(r.high, r.price))) * 1.015;
-  const x = (v) => ((v - lo) / (hi - lo)) * 100;
-  const items = rows.map((r) => {
-    const dlt = r.price - r.fair;
-    return html`
-      <div class="fair-row">
-        <div class="who">${r.address}<small>${r.district || "район не указан"}, ${r.area} м²</small></div>
-        <div class="fair-scale" aria-label="Коридор ${rub(r.low)}–${rub(r.high)}, цена ${rub(r.price)}">
-          <div class="track"></div>
-          <div class="band" style="left:${x(r.low)}%;width:${x(r.high) - x(r.low)}%"></div>
-          <div class="tick" style="left:${x(r.price)}%" title="Цена объявления ${rub(r.price)}"></div>
-        </div>
-        <div class="fair-price"><b class="num">${rub(r.price)}</b><small>Отклонение от справедливой цены</small><span class="delta num" style="color:${dlt > 0 ? "var(--amber)" : "var(--green-strong)"}">${dlt > 0 ? "+" : "−"}${rub(Math.abs(dlt))}</span></div>
-      </div>`;
-  });
-  return html`
-  <section class="panel">
-    <h2 class="panel-title">Поиск и справедливая цена</h2>
-    ${html.raw(d.confirmed !== undefined ? html`<p class="panel-lead">Все обязательные условия подтверждены: ${d.confirmed}. Нужно уточнить данные: ${d.unverified}. Не подошли: ${d.rejected}.</p>` : "")}
-    <div class="sources">${html.raw(d.report.map(sourceChip).join(""))}</div>
-    ${html.raw(d.store?.total ? html`<p class="store-line">В базе агента по такому запросу — ${d.store.total} ${plural(d.store.total, "квартира", "квартиры", "квартир")}${d.store.mapped ? html`, у ${d.store.mapped} уже проверено по карте, что рядом` : ""}. Признаки считаются один раз и нужны всем, кто ищет похожее.${d.store.crawl ? html` Последний обход Циана ${shortDate(d.store.crawl.finished_at.slice(0, 10))}: +${d.store.crawl.added} новых, ${d.store.crawl.price_changed} изменений цены, ${d.store.crawl.removed} снято.` : ""}</p>` : "")}
-    <details class="price-explanation"><summary>Как рассчитана справедливая цена</summary><p>Справедливая цена — медиана цены м² ближайших похожих квартир (по координатам, площадь ±30%) с поправками на ремонт, год дома и этаж, минус 3% на торг. Коридор — разброс цен аналогов. Если объявление правее коридора — есть что сторговать.</p></details>
-    ${html.raw(items.join(""))}
-    <div class="legend"><span class="l-band">коридор справедливой цены</span><span class="l-tick">цена в объявлении</span></div>
-  </section>`;
-}
-
 // ------------------------------------------------------------------ подбор
 
 function priceTag(c) {
+  if (c.fair?.value_supported === false) return html`<span class="tag">Мало сопоставимых местных аналогов</span>`;
   const f = c.fair;
   if (c.price > f.high) return html`<span class="tag tag-amber" title="${f.basis}">дороже аналогов на ${pct((c.price - f.fair) / f.fair)}</span>`;
   if (c.price < f.low) return html`<span class="tag tag-green" title="${f.basis}">дешевле аналогов на ${pct((f.fair - c.price) / f.fair)}</span>`;
@@ -299,6 +242,7 @@ function offerCard(c, vote, no) {
       <p class="meta">${meta}</p>
       ${html.raw(params ? html`<p class="meta">${params}</p>` : "")}
       ${html.raw(correctedLine(c))}
+      ${html.raw(c.ranking ? html`<p class="ranking-note">Совпадение проверяемых пожеланий: ${c.ranking.fit_pct}% · ${c.ranking.value_score.toFixed(1)} балла/млн ₽${c.ranking.center_requested ? c.ranking.center_km != null ? ` · ~${c.ranking.center_km} км по прямой до опорной точки центра` : " · близость к центру не проверена" : ""}${c.ranking.discount_pct != null && c.ranking.discount_pct > 0 ? ` · на ${c.ranking.discount_pct}% ниже оценки по аналогам` : ""}</p>` : "")}
       ${html.raw(c.match ? html`<p class="meta ${c.match.status === "confirmed" ? "" : "missing"}">${c.match.status === "confirmed" ? "Обязательные условия подтверждены" : c.match.status === "rejected" ? "Есть несоответствия условиям" : `Нужно проверить: ${c.match.unknown.join(", ")}`}</p>` : "")}
       ${html.raw(c.match?.checks?.filter((r) => r.source === "cian_description" && r.key.startsWith("poi:")).map((r) => html`<p class="hint">В описании упомянуто: ${r.label}. Расстояние по карте не подтверждено.</p>`).join("") || "")}
 
@@ -334,7 +278,9 @@ export function selection(d, marks) {
       <div>
         <div class="eyebrow">Подборка${d.round > 1 ? ` · раунд ${d.round}` : " · первые результаты"}</div>
         <h2 class="panel-title">Квартиры под ваши пожелания</h2>
-
+        <details class="ranking-explanation"><summary>Как упорядочены квартиры</summary>
+          <p>Сначала подтверждённые обязательные условия; внутри группы — совпадение пожеланий на миллион рублей с поправкой на цену аналогов. ${d.cards.some(c => c.ranking?.center_requested) ? "По пожеланию центра выше идут квартиры в пределах 5 км от опорной точки центра; остальные остаются ниже." : ""}</p>
+        </details>
       </div>
     </div>
     ${html.raw(d.learned?.length ? html`<div class="learned"><span>Учёл:</span>${html.raw(d.learned.map((l) => html`<span class="chip">${l}</span>`).join(""))}</div>` : "")}
@@ -415,7 +361,7 @@ export function summary(s) {
         <dl class="ledger">
           <dt>Цена в объявлении (зафиксирована в журнале)</dt><dd class="num">${rub(s.base_price)}</dd>
           <dt>Итоговая цена</dt><dd class="num">${rub(s.final_price)}</dd>
-          <dt>Плата агенту, 15% от экономии</dt><dd class="num">${rub(s.fee)}</dd>
+          <dt>Плата агенту${s.fee_rate != null ? `, ${pct(s.fee_rate)} от экономии` : ""}</dt><dd class="num">${rub(s.fee)}</dd>
           <dt class="total">Чистая выгода клиента</dt><dd class="total num">${rub(s.net)}</dd>
           ${html.raw(s.monthly_saved ? html`<dt>Платёж по ипотеке ниже на</dt><dd class="num">${rub(s.monthly_saved)} / мес</dd>` : "")}
           <dt>Сэкономлено времени</dt><dd>${s.hours_saved}</dd>

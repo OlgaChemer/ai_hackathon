@@ -48,6 +48,7 @@ export async function mountMap(node, cards) {
   }
   if (!node.isConnected) return;
   const map = L.map(node, { scrollWheelZoom: false, zoomControl: true });
+  map.attributionControl.setPrefix('<a href="https://leafletjs.com" title="Библиотека карты">Leaflet</a>');
   instances.set(node, map);
   const use2gis = config.provider === '2gis';
   const note = (text, external = false) => {
