@@ -139,9 +139,10 @@ async def prepare(s, proposal=None):
     if s.request_review and s.request_review['seq']==version and s.request_review['base_profile']==s.profile:
         return s.request_review
     from .. import sources
+    base_profile=deepcopy(s.profile)
     contract=input_frame.schema(_schema(), inputs)
     payload={'supported_cities':sources.SUPPORTED_CITIES,'ambiguous_catalog_names':catalog_ambiguities(sources.SUPPORTED_CITIES),
-             'messages':inputs,'profile':deepcopy(s.profile),'input_schema':contract,
+             'messages':inputs,'profile':{k:v for k,v in base_profile.items() if not k.startswith('_')},'input_schema':contract,
              'workflow':{'has_search':s.search is not None,'has_selection':bool(s.shown),'has_calls':bool(s.calls),'chosen':bool(s.chosen)}}
     revision=s.client_revision
     error=None
@@ -165,9 +166,9 @@ async def prepare(s, proposal=None):
             record('request_review_invalid',session=s.id,problem=guard.output(error),attempt=attempt+1)
             continue
         except LLMError:raise
-        if s.request_inputs[-1]['seq']!=version or s.client_revision!=revision or s.profile!=payload['profile']:
+        if s.request_inputs[-1]['seq']!=version or s.client_revision!=revision or s.profile!=base_profile:
             raise UnderstandingError('Поступило новое сообщение во время разбора')
-        s.request_review={'seq':version,'base_profile':payload['profile'],**result}
+        s.request_review={'seq':version,'base_profile':base_profile,**result}
         record('request_review',session=s.id,decision=result['decision'],intent=result['intent'],fields=len(result['changes']),repaired=bool(attempt))
         return s.request_review
     raise UnderstandingError('Не удалось получить корректный структурированный ввод')

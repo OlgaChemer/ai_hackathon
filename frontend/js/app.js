@@ -120,6 +120,7 @@ async function listenPhone(call, myGen) {
 // ------------------------------------------------------------------ события агента
 
 async function handle(ev, myGen) {
+  if (ev.seq && ev.type !== "replay_end" && ev.seq <= state.lastSeq) return;
   const call = state.call;
   const quiet = Boolean(ev.replay); // история диалога: рисуем сразу, без пауз, голоса и звонка
   const pause = (ms) => (quiet ? null : sleep(ms));

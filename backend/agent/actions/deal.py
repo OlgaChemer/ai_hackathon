@@ -67,6 +67,8 @@ async def apply_corrections(s, listing: dict, corrections: dict, persist: bool) 
         "не выше лимита клиента (код не даст) и договаривается о просмотре. Возвращает итог: цена, что узнал, просмотр.",
         **ID)
 async def call_seller(s, listing_id: str) -> dict:
+    if not s.profile.get("payment"):
+        raise ActionError("Сначала выясни способ покупки — ask_payment, затем звонок продавцу.")
     if not s.red_lines_ok:
         raise ActionError("Рамки не подтверждены — сначала confirm_red_lines.")
     x = _listing(s, listing_id)

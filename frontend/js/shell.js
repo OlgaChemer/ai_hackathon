@@ -134,6 +134,12 @@ export function initShell({ start }) {
     const housing = {both:'новостройки и вторичка', new:'только новостройки', secondary:'только вторичка'}[market];
     launch(`Ищу ${rooms === '0' ? 'студию' : `${rooms}-комнатную квартиру`} в ${city || 'Москве'}${budget > 0 ? ` до ${budget} млн рублей` : ', бюджет пока не знаю'}, ${housing}`);
   });
+  $('welcomeQuery').addEventListener('keydown', event => {
+    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+      event.preventDefault();
+      $('welcomeForm').requestSubmit();
+    }
+  });
   $('welcomeForm').addEventListener('submit', event => {
     event.preventDefault();
     launch($('welcomeQuery').value.trim());

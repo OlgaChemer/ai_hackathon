@@ -30,7 +30,7 @@ def state_brief(s) -> str:
     p = s.profile
     lines = []
     if p:
-        known = {k: v for k, v in p.items() if k not in ("summary", "market") and v not in (None, [], "")}
+        known = {k: v for k, v in p.items() if not k.startswith("_") and k not in ("summary", "market") and v not in (None, [], "")}
         if known.get("features"):
             known["features"] = [FEATURES[k][0] for k in known["features"]]
         if known.get("poi"):
@@ -68,8 +68,12 @@ async def think(s, with_actions: bool):
 
 
 def pending_search_action(s):
-    """Read-only progress has no financial authority; never auto-call or auto-confirm."""
+    """Начальные решения запрашиваются карточками; код никогда не подтверждает их за человека."""
     if not missing_required(s.profile):
+        if not s.red_lines_ok:
+            return "confirm_red_lines"
+        if not s.profile.get("payment"):
+            return "ask_payment"
         if s.search is None:
             return "search_listings"
         if not s.shown:
@@ -103,6 +107,9 @@ async def run(s) -> None:
                                        {"role":"user","content":checked['client_said']}])
                     s.remember()
                     continue
+            intake = pending_search_action(s)
+            if intake in ("confirm_red_lines", "ask_payment") and s.request_intent in ("search", "refine", "continue"):
+                forced = intake
             if forced:
                 resp = LLMResponse("", [ToolCall(forced, {}, f"progress_{uuid.uuid4().hex[:8]}")])
                 record("search_recovery", session=s.id, action=forced)

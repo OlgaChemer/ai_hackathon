@@ -36,15 +36,15 @@ class FlexibleSearchTest(unittest.IsolatedAsyncioTestCase):
         s = self.agent(say('Сейчас начну поиск подходящих квартир.'))
         await drive(s, until=lambda ev: ev['type'] == 'confirm' and ev['kind'] == 'selection')
         self.assertTrue(s.shown)
-        self.assertFalse(s.red_lines_ok)  # поиск не даёт разрешение звонить или тратить деньги
-        self.assertIsNone(s.profile['payment'])
+        self.assertTrue(s.red_lines_ok)  # отдельная карточка принята тестовым клиентом до поиска
+        self.assertIsNotNone(s.profile['payment'])
         self.collect_mock.assert_awaited_once()
         messages = [e.get('text', '') for e in s.history if e['type'] == 'message']
         self.assertNotIn('Сейчас начну поиск подходящих квартир.', messages)
         self.assertTrue(any(e['type'] == 'search_progress' and e['on'] for e in s.history))
         self.assertTrue(any(e['type'] == 'search_progress' and not e['on'] for e in s.history))
         to_gigachat_messages(s.messages, False)  # автоматическое продолжение сохраняет валидные пары вызов/результат
-        self.assertNotIn('call_seller', [t.name for t in actions.tools(s)])
+        self.assertNotIn('confirm_red_lines', [t.name for t in actions.tools(s)])
 
     async def test_repeated_known_request_recovers_without_more_from_user(self):
         s = self.agent(*[call('update_request', poi=[]) for _ in range(3)], say('Показываю подборку.'))
@@ -57,8 +57,8 @@ class FlexibleSearchTest(unittest.IsolatedAsyncioTestCase):
         self.collect_mock.return_value = ([], [])
         s = self.agent(call('search_listings'), say('Ничего не нашёл.'))
         s.profile['housing'] = 'secondary'
-        events = await drive(s, until=lambda ev: ev['type'] == 'confirm')
-        question = next(e for e in events if e['type'] == 'confirm')
+        events = await drive(s, until=lambda ev: ev['type'] == 'confirm' and ev['kind']=='clarify')
+        question = next(e for e in events if e['type'] == 'confirm' and e['kind']=='clarify')
         self.assertIn('Посмотреть новостройки', question['chips'])
         self.assertEqual(s.profile['housing'], 'secondary')
         self.assertEqual(s.profile['budget_max'], 9_000_000)
@@ -66,9 +66,10 @@ class FlexibleSearchTest(unittest.IsolatedAsyncioTestCase):
     async def test_finances_are_required_for_deal_preparation_but_not_for_search(self):
         s = self.agent()
         s.chosen, s.red_lines_ok = 'cian-1', True
-        self.assertTrue(actions.available(s, 'search_listings'))
+        self.assertFalse(actions.available(s, 'search_listings'))
         self.assertFalse(actions.available(s, 'prepare_deal'))
         s.profile['payment'] = 'cash'
+        self.assertTrue(actions.available(s, 'search_listings'))
         self.assertTrue(actions.available(s, 'prepare_deal'))
 
     async def test_knowledge_answer_does_not_start_a_new_search(self):

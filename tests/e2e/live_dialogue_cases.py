@@ -40,6 +40,7 @@ class Dialogue:
         self.client = httpx.AsyncClient(base_url=base, timeout=190)
         self.events = asyncio.Queue()
         self.profile, self.cards, self.report, self.messages = {}, [], [], []
+        self.timeline = []
         self.reader = None
         self.sid = None
 
@@ -55,7 +56,9 @@ class Dialogue:
                 response.raise_for_status()
                 async for line in response.aiter_lines():
                     if line.startswith('data:'):
-                        self.events.put_nowait(json.loads(line[5:]))
+                        event=json.loads(line[5:])
+                        self.timeline.append({k:event[k] for k in ('type','kind','seq','text','role') if k in event})
+                        self.events.put_nowait(event)
             self.events.put_nowait({'type': 'transport_error', 'text': 'stream closed'})
         except Exception as exc:
             self.events.put_nowait({'type': 'transport_error', 'text': type(exc).__name__})

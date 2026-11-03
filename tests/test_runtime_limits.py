@@ -183,7 +183,7 @@ class TurnTest(unittest.IsolatedAsyncioTestCase):
         batch = LLMResponse('', [ToolCall('search_listings', {}, 'a'), ToolCall('show_selection', {}, 'b')],
                             functions_state_id='preserved')
         s = session.create_session('Квартира', ScriptedLLM(batch, say('Продолжаю')))
-        s.profile = {'city': 'Казань', 'rooms': 2, 'budget_max': 9_000_000}
+        s.profile = {'city': 'Казань', 'rooms': 2, 'budget_max': 9_000_000, 'payment':'cash'}
         s.red_lines_ok = True
 
         async def stuck(*a):

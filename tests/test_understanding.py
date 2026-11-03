@@ -476,7 +476,8 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
             result = await actions.execute(s,ToolCall('call_seller',{'listing_id':'old'}))
             self.assertIn('error',result)
             verify.assert_not_awaited()
-        self.assertFalse(s.red_lines_ok)
+        self.assertTrue(s.red_lines_ok)  # бюджет не изменился, но прежняя подборка отозвана
+        self.assertIsNone(s.search)
 
     async def test_invalid_planner_argument_types_do_not_block_a_valid_semantic_request(self):
         text='Казань, однушка до пяти миллионов.'

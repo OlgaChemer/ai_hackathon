@@ -49,6 +49,7 @@ def tools(s=None) -> list[Tool]:
 
 def available(s, name: str) -> bool:
     """Модель выбирает действия среди разрешённых текущим состоянием, порядок не диктуется."""
+    from .money import programs_current
     p = s.profile
     if s.request_intent == "hold" and name not in ("update_request", "ask_client"):
         return False
@@ -57,6 +58,7 @@ def available(s, name: str) -> bool:
     finance_ready = p.get("payment") == "cash" or (s.mortgage is not None and
                     (p.get("payment") != "mortgage_saving" or s.finance is not None))
     rules = {
+        "update_request": not s.request_inputs or any(x['seq'] > s.request_review_seq for x in s.request_inputs),
         # Подтверждение рамок завершает вводную анкету. Если поиск ничего не даст,
         # снова разрешаем обсудить изменение условий.
         "ask_client": not ready or not s.red_lines_ok or s.search is not None,
@@ -65,14 +67,14 @@ def available(s, name: str) -> bool:
         "ask_payment": not p.get("payment"),
         "ask_housing": not p.get("housing"),
         "ask_family": p.get("children") is None and p.get("payment") != "cash",
-        "mortgage_programs": ready and bool(p.get("payment")) and
+        "mortgage_programs": not programs_current(s) and ready and bool(p.get("payment")) and
                              (p.get("payment") == "cash" or p.get("children") is not None),
         "savings_plan": ready and p.get("payment") == "mortgage_saving",
-        "search_listings": ready and work_intent,
+        "search_listings": ready and s.red_lines_ok and bool(p.get("payment")) and work_intent,
         "show_selection": s.search is not None,
         "offer_search_alternatives": s.search is not None,
         "probe_budget": s.search is not None,
-        "call_seller": s.search is not None and s.red_lines_ok and work_intent,
+        "call_seller": s.search is not None and s.red_lines_ok and bool(p.get("payment")) and work_intent,
         "confirm_price": bool(s.calls) and s.red_lines_ok,
         "plan_viewing": bool(s.agreed) and s.red_lines_ok,
         "prepare_deal": bool(s.chosen) and s.red_lines_ok and finance_ready and s.status.get(8) != "done",
@@ -101,11 +103,17 @@ async def execute(s, call: ToolCall) -> dict:
             if checked and checked.get('profile_result'):
                 return checked['profile_result']
             return await a.run(s)  # уже проверенный ввод; повторная догадка не применяется
+    if call.name == "confirm_red_lines" and s.red_lines_ok:
+        return await a.run(s)
+    if call.name == "mortgage_programs":
+        from .money import programs_current
+        if programs_current(s):
+            return await a.run(s)
     if not available(s, call.name):
         names = ", ".join(a.name for a in REGISTRY.values() if available(s, a.name))
         hint = ""
         if call.name == "search_listings":
-            hint = "Для поиска нужны город, допустимые комнаты и бюджет (update_request). "
+            hint = "Для поиска нужны город, комнаты и бюджет (update_request), confirm_red_lines и способ покупки (ask_payment). "
         return {"error": f"{hint}Действие недоступно в текущем состоянии. Доступны: {names}"}
     args = call.arguments
     try:

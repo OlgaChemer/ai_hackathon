@@ -61,6 +61,8 @@ class Session:
     market: dict | None = None
     finance: dict | None = None
     mortgage: dict | None = None
+    programs_key: tuple | None = None
+    programs_result: dict | None = None
     search: dict | None = None          # результат поиска: listings, pool, meta, comps, report, map_ok, pages
     shown: list = field(default_factory=list)       # последняя подборка (карточки)
     calls: dict[str, dict] = field(default_factory=dict)     # итоги звонков по id объявления
@@ -91,13 +93,19 @@ class Session:
         self.push("message", role="agent", text=verdict.reply)
         return verdict.category
 
-    def invalidate_deal(self):
+    def invalidate_deal(self, *, keep_limit=False):
         """Согласия относятся к прежним условиям и не могут разрешать новую сделку."""
-        self.red_lines_ok = False
+        if not keep_limit:
+            self.red_lines_ok = False
+        from .actions.money import programs_key
+        if self.programs_key != programs_key(self):
+            self.programs_key = self.programs_result = None
+            self.profile.pop('_programs_cache',None)
+            self.mortgage = self.finance = None
         self.search = None
         self.calls.clear()
         self.agreed.clear()
-        self.chosen = self.current = self.mortgage = self.finance = None
+        self.chosen = self.current = None
         self.shown = []
         self.journal.clear()
 
@@ -258,6 +266,29 @@ def restore_session(chat_id: str, text: str, llm: LLMClient) -> Session:
     s = Session(id=chat_id, query=text.strip(), llm=llm, visitor_id=vid, user_id=uid, seq=last_seq or 0)
     s.profile = dict(profile or {})
     s.messages = close_dangling_calls(list(memory or []))
+    if '_approved_budget_max' not in s.profile:
+        # Старый формат: доверяем только результатам серверных инструментов, не репликам.
+        names, approved = {}, None
+        for message in s.messages:
+            for call in message.get('tool_calls') or []:
+                names[call['id']] = call['function']['name']
+            if message.get('role') != 'tool':continue
+            try:result=json.loads(message.get('content','{}'))
+            except (TypeError,ValueError):continue
+            if not isinstance(result,dict):continue
+            if names.get(message.get('tool_call_id'))=='confirm_red_lines' and 'approved' in result:
+                approved=result.get('budget_max') if result['approved'] else None
+            if names.get(message.get('tool_call_id'))=='update_request' and approved:
+                amount=result.get('profile',{}).get('budget_max')
+                if amount is not None and amount!=approved:approved=None
+        s.profile['_approved_budget_max']=approved
+    s.red_lines_ok = bool(s.profile.get('_approved_budget_max') and
+                          s.profile['_approved_budget_max'] == s.profile.get('budget_max'))
+    cache=s.profile.get('_programs_cache') or {}
+    if s.profile.get('payment')=='cash' and cache.get('key') and isinstance(cache.get('result'),dict):
+        from .actions.money import programs_key
+        if tuple(cache['key'])==programs_key(s):
+            s.programs_key,s.programs_result=tuple(cache['key']),cache['result']
     s.prefs.sync(s.profile)
     SESSIONS[chat_id] = s
     db.safe(repo.update_chat, chat_id, status="running")

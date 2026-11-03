@@ -95,11 +95,32 @@ async def ask_housing(s) -> dict:
     return {"housing": s.profile["housing"]}
 
 
+def programs_key(s):
+    if s.profile.get('payment')=='cash':
+        return (s.profile.get('budget_max'),'cash')
+    return tuple(s.profile.get(k) for k in ('budget_max','city','payment','housing','children','youngest_age','matcap'))
+
+
+def programs_current(s):
+    return s.programs_result is not None and s.programs_key == programs_key(s)
+
+
+def remember_programs(s, result):
+    s.programs_key, s.programs_result = programs_key(s), result
+    if s.profile.get('payment')=='cash':
+        s.profile['_programs_cache'] = {'key':list(s.programs_key),'result':result}
+    else:
+        s.profile.pop('_programs_cache',None)
+    return result
+
+
 @action("mortgage_programs", 2,
         "Посчитать ипотечные программы для бюджета: рыночная Сбера и семейная (условия с 01.10.2026), маткапитал во взнос. "
         "Учитывает семью из профиля (если неизвестна — семейная будет «нужно уточнить»). Показывает клиенту экран программ. "
         "Для покупки наличными — показывает, что ипотека не нужна.")
 async def mortgage_programs(s) -> dict:
+    if programs_current(s):
+        return {**s.programs_result, "already_calculated": True}
     budget = _need_budget(s)
     p = s.profile
     if not p.get("payment"):
@@ -109,7 +130,7 @@ async def mortgage_programs(s) -> dict:
         _finance_panel(s)
         await s.say("Покупка без ипотеки: деньги уйдут продавцу через сервис безопасных расчётов только после "
                     "регистрации права. Пока ищем, сумму можно держать на накопительном счёте.")
-        return {"mode": "cash"}
+        return remember_programs(s, {"mode": "cash"})
     if p.get("children") is None:
         raise ActionError("Семья неизвестна, а от неё зависит семейная ипотека — сначала ask_family.")
     progs = M.programs(budget, p.get("city"), p, housing=p.get("housing"), is_secondary=p.get("housing") != "new")
@@ -124,7 +145,7 @@ async def mortgage_programs(s) -> dict:
                                       "down_payment": by["family_new"]["down_payment"]}
     if progs["matcap"]:
         out["matcap_to_down"] = progs["matcap"]["amount"]
-    return out
+    return remember_programs(s, out)
 
 
 @action("savings_plan", 2,

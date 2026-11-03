@@ -28,9 +28,9 @@ def profile_brief(p: dict) -> dict:
 
 
 def emit_profile(s) -> None:
-    data = {**s.profile, "market": s.market}
+    data = {**{k:v for k,v in s.profile.items() if not k.startswith("_")}, "market": s.market}
     if not missing_required(s.profile):
-        data["summary"] = s.profile["summary"]
+        data["summary"] = profile_summary(s.profile)
     s.push("result", step=1, kind="profile", data=data)
 
 
@@ -128,9 +128,13 @@ def apply_request(s, changes):
     s.profile = p
     s.prefs.sync(p)
     if any(p.get(k) != before[k] for k in CORE_KEYS):
-        if s.red_lines_ok:
-            notes.append("Город, комнаты, бюджет или рынок изменились — рамки нужно подтвердить заново, поиск — повторить.")
-        s.invalidate_deal()
+        budget_changed = p.get("budget_max") != old_profile.get("budget_max")
+        if budget_changed:
+            p['_approved_budget_max'] = None
+            notes.append("Лимит изменился — подтвердите новую сумму; поиск обновится после подтверждения.")
+        else:
+            notes.append("Условия поиска изменились; подтверждённый лимит сохранён.")
+        s.invalidate_deal(keep_limit=not budget_changed)
         if p.get("city") != before["city"]:
             s.market = None
     elif s.search and any(p.get(k) != old_profile.get(k) for k in changes) and (changes.keys() & {"features", "poi", "kitchen_min", "area_min", "not_first_floor", "not_last_floor",
@@ -179,15 +183,17 @@ async def ask_client(s, question: str, options: list[str] | None = None) -> dict
 
 @action("confirm_red_lines", 1,
         "Показать клиенту рамки (город, комнаты, бюджет — выше которого агент не пойдёт) и получить подтверждение. "
-        "Подтверждение нужно перед звонками и торгом; просмотр объявлений его не требует. Клиент может поправить бюджет на карточке.")
+        "Подтверждение один раз в начале подбора и заново только при изменении лимита. Клиент может поправить бюджет на карточке.")
 async def confirm_red_lines(s) -> dict:
     p = s.profile
+    if s.red_lines_ok:
+        return {"approved": True, "budget_max": p["budget_max"], "already_confirmed": True}
     if missing_required(p):
         raise ActionError(f"Не хватает: {', '.join(missing_required(p))} — сначала узнай у клиента и запиши (update_request).")
     emit_profile(s)
     r = await s.ask(
         "red_lines", "Красные линии",
-        "Агент сам ищет, звонит и торгуется, но не выходит за эти рамки. Любую итоговую цену подтверждаете вы.",
+        "Подтвердите верхний лимит покупки. Любую итоговую цену подтверждаете вы. Повторное подтверждение понадобится только при изменении лимита.",
         payload={"budget_max": p["budget_max"], "rooms": p["rooms"], "city": p["city"],
                  "rooms_options": p.get("rooms_options"), "cities": p.get("cities"),
                  "authority_rule": "не выше верхней границы справедливой цены и бюджета"},
@@ -203,5 +209,7 @@ async def confirm_red_lines(s) -> dict:
         p["summary"] = profile_summary(p)
         emit_profile(s)
     s.red_lines_ok = True
+    p['_approved_budget_max'] = p['budget_max']
+    s.remember()
     await s.finish_step(1)
     return {"approved": True, "budget_max": p["budget_max"], "budget_text": fmt(p["budget_max"])}

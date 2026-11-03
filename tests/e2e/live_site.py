@@ -103,6 +103,8 @@ async def scenario(base: str, name: str, until: str, timeout: float) -> dict:
                             summary['listings'] = len(selected)
                     if event['type'] != 'confirm':
                         continue
+                    if kind in ('red_lines','payment') and ('search' in summary['results'] or counts[kind]):
+                        raise AssertionError('Поздняя или повторная финансовая карточка: '+kind)
                     counts[kind] += 1
                     summary['cards'].append(kind)
                     print(f'{name}: карточка {kind}', flush=True)

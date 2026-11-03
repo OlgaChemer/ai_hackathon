@@ -11,6 +11,13 @@ async def check(browser, base, width, folder):
     await context.add_init_script("localStorage.setItem('voice','0');localStorage.setItem('cookieNotice','1')")
     page = await context.new_page()
     starts, errors = [], []
+    unversioned=[]
+    async def require_version(route):
+        if '?v=' not in route.request.url:
+            unversioned.append(route.request.url)
+            return await route.fulfill(content_type='text/javascript',body='throw Error("Stale unversioned module loaded")')
+        await route.continue_()
+    await page.route('**/js/*.js*',require_version)
     page.on('pageerror', lambda error: errors.append(str(error)))
     page.on('request', lambda request: starts.append(request.post_data_json)
             if request.method == 'POST' and request.url.endswith('/api/session') else None)
@@ -24,13 +31,16 @@ async def check(browser, base, width, folder):
     if folder:
         await page.screenshot(path=str(folder / f'{width}-welcome.png'))
 
-    # Короткая фраза не запускает поиск; двойная отправка создаёт один диалог.
+    # Короткая фраза не запускает поиск; Shift+Enter переносит, Enter отправляет.
     await page.fill('#welcomeQuery', 'да')
     await page.evaluate("document.getElementById('welcomeForm').requestSubmit()")
     assert not starts
     query = 'Двушка в Казани до 9 млн, наличными'
     await page.fill('#welcomeQuery', query)
-    await page.evaluate("document.getElementById('welcomeForm').requestSubmit();document.getElementById('welcomeForm').requestSubmit()")
+    await page.press('#welcomeQuery', 'Shift+Enter')
+    assert await page.input_value('#welcomeQuery')==query+'\n' and not starts
+    await page.fill('#welcomeQuery', query)
+    await page.press('#welcomeQuery', 'Enter')
     await page.wait_for_selector('#chatLog .confirm-red_lines')
     assert starts == [{'query': query}]
     assert await page.input_value('#welcomeQuery') == ''
@@ -81,6 +91,7 @@ async def check(browser, base, width, folder):
     assert await page.locator('#composer').is_visible()
     assert not await page.locator('#talkPanel').is_visible()
     assert await page.evaluate("import('/js/voicechat.js').then(({talk})=>!talk.on && talk.stream===null)")
+    assert not unversioned,unversioned
     assert not errors, errors
     assert await page.evaluate('document.documentElement.scrollWidth <= innerWidth')
     await context.close()

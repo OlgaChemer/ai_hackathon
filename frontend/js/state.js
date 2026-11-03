@@ -25,7 +25,10 @@ export function resetState() {
 }
 
 export function addMsg(role, text) {
+  const previous=chatLog.lastElementChild;
+  if (role === "agent" && previous?.classList.contains("msg-agent") && previous.dataset.text === text) return previous;
   const node = el(html`<div class="msg msg-${role} ${role}">${role === "agent" || role === "user" ? html.raw(html`<span class="msg-who">${role === "agent" ? "Агент" : "Вы"}</span>`) : ""}${text}</div>`);
+  node.dataset.text=text;
   chatLog.append(node);
   const peek = $("chatPeek");
   if (peek) peek.textContent = text;

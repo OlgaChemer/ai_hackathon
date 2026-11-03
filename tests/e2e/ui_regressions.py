@@ -203,6 +203,14 @@ async def main(base):
           return events;
         }""")
         print('PASS: Safari audio lifecycle:', result)
+        # Повторная доставка одного события SSE не создаёт второе сообщение.
+        await page.evaluate("""async () => {
+          const {state}=await import('/js/state.js');
+          const event={type:'message',role:'agent',text:'Проверка однократной доставки',seq:state.lastSeq+1000,replay:true};
+          for(let i=0;i<2;i++)state.es.onmessage(new MessageEvent('message',{data:JSON.stringify(event)}));
+        }""")
+        await page.wait_for_function("document.querySelector('#chatLog').textContent.includes('Проверка однократной доставки')")
+        assert await page.locator('#chatLog .msg').filter(has_text='Проверка однократной доставки').count()==1
         assert not errors, errors
         await browser.close()
         print('ИТОГО: 4/4 группы проверок')

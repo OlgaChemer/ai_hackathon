@@ -30,15 +30,16 @@ class AgentLoopTest(unittest.TestCase):
 
     def test_model_reads_results_and_call_authority_is_enforced(self):
         def after_call_refused(messages):
-            self.assertIn("confirm_red_lines", last_result(messages)["error"])
+            self.assertIn("недоступно", last_result(messages)["error"])
             return say("Сначала подтвердим рамки звонка.")
         s = O.create_session("двушка в Казани до 9 млн", ScriptedLLM(
             call("update_request", city="Казань", rooms=2, budget_max=9_000_000), call("call_seller", listing_id="cian-1"), after_call_refused))
         from backend import sources
         from tests.test_llm_and_agent import listing
         with patch.object(sources, 'collect', AsyncMock(return_value=([listing()], []))), patch.object(sources, 'more', AsyncMock(return_value=[])):
-            asyncio.run(drive(s))
-        profile, refused, *_ = tool_results(s)
+            asyncio.run(drive(s, answers={"red_lines":(False,{})}))
+        profile = tool_results(s)[0]
+        refused = next(r for r in tool_results(s) if "error" in r)
         self.assertEqual(profile["missing"], [])
         self.assertIn("error", refused)
         self.assertFalse(s.calls)
