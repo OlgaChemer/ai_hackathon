@@ -10,7 +10,7 @@ from ..config import settings
 from . import guard, validation, input_frame
 
 SYSTEM = """Разбери новый ввод покупателя квартиры в структурированные поля. Ты ничего не выполняешь.
-Вход — messages с source_seq/seq, прежний profile, каталог городов и описание полей change_schema.
+Вход — messages с seq, прежний profile, каталог городов и единственная схема ответа input_schema.
 Прочитай все сообщения вместе: более позднее уточнение отменяет/дополняет прежнее. Неназванное сохраняется.
 Запиши ВСЕ явно названные условия, включая оплату, рынок, отрицания и альтернативы. Суммы — целые рубли.
 Сначала выдели территории, затем остальные поля и каждое условие вместе с его обязательностью.
@@ -21,8 +21,8 @@ ambiguous_catalog_names перечисляет общие части разны�
 код сам предложит уточнить, какой из соответствующих городов нужен. Полное позднейшее имя разрешает вопрос.
 fields — объект обычных параметров. Не названное клиентом поле = null, а не прежнее значение.
 Альтернативы комнат сохраняй полностью в rooms_options; перечисление не превращай в диапазон.
-Не добавляй ремонт, метро, семью или оплату из догадки.
-criteria — объект условий из criteria_schema. Не названный критерий = null.
+Неизвестное значение — null. Не добавляй параметров без слов клиента.
+criteria — объект условий из input_schema. Не названный критерий = null.
 Для удобств, инфраструктуры и запретов этажей: required — обязательно, preferred — желательно,
 remove — снять условие, null — не менялся. Условие и его желательность — одно значение.
 Для числовых условий, ремонта и материала: {value: значение, priority: required/preferred/remove}.
@@ -153,9 +153,9 @@ async def prepare(s, proposal=None):
     if s.request_review and s.request_review['seq']==version and s.request_review['base_profile']==s.profile:
         return s.request_review
     from .. import sources
+    contract=input_frame.schema(_schema())
     payload={'supported_cities':sources.SUPPORTED_CITIES,'ambiguous_catalog_names':catalog_ambiguities(sources.SUPPORTED_CITIES),
-             'messages':inputs,'profile':deepcopy(s.profile),'change_schema':_schema(),
-             'criteria_schema':input_frame.schema(_schema())['properties']['criteria'],
+             'messages':inputs,'profile':deepcopy(s.profile),'input_schema':contract,
              'workflow':{'has_search':s.search is not None,'has_selection':bool(s.shown),'has_calls':bool(s.calls),'chosen':bool(s.chosen)}}
     revision=s.client_revision
     error=None
@@ -164,7 +164,7 @@ async def prepare(s, proposal=None):
         if error:instruction+='\nПредыдущий ответ не прошёл проверку формата: '+error+'. Исправь поля, смысл не угадывай.'
         messages=[{'role':'system','content':instruction},guard.data_message('request_review',payload)]
         try:
-            result=await s.llm.chat_json(messages,tag='request_review',temperature=.1,max_tokens=2200,json_schema=input_frame.schema(_schema()))
+            result=await s.llm.chat_json(messages,tag='request_review',temperature=.01,max_tokens=2200,json_schema=contract)
             if 'fields' in result:
                 result=input_frame.decode(result,payload['profile'],payload,_schema())
             else:

@@ -3,6 +3,8 @@ from copy import deepcopy
 
 from . import validation
 from .criteria import CRITERIA_KEYS, SCALARS
+from .features import FEATURES
+from .. import geo
 
 EXCLUDED = {'city','cities','features','poi','soft_criteria','clear_criteria', *SCALARS}
 INTENTS = ['search','refine','question','continue','hold','other']
@@ -15,6 +17,7 @@ def basic_fields(changes):
     # побуждает модель выдавать несколько противоречащих записей для одного диапазона.
     fields['rooms']['minimum']=6
     fields['rooms']['description']='Один вариант комнатности от 6. Для 0–5 используй rooms_options, даже для одного числа.'
+    fields['rooms_options']['description']='Все допустимые числа жилых комнат. 0 — только студия, 1 — однокомнатная, 2 — двухкомнатная и т.д. Неизвестность — null, не 0. Не сужай диапазон или перечисление.'
     return fields
 
 
@@ -53,6 +56,7 @@ def nullable(value):
 def schema(changes):
     priorities={'type':'string','enum':['required','preferred','remove','unmentioned']}
     criteria={}
+    labels={**SCALARS,**{f'feature:{k}':v[0] for k,v in FEATURES.items()},**{f'poi:{k}':v[0] for k,v in geo.POI.items()}}
     for key in CRITERIA_KEYS:
         if key.startswith(('poi:','feature:')) or key in ('not_first_floor','not_last_floor'):
             criteria[key]=nullable({'type':'string','enum':['required','preferred','remove'],
@@ -60,6 +64,7 @@ def schema(changes):
         else:
             criteria[key]=nullable(object_schema({'value':nullable(criterion_value(key,changes)),
                 'priority':priorities}))
+        criteria[key]['description']=labels[key]+'. Не названо клиентом — null. Без предположительных значений.'
     return object_schema({
         'places':{'type':'array','maxItems':3,'description':'Только названные итоговые территории поиска. Если не менялись — пустой список.',
             'items':object_schema({'words':{'type':'array','minItems':1,'maxItems':8,'items':object_schema({
