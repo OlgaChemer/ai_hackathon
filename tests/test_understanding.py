@@ -154,6 +154,16 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(s.profile,before)
         self.assertEqual(s.request_intent,'question')
 
+    async def test_continuation_and_hold_cannot_broaden_existing_profile(self):
+        for intent in ('continue', 'hold', 'other'):
+            with self.subTest(intent=intent):
+                reply=slots(fields={'rooms_options':[0,1,2,3,4,5], 'budget_max':100_000_000},intent=intent)
+                s=self.agent('Продолжайте прежнее.',reply,profile={'city':'Казань','rooms':2,'budget_max':9_000_000})
+                before=deepcopy(s.profile)
+                await U.ensure(s)
+                self.assertEqual(s.profile,before)
+                self.assertEqual(s.request_intent,intent)
+
     async def test_a_single_source_name_cannot_grow_an_unspoken_city_modifier(self):
         reply=frame(places=['Новгород'])
         reply['places'][0]['words'][0]={'source':'Новгороде','lemma':'Великий Новгород'}

@@ -86,6 +86,12 @@ async def scenario(base: str, name: str, until: str, timeout: float) -> dict:
                             answer.raise_for_status()
                     if event['type'] == 'result':
                         summary['results'].append(kind)
+                        if kind == 'profile' and name == 'cash':
+                            profile=event['data']
+                            assert profile.get('city')=='Казань', 'Потерян исходный город'
+                            assert (profile.get('rooms_options') or [profile.get('rooms')])==[2], 'Команды продолжения изменили двушку'
+                            assert profile.get('budget_max')==9_000_000, 'Изменён исходный бюджет'
+                            assert profile.get('payment')=='cash', 'Изменена наличная оплата'
                         if kind == 'search':
                             summary['sources'] = event['data'].get('report', [])
                         if kind == 'selection':

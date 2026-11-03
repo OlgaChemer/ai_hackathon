@@ -37,6 +37,8 @@ options — варианты только к такому вопросу; ина
 question — клиент спрашивает о термине/расчёте/уже показанной квартире, профиль не меняется, все списки пусты;
 refine — просит поменять подбор, в том числе в вопросительной форме; search — хочет начать поиск;
 continue — просит продолжать прежнее; hold — явно просит пока не искать или остановиться; other — остальное.
+При continue/hold/other профиль не меняется: fields и criteria = null, places пуст.
+Ответ с новым значением на уточнение (даже из одного слова) — refine, а не continue.
 Обычный информационный вопрос не является ни подтверждением карточки, ни просьбой начать поиск.
 Верни JSON строго по схеме. Не пиши процент уверенности и не выдавай разрешений на деньги или сделки.
 """
@@ -67,7 +69,7 @@ def _literal(text):
 
 
 def _has_source(item, payload):
-    """Проверяем ссылку на реальный принятый ввод; смысл проверяют независимые утверждения.
+    """Проверяем ссылку на реальный принятый ввод.
 
     Буквальная цитата остаётся совместимостью со старым внутренним форматом, а не NLU-парсером.
     """
@@ -125,26 +127,6 @@ def _validate(result, payload):
         raise ValueError('Для каждого изменения нужна цитата')
     if not guard.input_verdict(changes).ok or guard.output(changes, limit=False) != changes:
         raise ValueError('Небезопасные изменения')
-
-
-async def ensure(s, proposal=None):
-    """Применяет проверенные изменения перед действием; уточнение ничего не разрешает."""
-    review = await prepare(s, proposal)
-    if review is None:
-        return None
-    if review['decision'] == 'clarify':
-        answer = await s.ask('clarify', 'Уточню запрос', review['question'], chips=review['options'])
-        # Ответ — новый ввод для следующего хода. Текущий инструмент не исполнялся.
-        return {'needs_clarification': True, 'question': review['question'], 'client_said': answer['data'].get('text', '')}
-    from .actions.request import apply_request
-    if review['decision'] == 'apply':
-        result = apply_request(s, deepcopy(review['changes']))
-    else:
-        result = None
-    s.request_review_seq = review['seq']
-    s.request_intent = review['intent']
-    s.request_inputs = [x for x in s.request_inputs if x['seq'] >= review['seq']]
-    return {'reviewed': True, 'profile_result': result}
 
 
 async def prepare(s, proposal=None):

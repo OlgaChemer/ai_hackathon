@@ -107,8 +107,9 @@ def decode(frame, profile, payload, changes_schema):
     place_schema['items']['properties']['source_seq']=SOURCE
     place_schema['items']['required'].append('source_seq')
     validation.validate(frame.get('places'),place_schema)
-    if frame['intent']=='question':
-        return {'intent':'question','decision':'unchanged','changes':{},'evidence':[], 'question':'','options':[]}
+    # Намерения без изменения запроса не получают права переписывать профиль.
+    if frame['intent'] in ('question','continue','hold','other'):
+        return {'intent':frame['intent'],'decision':'unchanged','changes':{},'evidence':[], 'question':'','options':[]}
     seqs = {x['seq'] for x in payload['messages']}
     def source(row):
         if row['source_seq'] not in seqs:
