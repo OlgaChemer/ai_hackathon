@@ -56,7 +56,15 @@
 <div class="welcome-orb" aria-hidden="true"><span>✦</span></div>
 <div class="welcome-agent">Ваш агент по недвижимости</div>
 <h1 id="welcomeTitle">Какую квартиру<br>ищем?</h1>
-<div class="welcome-examples" aria-label="Примеры запросов"><button type="button" data-welcome-example="Ищу однокомнатную квартиру в Казани">Однокомнатная квартира в Казани <span aria-hidden="true">↗</span></button><button type="button" data-welcome-example="Ищу двухкомнатную квартиру в Москве до 15 млн ₽">Двухкомнатная в Москве до 15 млн ₽ <span aria-hidden="true">↗</span></button></div><form id="welcomeForm"><textarea id="welcomeQuery" aria-label="Первый запрос агенту" placeholder="Расскажите, где хотите жить и что для вас важно…" required></textarea><button class="btn" type="submit">Начать подбор <span aria-hidden="true">↗</span></button></form>
+<div class="welcome-examples" aria-label="Примеры запросов"><button type="button" data-welcome-example="Ищу однокомнатную квартиру в Казани">Однокомнатная квартира в Казани <span aria-hidden="true">↗</span></button><button type="button" data-welcome-example="Ищу двухкомнатную квартиру в Москве до 15 млн ₽">Двухкомнатная в Москве до 15 млн ₽ <span aria-hidden="true">↗</span></button></div>
+<form id="welcomeForm">
+  <textarea id="welcomeQuery" aria-label="Первый запрос агенту" placeholder="Расскажите, где хотите жить и что для вас важно…" required minlength="3" maxlength="500"></textarea>
+  <div class="welcome-actions">
+    <button class="mic" id="welcomeMicBtn" type="button" aria-label="Продиктовать запрос" aria-pressed="false" title="Сказать голосом">🎙</button>
+    <button class="btn" type="submit">Начать подбор <span aria-hidden="true">↗</span></button>
+  </div>
+  <p id="welcomeVoiceStatus" class="small muted" role="status"></p>
+</form>
 </section></div>
 
 </main>

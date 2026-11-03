@@ -218,7 +218,7 @@ GigaChat выполняет одну генерацию на процесс и �
 LLM_PROVIDER=gigachat
 GIGACHAT_CREDENTIALS=<Authorization Key из личного кабинета, без Basic>
 GIGACHAT_SCOPE=GIGACHAT_API_PERS        # или GIGACHAT_API_B2B / GIGACHAT_API_CORP
-GIGACHAT_MODEL=GigaChat-2-Max
+GIGACHAT_MODEL=GigaChat-3-Ultra
 GIGACHAT_VERIFY_SSL=true
 ```
 

@@ -25,7 +25,9 @@
 .welcome-examples{display:grid;gap:8px;margin:0 0 16px;text-align:left}.welcome-examples button{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;padding:12px 14px;border:1px solid #d7e3da;border-radius:13px;background:#f4f8f1;color:#183c2b;font:inherit;font-size:13px;line-height:1.4;text-align:left;cursor:pointer}.welcome-examples button:hover{background:#e7f3e1;border-color:#8cb788}.welcome-examples button:focus-visible{outline:2px solid #148f2b;outline-offset:3px}
 /* Agreed browser layout, on top of the application's existing shell. */
 :root { --muted:#365445; --ink-2:#365445; --ink-3:#496353; }
-body[data-page="welcome"] .site-header { display:none; }
+body[data-page="welcome"] .site-header { background:#f5f8f4; border-bottom:0; }
+body[data-page="welcome"] .site-subbar, body[data-page="welcome"] .welcome-brand { display:none; }
+body[data-page="welcome"] .agent-welcome { min-height:calc(100dvh - 80px); padding-top:0; }
 .workspace.layout { display:grid; grid-template-columns:minmax(0,1fr) 380px; gap:28px; max-width:1600px; }
 .workspace.layout > .stage { grid-column:1; grid-row:1; }
 .workspace.layout > .chat { grid-column:2; grid-row:1; position:sticky; top:20px; height:calc(100dvh - 245px); min-height:320px; }
@@ -34,5 +36,12 @@ body[data-page="welcome"] .site-header { display:none; }
 .price-explanation { margin-top:16px; font-size:13px; }
 .price-explanation summary { cursor:pointer; color:var(--green-strong); }
 .price-explanation p { margin:12px 0 0; }
+.ranking-explanation { margin-top:10px; font-size:12px; color:var(--muted); }
+.ranking-explanation summary { cursor:pointer; }
+.ranking-explanation p { margin:10px 0 0; line-height:1.65; }
+.welcome-actions { display:flex; align-items:center; gap:10px; margin-top:12px; }
+.welcome-actions .btn { width:auto; flex:1; margin:0; }
+.welcome-actions .mic { align-self:stretch; min-width:52px; border-radius:14px; }
+#welcomeVoiceStatus:empty { display:none; }
 @media(min-width:861px) and (max-width:1100px) { .workspace.layout { grid-template-columns:minmax(0,1fr) 330px; gap:16px; } }
 @media(max-width:860px) { .workspace.layout { display:block; } .workspace.layout > .chat { position:fixed; left:10px; right:10px; top:auto; bottom:max(10px,env(safe-area-inset-bottom)); height:75px; min-height:0; } .workspace.layout > .chat.expanded { height:min(70dvh,650px); } }

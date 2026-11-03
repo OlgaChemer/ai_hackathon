@@ -222,8 +222,8 @@ def _validate(result, payload):
         if not quote or not any(quote in source for source in sources):
             raise ValueError('Цитата отсутствует в новом вводе/вопросе')
         grounded.add(item['field'])
-    if set(changes) != grounded:
-        raise ValueError('Для каждого изменения нужна цитата; лишние основания запрещены')
+    if not set(changes) <= grounded:
+        raise ValueError('Для каждого изменения нужна цитата')
     if not guard.input_verdict(changes).ok or guard.output(changes, limit=False) != changes:
         raise ValueError('Небезопасные изменения')
 

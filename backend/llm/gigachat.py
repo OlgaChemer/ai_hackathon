@@ -221,11 +221,14 @@ class GigaChatClient(LLMClient):
             self._token = None
         if r.status_code != 200:
             raise LLMError(f"GigaChat {r.status_code}: {r.text[:300]}")
-        msg = r.json()["choices"][0]["message"]
+        data = r.json()
+        msg = data["choices"][0]["message"]
+        resolved_model = data.get('model') or self.model
+        runtime.record('llm_model', requested=self.model, resolved=resolved_model)
         return LLMResponse(
             text=msg.get("content") or "",
             tool_calls=parse_function_call(msg),
             provider=self.name,
-            model=self.model,
+            model=resolved_model,
             functions_state_id=msg.get("functions_state_id"),
         )

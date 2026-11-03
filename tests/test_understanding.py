@@ -159,6 +159,15 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
         # GigaChat допускает system только первым сообщением, включая исправление формата.
         self.assertEqual([m['role'] for m in s.llm.seen[1]], ['system', 'user'])
 
+    async def test_grounded_evidence_for_unchanged_fields_does_not_change_them_or_reject_the_request(self):
+        text='Теперь Казань, бюджет прежний.'
+        reply=verdict(text,{'city':'Казань'})
+        reply['evidence'].append({'field':'budget_max','quote':'бюджет прежний'})
+        s=self.agent(text,reply,profile={'city':'Москва','budget_max':9_000_000})
+        await U.ensure(s)
+        self.assertEqual((s.profile['city'],s.profile['budget_max']),('Казань',9_000_000))
+        self.assertEqual(len(s.llm.seen),1)
+
     async def test_two_invalid_reviews_leave_profile_unchanged(self):
         text = 'Условия прежние.'
         wrong = verdict('нет в исходном сообщении', {'budget_max':999_000_000})

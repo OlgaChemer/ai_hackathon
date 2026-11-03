@@ -30,6 +30,7 @@ async def scenario(browser, base, width, shots):
             if request.method == 'POST' else None)
     await page.route('https://tile.openstreetmap.org/**', lambda route: route.fulfill(body=PIXEL, content_type='image/png'))
     await page.goto(base, wait_until='domcontentloaded')
+    await page.locator('.site-nav [data-action=apartments]').click()
     await page.fill('#portalCity', 'Казань')
     await page.fill('#portalBudget', '9')
     await page.locator('[data-action=portal-search]').click()

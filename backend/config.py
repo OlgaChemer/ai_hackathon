@@ -26,7 +26,7 @@ class Settings:
 
     gigachat_credentials: str = os.getenv("GIGACHAT_CREDENTIALS", "")
     gigachat_scope: str = os.getenv("GIGACHAT_SCOPE", "GIGACHAT_API_PERS")
-    gigachat_model: str = os.getenv("GIGACHAT_MODEL", "GigaChat-2-Max")
+    gigachat_model: str = os.getenv("GIGACHAT_MODEL", "GigaChat-3-Ultra")
     gigachat_auth_url: str = os.getenv(
         "GIGACHAT_AUTH_URL", "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
     )

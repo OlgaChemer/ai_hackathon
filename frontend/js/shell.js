@@ -69,6 +69,10 @@ export function refreshContext(profile) {
 
 export function initShell({ start }) {
   let launching = false;
+  bindMic($('welcomeMicBtn'), $('welcomeQuery'), {
+    onFinal: () => { $('welcomeVoiceStatus').textContent = 'Проверьте текст и нажмите «Начать подбор».'; },
+    onError: message => { $('welcomeVoiceStatus').textContent = message; },
+  });
   bindMic($('entryMicBtn'), $('entryQuery'), {
     onFinal: () => { $('entryVoiceStatus').textContent = 'Проверьте текст и нажмите «Начать подбор».'; },
     onError: message => { $('entryVoiceStatus').textContent = message; },
