@@ -389,6 +389,11 @@ class ReadingAndRecovery(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(removed['unsupported'][0]['action'],'remove')
         self.assertEqual(removed['unsupported'][0]['text'],text)
         self.assertEqual(removed['fields']['filters']['value'],[])
+        f['values']=['true']
+        unknown=profile_patch.decode({'fields':[{'key':'filters','value':json.dumps([f]),'source':text}],
+                                      'criteria':[],'places':[],'unsupported':[],'selection':[]},
+                                     profile_patch.schema(input_frame.schema(CHANGE_SCHEMA,[{'text':text}])),[{'text':text}])
+        self.assertEqual(unknown['unsupported'][0]['text'],text)
 
     def test_profile_route_requests_separate_extraction_without_guessing_values(self):
         inputs=[{'text':'Ищу 1–2 комнаты','seq':1}]
