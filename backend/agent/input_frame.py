@@ -285,6 +285,7 @@ def decode(frame, profile, payload, changes_schema):
     if places:
         places = list(dict.fromkeys(places))
         changes.update(city=places[0], cities=places[1:])
+    changes={key:value for key,value in changes.items() if value!=profile.get(key)}
     if intent == 'selection' and changes:
         raise ValueError('selection меняет только выдачу, не условия профиля. Для нового условия и запроса к выдаче вместе используй intent=refine и selection')
     if question.strip():

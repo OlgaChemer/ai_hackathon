@@ -278,6 +278,17 @@ class ReadingAndRecovery(unittest.IsolatedAsyncioTestCase):
         frame['fields']['filters']['source']=text
         self.assertEqual(input_frame.decode(frame,{},payload,CHANGE_SCHEMA)['changes']['filters'][0]['values'],['30000000'])
 
+    def test_known_property_is_normalized_even_when_grouped_as_a_criterion(self):
+        from backend.agent import profile_patch
+        text='Ищу в центре Москвы'
+        contract=profile_patch.schema(input_frame.schema(CHANGE_SCHEMA,[{'text':text}]))
+        frame=profile_patch.decode({'fields':[],'criteria':[{'key':'center_required','priority':'required','value':'true','source':'в центре'}],
+            'places':[],'unsupported':[],'selection':[]},contract,[{'text':text}])
+        result=input_frame.decode(input_frame.complete_frame({'intent':'refine',**frame},CHANGE_SCHEMA),{},
+            {'messages':[{'text':text}],'supported_cities':sources.SUPPORTED_CITIES,'ambiguous_catalog_names':{}},CHANGE_SCHEMA)
+        self.assertTrue(result['changes']['center_required'])
+        self.assertTrue(result['changes']['prefer_center'])
+
     def test_number_of_candidates_does_not_create_price_or_area_thresholds(self):
         for operation in ('rank','compare','analyze','more'):
             query,_=R.compile_request(request(operation))
