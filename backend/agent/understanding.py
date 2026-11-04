@@ -17,6 +17,8 @@ messages — только ещё не обработанные реплики; r
 
 УСЛОВИЯ
 fields: null — не названо; иначе {value: значение, source: буквальное слово/полное новое сообщение из enum}.
+Если условия не меняются (сортировка, количество, сравнение, статистика, новые варианты),
+ВЕСЬ объект fields=null и ВЕСЬ criteria=null. Не заполняй их неназванными нулями/пустыми списками.
 Суммы в рублях. rooms_options — ВСЕ допустимые комнатности 1–5, диапазон 1–2 = [1,2].
 Студия не входит в 1–2 комнаты. Только явную просьбу студии передай studio_requested=true;
 явный запрет — false; иначе null. Не заполняй семью, маткапитал и timeline по предположению.
@@ -47,6 +49,7 @@ operation=rank: отобрать N/сортировать; scope=all по умо
 operation=compare: «среди этих двух какая выгоднее/больше»; scope=shown, sort по нужному показателю.
 Карточки при compare остаются на месте, ответ вычисляется кодом. Число «двух» задаёт группу, не цену.
 operation=more: просит ЕЩЁ/НОВЫЕ варианты; только это действие исключает уже показанные.
+«Подбери новые предложения с учётом отметок» -> more, scope=all, fields=null, criteria=null.
 operation=analyze: посчитать среднее/медиану/статистику; карточки не меняются.
 Выгоднее за квадратный метр: price_per_m2 asc. Просторнее/больше: area desc.
 Выгоднее без уточнения метрики: value_score desc. Дешевле: price asc.
@@ -168,7 +171,7 @@ async def prepare(s):
         s.request_review={'seq':version,'base_profile':base_profile,**result}
         record('request_review',session=s.id,decision=result['decision'],intent=result['intent'],fields=len(result['changes']),repaired=bool(attempt))
         return s.request_review
-    raise UnderstandingError('Не удалось получить корректный структурированный ввод')
+    raise UnderstandingError('Не удалось получить корректный структурированный ввод: '+str(error))
 
 
 async def ensure(s):

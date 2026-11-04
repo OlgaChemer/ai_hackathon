@@ -70,9 +70,9 @@ def schema(changes, messages=None):
             'items':object_schema({'words':{'type':'array','minItems':1,'maxItems':8,'items':object_schema({
                 'source':source,
                 'lemma':{'type':'string','enum':place_words,'description':'Слово названия города в начальной форме. Не добавляй отсутствующие слова. Неподдержанный город — предметный question и places=[]; не подставляй похожий.'}})}})},
-        'fields':object_schema({key:nullable(object_schema({'value':value,'source':field_source}))
-                               for key,value in basic_fields(changes).items()}),
-        'criteria':object_schema(criteria),
+        'fields':nullable(object_schema({key:nullable(object_schema({'value':value,'source':field_source}))
+                               for key,value in basic_fields(changes).items()})),
+        'criteria':nullable(object_schema(criteria)),
         'selection':nullable(selection_request.SCHEMA),
         'unsupported':{'type':'array','maxItems':5,'description':'Явно запрошенные условия, которых нет среди проверяемых полей/критериев. Не объявляй такие квартиры несуществующими.',
             'items':object_schema({'text':{'type':'string','maxLength':200},'source':field_source,
@@ -88,6 +88,9 @@ def schema(changes, messages=None):
 def decode(frame, profile, payload, changes_schema):
     """Единственный внешний формат — nullable fields/criteria по схеме модели."""
     validation.validate(frame, schema(changes_schema))
+    frame=deepcopy(frame)
+    frame['fields']=frame['fields'] or {}
+    frame['criteria']=frame['criteria'] or {}
     intent = frame['intent']
     query,operation=(selection_request.compile_request(frame['selection'],payload.get('workflow',{}).get('selection_query'))
                      if frame['selection'] is not None else (None,'rank'))
@@ -129,7 +132,9 @@ def decode(frame, profile, payload, changes_schema):
     studio=changes.pop('studio_requested',None)
     if studio is not None:
         rooms=list(changes.get('rooms_options',profile.get('rooms_options') or []))
-        changes['rooms_options']=sorted(set([*rooms,0] if studio else [n for n in rooms if n!=0]))
+        rooms=sorted(set([*rooms,0] if studio else [n for n in rooms if n!=0]))
+        if rooms!=profile.get('rooms_options',[]):changes['rooms_options']=rooms
+        else:changes.pop('rooms_options',None)
     if intent == 'selection' and set(changes)=={'filters'}:
         # Составной запрос «сдача в 2027, покажи три больших» содержит и
         # условие, и команду выдачи. Тег нормализуется по типу данных, без
