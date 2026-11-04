@@ -3,11 +3,17 @@
 from .. import geo
 from .features import FEATURES
 from .criteria import CRITERIA_KEYS
+from .listing_query import PROFILE_FILTER_SCHEMA
 
 CHANGE_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
     "properties": {
+        "filters": {"type":"array", "maxItems":20, "items":PROFILE_FILTER_SCHEMA,
+                    "description":"Общие сравнения полей: срок сдачи — delivery_year (не year), точный год op=eq, не позднее lte, диапазон between. Значения строками. Только явно названные изменения; remove снимает фильтр поля. Неназванные фильтры сохраняет код."},
+        "center_required": {"type":"boolean", "description":"true — именно В ЦЕНТРЕ обязательно; false — центр необязателен. Не добавляй запрет для «желательно ближе к центру». Центр по умолчанию — 5 км по прямой от опорной точки; код раскрывает определение."},
+        "seller_questions": {"type":"array","maxItems":12,"items":{"type":"string","maxLength":300},
+                             "description":"Дополнительные явно названные клиентом вопросы продавцу; новый список целиком с сохранением прежних. Не означает разрешение звонить."},
         "city": {"type": "string", "description": "город, именительный падеж"},
         "rooms": {
             "minimum": 0,

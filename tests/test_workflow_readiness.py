@@ -60,6 +60,8 @@ class WorkflowReadinessTest(unittest.IsolatedAsyncioTestCase):
         x=listing()
         s.shown=[x]
         s.search={'listings':[x],'pool':[x],'shown_ids':{x['id']}}
+        self.assertFalse(actions.available(s,'call_seller'))
+        s.call_targets=[x['id']]  # отдельная просьба звонить, не просто наличие выдачи
         self.assertTrue(actions.available(s,'call_seller'))
         R.apply_request(s,{'kitchen_min':9})
         self.assertFalse(actions.available(s,'call_seller'))

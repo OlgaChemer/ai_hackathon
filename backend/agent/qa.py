@@ -18,9 +18,17 @@ from ..calculation_policy import POLICY, metadata
 def build_context(s) -> dict:
     """Выжимка сессии для ответа: запрос, финансы, ипотека, подборка, текущая квартира, итог торга."""
     p = s.profile or {}
+    from .listing_query import FIELDS
+    from .features import FEATURES
+    from .. import geo
     ctx: dict = {"шаг": s.stage, "допущения расчёта": {
         **metadata(), "ипотека": POLICY['mortgage'], "продукты": POLICY['savings']['products'],
         "доля платы от экономии": POLICY['economics']['fee_pct']}}
+    ctx['проверяемые параметры'] = [*(value[1] for value in FIELDS.values()),
+                                   *(value[0] for value in FEATURES.values()),
+                                   *(value[0] for value in geo.POI.values())]
+    ctx['непроверяемые пожелания'] = p.get('_unsupported_conditions') or []
+    ctx['последняя ошибка обработки'] = s.last_issue
     if p.get("city"):
         ctx["запрос"] = p.get("summary") or {k: p.get(k) for k in ("city", "rooms", "budget_max")}
         ctx["способ оплаты"] = {"cash": "наличные", "mortgage_ready": "ипотека, взнос есть",
@@ -45,6 +53,9 @@ def build_context(s) -> dict:
         ctx["текущая квартира"] = {"адрес": x.get("address"), "цена в объявлении": fmt(x["price"]),
                                    "справедливая цена": fmt(fp["fair"]), "коридор": f"{fmt(fp['low'])}–{fmt(fp['high'])}",
                                    "основа оценки": fp["basis"], "цель торга": fmt(fp["target"])}
+    if s.current:
+        from .features import missing_info
+        ctx['программа разговора'] = [q['question'] for q in missing_info(s.current['listing'],3,s.prefs.features)] + list(p.get('seller_questions') or [])
     if s.journal.get("final_price"):
         ctx["итог торга"] = {"цена объявления": fmt(s.journal["base_price"]), "договорились": fmt(s.journal["final_price"]),
                              "экономия": fmt(s.journal.get("savings", 0))}

@@ -77,7 +77,7 @@ async def ask_family(s) -> dict:
         "Карточка «Где искать»: новостройки, вторичка или и там, и там. Особенно важно, если семейная ипотека проходит "
         "только в новостройке (mortgage_programs скажет). Не вызывай, если клиент уже сказал.")
 async def ask_housing(s) -> dict:
-    if s.profile.get("housing"):
+    if s.profile.get("housing") and s.requested_action!='ask_housing':
         return {"housing": s.profile["housing"], "already_known": True}
     alt = next((c for c in (s.mortgage or {}).get("programs", []) if c["key"] == "family_new"), None)
     if alt:

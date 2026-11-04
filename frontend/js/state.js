@@ -13,7 +13,7 @@ function freshState() {
   return {
     sid: null, es: null, running: false, streamEnded: false, results: {},
     call: null, phone: null, marks: { liked: new Set(), disliked: new Set() }, opened: {}, strategy: null, awaiting: null,
-    cards: {}, lastSeq: 0, retries: 0, // карточки решений по виду; последнее полученное событие ленты
+    cards: {}, lastSeq: 0, retries: 0, selectionNotice: null, // карточки решений по виду; последнее полученное событие ленты
   };
 }
 

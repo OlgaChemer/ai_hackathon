@@ -18,6 +18,9 @@ EMPTY_PROFILE = {
     "rooms_options": [],       # все допустимые варианты, например [1, 2]
     "cities": [],              # дополнительные явно названные территории
     "prefer_center": False,    # близость к центру — пожелание, если не указано иначе
+    "center_required": False,
+    "filters": [],
+    "seller_questions": [],
     "budget_max": None,
     "payment": None,          # cash | mortgage_ready | mortgage_saving
     "okrug": None,
@@ -89,8 +92,6 @@ def merge_profile(raw: dict, base: dict | None = None) -> dict:
     p["avoid_districts"] = [str(d) for d in p.get("avoid_districts") or []]
     if p.get("okrug"):  # «юго-запад» -> ЮЗАО; не Москва — округов нет
         p["okrug"] = okrug_from_text(p["okrug"]) or (p["okrug"] if p["okrug"] in ("ЦАО", "САО", "СВАО", "ВАО", "ЮВАО", "ЮАО", "ЮЗАО", "ЗАО", "СЗАО") else None)
-    if p.get("prefer_center") and p.get("okrug") == "ЦАО":
-        p["okrug"] = None
     if p.get("city") != "Москва":
         p["okrug"] = None
     if p.get("payment") not in (None, "cash", "mortgage_ready", "mortgage_saving"):
@@ -125,7 +126,10 @@ def profile_summary(p: dict) -> str:
     where = ", ".join([p["city"], *(c for c in p.get("cities") or [] if c != p["city"])]) + (f", {p['okrug']}" if p.get("okrug") else "")
     if p.get("districts"):
         where += f" (район {', '.join(p['districts'])})"
-    extra = ["желательно ближе к центру"] if p.get("prefer_center") else []
+    extra = (["центр: до 5 км по прямой от опорной точки"] if p.get("center_required")
+             else ["желательно ближе к центру"] if p.get("prefer_center") else [])
+    from .listing_query import describe
+    extra += [describe(f) for f in p.get('filters') or []]
     if p.get("features"):
         extra.append("с " + ", ".join(FEATURE_WITH[k] for k in p["features"]))
     near = [geo.POI[k][0] for k in p.get("poi") or [] if k in geo.POI]
@@ -174,5 +178,19 @@ def passes_hard_filters(x: dict, p: dict) -> bool:
     if x["price"] > p["budget_max"] * 1.05:  # чуть дороже бюджета оставляем: можно сторговать
         return False
     if p.get("not_first_floor") and "not_first_floor" not in p.get("soft_criteria", []) and x.get("floor") == 1:
+        return False
+    if p.get('okrug') and x.get('okrug') and x['okrug'] != p['okrug']:
+        return False
+    if p.get('center_required'):
+        from .pricing import center_distance
+        distance = center_distance(x)
+        if distance is None or distance > 5:
+            return False
+    from .listing_query import check
+    # Инфраструктуру проверяем после обращения к карте. До обогащения отсутствие
+    # nearby не означает отсутствие объекта: иначе exists отсечёт весь пул ещё
+    # до вызова провайдера. Итоговые обязательные фильтры проверяет selectable.
+    if any(check(x,f) is False for f in p.get('filters') or []
+           if f['priority']=='required' and not f['field'].startswith('nearby:')):
         return False
     return True

@@ -23,21 +23,23 @@ def validate(value, schema: dict, depth: int = 0) -> None:
     if kind in ("integer", "number"):
         if (type(value) is float and not math.isfinite(value)) or not schema.get("minimum", -1e12) <= value <= schema.get("maximum", 1e12):
             raise ValueError("Число вне допустимого диапазона")
-    elif kind == "string" and len(value) > schema.get("maxLength", 2000):
-        raise ValueError("Слишком длинный текст")
+    elif kind == "string" and not schema.get('minLength',0) <= len(value) <= schema.get("maxLength", 2000):
+        raise ValueError("Неверная длина текста")
     elif kind == "array":
         if len(value) < schema.get("minItems", 0):
             raise ValueError("Слишком мало элементов")
         if len(value) > schema.get("maxItems", 100):
             raise ValueError("Слишком много элементов")
-        for item in value:
-            validate(item, schema["items"], depth + 1)
+        for index,item in enumerate(value):
+            try:validate(item, schema["items"], depth + 1)
+            except ValueError as exc:raise ValueError(f'[{index}]: {exc}') from exc
     elif kind == "object":
         props = schema.get("properties", {})
         if len(value) > 64 or value.keys() - props.keys() or set(schema.get("required", [])) - value.keys():
             raise ValueError("Неизвестные или отсутствующие параметры")
         for key, item in value.items():
-            validate(item, props[key], depth + 1)
+            try:validate(item, props[key], depth + 1)
+            except ValueError as exc:raise ValueError(f'{key}: {exc}') from exc
 
 
 TEXT = {"type": "string", "maxLength": 1000}
@@ -55,7 +57,8 @@ def choice(*values):
 CONFIRMATIONS = {
     "clarify": {}, "price": {}, "object": {}, "sign": {},
     "red_lines": {"budget_max": number(100_000)},
-    "call": {"mode": choice("auto", "human", "phone")},
+    "call": {"mode": choice("auto", "human", "phone"),
+             "questions":{"type":"array","maxItems":15,"items":{"type":"string","maxLength":300}}},
     "payment": {"payment": choice("cash", "mortgage_ready", "mortgage_saving")},
     "housing": {"housing": choice("secondary", "new", "both")},
     "family": {"children": number(0, 30), "youngest_age": {"type": ["number", "null"], "minimum": 0, "maximum": 100}, "matcap": number()},

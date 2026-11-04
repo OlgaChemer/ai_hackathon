@@ -42,12 +42,16 @@ class Session:
     request_review_seq: int = 0
     request_review: dict | None = None
     request_intent: str | None = None
+    requested_action: str | None = None
     client_revision: int = 0  # только принятые сообщения/решения клиента
     seq: int = 0                      # номер последнего события диалога
     history: list[dict] = field(default_factory=list)  # события этого запуска (если база недоступна)
     subscribers: set[asyncio.Queue] = field(default_factory=set)  # открытые вкладки
     idle_since: float = field(default_factory=time.monotonic)  # когда закрылась последняя вкладка
     pending: dict[str, asyncio.Future] = field(default_factory=dict)  # карточки, которые ждут решения клиента
+    pending_ids: dict[str, str] = field(default_factory=dict)
+    input_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    activity: str = 'working'
     inbox: asyncio.Queue = field(default_factory=asyncio.Queue)       # сообщения клиента агенту
     seller_queue: asyncio.Queue = field(default_factory=asyncio.Queue)  # реплики живого продавца
     task: asyncio.Task | None = None
@@ -67,6 +71,13 @@ class Session:
     programs_result: dict | None = None
     search: dict | None = None          # результат поиска: listings, pool, meta, comps, report, map_ok, pages
     shown: list = field(default_factory=list)       # последняя подборка (карточки)
+    selection_query: dict = field(default_factory=dict)
+    selection_scope_ids: list[str] = field(default_factory=list)
+    selection_dirty: bool = False
+    selection_operation: str = 'rank'
+    selection_profile_stale: bool = False
+    last_issue: dict | None = None
+    call_targets: list[str] = field(default_factory=list)
     calls: dict[str, dict] = field(default_factory=dict)     # итоги звонков по id объявления
     agreed: dict[str, int] = field(default_factory=dict)     # цена, которую клиент подтвердил
     chosen: str | None = None           # квартира, которую клиент выбрал после просмотра
@@ -107,7 +118,9 @@ class Session:
         self.calls.clear()
         self.agreed.clear()
         self.chosen = self.current = None
-        self.shown = []
+        # Последняя видимая подборка остаётся до успешного нового результата.
+        # Допуски действий проверяют новый профиль и search, а не факт показа.
+        self.call_targets = []
         self.journal.clear()
 
     # ------------------------------------------------------------- лента событий
@@ -128,6 +141,8 @@ class Session:
 
     def signal(self, type_: str, **payload: Any) -> None:
         """Сигнал открытым вкладкам без записи в историю: «агент думает»."""
+        if type_ == 'typing':
+            self.activity = 'working' if payload.get('on') else ('awaiting_user' if self.pending else 'idle')
         for q in list(self.subscribers):
             q.put_nowait({"type": type_, **payload, "seq": 0})
 
@@ -159,17 +174,25 @@ class Session:
         Клиент может вместо кнопки написать текстом — тогда approved = None, а текст в data["text"]."""
         fut = asyncio.get_running_loop().create_future()
         self.pending[kind] = fut
-        self.push("confirm", kind=kind, title=title, text=text, **payload)
+        decision_id = uuid.uuid4().hex[:16]
+        self.pending_ids[kind] = decision_id
+        self.signal('typing',on=False)
+        self.signal('model_wait',on=False)
+        self.push("confirm", kind=kind, title=title, text=text, decision_id=decision_id, **payload)
         try:
             with human_wait():
                 return await fut
         finally:
-            self.pending.pop(kind, None)
+            if self.pending.get(kind) is fut:
+                self.pending.pop(kind, None)
+                self.pending_ids.pop(kind,None)
 
-    def resolve(self, kind: str, approved: bool | None, data: dict | None) -> bool:
+    def resolve(self, kind: str, approved: bool | None, data: dict | None, decision_id: str | None = None) -> bool:
         """Решение клиента. В ленту — resolved с подписью кнопки (для истории) и фраза, если решение сказано голосом."""
         fut = self.pending.get(kind)
         if not fut or fut.done():
+            return False
+        if decision_id is not None and decision_id != self.pending_ids.get(kind):
             return False
         data = dict(data or {})
         try:
@@ -189,7 +212,7 @@ class Session:
         label, said = data.pop("_label", None), data.pop("_said", None)
         if said:
             self.push("message", role="user", text=str(said)[:500])
-        self.push("resolved", kind=kind, approved=approved, label=label)
+        self.push("resolved", kind=kind, approved=approved, label=label, decision_id=self.pending_ids.get(kind))
         fut.set_result({"approved": approved, "data": data})
         return True
 
@@ -201,17 +224,21 @@ class Session:
         self.request_review = None
 
     async def receive_text(self, text: str, marks: dict | None = None) -> str:
+        async with self.input_lock:
+            return await self._receive_text(text, marks)
+
+    async def _receive_text(self, text: str, marks: dict | None = None) -> str:
         ev = self.push("message", role="user", text=text)
         if self.refuse(text):
             return "blocked"
         self.accept_request(ev["text"], ev["seq"])
-        if self.pending:
+        if self.pending or self.last_issue is not None:
             from . import understanding
             from ..llm import LLMError
             try:
                 review = await understanding.prepare_from_http(self)
-            except (LLMError, TurnStopped):
-                await self.say("Не удалось надёжно разобрать сообщение. Попробуйте ещё раз — текущая карточка и условия сохранены.")
+            except (LLMError, TurnStopped) as exc:
+                await self.say(understanding.failed_input(self,exc), await_reply=True)
                 return "unresolved"
             if review and review['intent'] == 'question' and review['decision'] != 'clarify':
                 self.request_review_seq = review['seq']
@@ -266,6 +293,18 @@ def restore_session(chat_id: str, text: str, llm: LLMClient) -> Session:
     profile, memory, vid, uid, last_seq = info or (None, None, None, None, 0)
     s = Session(id=chat_id, query=text.strip(), llm=llm, visitor_id=vid, user_id=uid, seq=last_seq or 0)
     s.profile = dict(profile or {})
+    s.last_issue=s.profile.get('_last_issue')
+    s.requested_action=s.profile.get('_requested_action')
+    s.selection_profile_stale=bool(s.profile.get('_selection_stale'))
+    s.selection_query = s.profile.get('_selection_query') or {}
+    previous=db.safe(repo.last_nonempty_selection,chat_id)
+    if previous:
+        s.shown=previous['cards']
+        s.selection_scope_ids=[x['id'] for x in s.shown]
+        s.selection_query=previous.get('query') or s.selection_query
+        s.profile['_selection_query']=dict(s.selection_query)
+        s.prefs.liked=list(previous.get('liked') or [])
+        s.prefs.disliked=list(previous.get('disliked') or [])
     s.messages = close_dangling_calls(list(memory or []))
     if '_approved_budget_max' not in s.profile:
         # Старый формат: доверяем только результатам серверных инструментов, не репликам.

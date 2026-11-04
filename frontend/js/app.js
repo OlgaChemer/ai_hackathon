@@ -38,9 +38,10 @@ function renderStage() {
   stage.innerHTML = state.results[4] ? V.selection(state.results[4], state.marks)
     : state.searching ? ""
     : V.waiting("Здесь появятся квартиры", "Расскажите агенту о бюджете, городе и пожеланиях. Профиль и решения останутся в чате.");
+  if (state.selectionNotice) stage.prepend(el(html`<p class="hint" role="status">${state.selectionNotice}</p>`));
   if (state.searching) {
     stage.setAttribute("aria-busy", "true");
-    stage.prepend(el(html`<div class="search-progress" role="status"><span class="search-spinner" aria-hidden="true"></span>${state.searching}</div>`));
+    stage.prepend(el(html`<div class="search-progress" role="status"><span class="search-spinner" aria-hidden="true"></span><span data-search-progress>${state.searching}</span></div>`));
   } else stage.removeAttribute("aria-busy");
   const map = stage.querySelector("[data-map]");
   if (map && state.results[4]?.cards) mountMap(map, state.results[4].cards);
@@ -61,7 +62,8 @@ function renderChatResult(step) {
 
 /** Кнопки подборки активны, только пока агент ждёт выбора. */
 function syncSelectionButtons() {
-  stage.querySelectorAll("[data-selection]").forEach((b) => (b.disabled = state.awaiting !== "selection"));
+  stage.querySelectorAll("[data-selection]").forEach((b) => (b.disabled = state.awaiting !== "selection" ||
+    (b.dataset.selection === 'proceed' && !state.results[4]?.cards?.length)));
 }
 
 // ------------------------------------------------------------------ настоящий звонок (МТС Exolve)
@@ -103,6 +105,14 @@ async function handle(ev, myGen) {
     case "provider": setProvider(ev); break;
     case "search_progress":
       state.searching = ev.on ? ev.text || "Ищу и сравниваю квартиры…" : null;
+      if (!quiet) {
+        const progress = stage.querySelector('[data-search-progress]');
+        if (progress && state.searching) progress.textContent = state.searching;
+        else renderStage();
+      }
+      break;
+    case "selection_notice":
+      state.selectionNotice = ev.text;
       if (!quiet) renderStage();
       break;
     case "message":
@@ -112,6 +122,12 @@ async function handle(ev, myGen) {
       await pause(ev.role === "agent" ? 300 : 0);
       break;
     case "result":
+      if (ev.kind === 'selection' && !ev.data.cards?.length && state.results[4]?.cards?.length) {
+        state.selectionNotice = 'Последняя команда не дала результатов. Сохранена предыдущая подборка; она относится к прежним условиям.';
+        if (!quiet) renderStage();
+        break;
+      }
+      if (ev.kind === 'selection') state.selectionNotice = null;
       state.results[ev.step] = ev.data;
       if (ev.kind === "profile") refreshContext(ev.data);
       if (![3, 4, 6].includes(ev.step)) renderChatResult(ev.step);
@@ -124,6 +140,8 @@ async function handle(ev, myGen) {
       await pause(ev.kind === "selection" ? 0 : 500);
       break;
     case "confirm":
+      showThinking(false);
+      api.decisions[ev.kind] = ev.decision_id;
       if (ev.kind !== "selection") setChatExpanded(true);
       if (ev.kind === "call") {
         state.call = createCall(ev);
@@ -140,7 +158,11 @@ async function handle(ev, myGen) {
       }
       confirmCard(ev);
       break;
-    case "resolved": resolved(ev); break;
+    case "resolved":
+      if (ev.decision_id && api.decisions[ev.kind] && ev.decision_id !== api.decisions[ev.kind]) break;
+      delete api.decisions[ev.kind];
+      resolved(ev);
+      break;
     case "product_opened":
       state.opened[ev.product] = ev.amount;
       if (!quiet && state.results[2]) renderChatResult(2);
@@ -410,10 +432,8 @@ async function sendText(text) {
     // вопрос агенту («что такое СБР?») или отклонённое фильтром сообщение карточку не закрывают:
     // подборка и подтверждение ждут дальше, их кнопки должны работать
     if (["question", "blocked", "unresolved"].includes(r.handled_as)) return;
-    if (state.awaiting === "clarify") {
-      $("chatLog").querySelectorAll(".confirm-clarify:not(.is-done)").forEach((c) => c.classList.add("is-done"));
-    }
-    state.awaiting = null;
+    // Актуальное ожидание задаёт только SSE confirm/resolved. Поздний HTTP-ответ
+    // не должен стирать уже пришедшую карточку следующего шага.
   } catch (e) {
     addMsg("error", `Сообщение не отправлено: ${e.message}`);
   }

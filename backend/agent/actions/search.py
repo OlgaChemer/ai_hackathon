@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from collections import Counter
 
 from ... import geo, sources
 from ...config import settings
@@ -11,13 +12,30 @@ from ..criteria import match, selectable
 from .. import mortgage as M
 from .. import preferences as P
 from ..features import FEATURE_WITH, FEATURES, feature_evidence, missing_info
-from ..numbers import fmt
+from ..numbers import fmt, plural
 from ..pricing import fair_price, score_listing, value_rank
 from ..profile import in_districts, passes_hard_filters, rooms_text
 from . import ActionError, action
+from .. import listing_query as Q
 
 BATCH = 10       # квартир в подборке
 MAX_PAGES = 3   # страниц выдачи Циана на один поиск
+
+
+def report_progress(s,listings,phase):
+    rows=list({x['id']:x for x in listings}.values())
+    candidates=(s.search or {}).get('pool',rows) if phase!='collect' else rows
+    eligible=[x for x in candidates if passes_hard_filters(x,s.profile) and x['id'] not in s.prefs.disliked
+              and x.get('district') not in s.prefs.districts_minus]
+    confirmed=sum(fits(x,s.prefs) for x in eligible)
+    unverified=sum(match(x,s.prefs)['status']=='unverified' for x in eligible)
+    signature=(phase,len(rows),len(eligible),confirmed,unverified)
+    if getattr(s,'_progress_signature',None)==signature:return
+    s._progress_signature=signature
+    text=(f'Получено {len(rows)} реальных объявлений; предварительно подходят {len(eligible)}. Продолжаю поиск.' if phase=='collect' else
+          f'Подтверждено {confirmed} подходящих вариантов; ещё {unverified} с непроверенными данными. '+
+          ('Проверяю объявления и инфраструктуру.' if phase=='map' else 'Готовлю карточки.'))
+    s.push('search_progress',on=True,text=text,phase=phase,found=len(rows),candidates=len(eligible),confirmed=confirmed,unverified=unverified)
 
 
 # ------------------------------------------------------------------ помощники подбора
@@ -39,9 +57,11 @@ def fits(x: dict, prefs: P.Prefs) -> bool:
     return C.evaluate(profile, x)['status'] == 'confirmed'
 
 
-async def check_map(s, listings: list[dict], announce: bool = False) -> bool:
+async def check_map(s, listings: list[dict], announce: bool = False, kinds=None) -> bool:
     """Что рядом с квартирами по карте. False — сервис карты не ответил (агент скажет об этом честно)."""
-    if not s.prefs.poi or not listings:
+    kinds = kinds if kinds is not None else list(set(s.prefs.poi) | {
+        f['field'].split(':',1)[1] for f in s.profile.get('filters') or [] if f['field'].startswith('nearby:')})
+    if not kinds or not listings:
         return True
     if announce:
         await s.say("Проверяю по карте, что рядом: " + ", ".join(geo.POI[k][0] for k in s.prefs.poi) + ".")
@@ -49,7 +69,13 @@ async def check_map(s, listings: list[dict], announce: bool = False) -> bool:
         s.search["map_revision"] = s.client_revision
         s.search["map_deadline"] = time.monotonic() + settings.places_budget_s
     deadline = (s.search or {}).get("map_deadline", time.monotonic() + settings.places_budget_s)
-    ok = await geo.nearby(listings, s.prefs.poi, budget_s=max(0, deadline - time.monotonic()))
+    # Сначала проверяем кандидатов первой выдачи; массовая проверка всего города
+    # съедала бюджет до появления полезной карточки.
+    meta = s.search.setdefault('meta',{}) if s.search is not None else {}
+    score_into(listings, (s.search or {}).get('comps') or listings, s.profile, meta)
+    candidates = ranked(listings,meta,s.prefs)
+    ok = await geo.nearby(candidates[:30], kinds, budget_s=max(0, deadline - time.monotonic()),
+                         on_progress=lambda:report_progress(s,(s.search or {}).get('listings') or listings,'map'))
     if not ok and not s.map_warned:
         s.map_warned = True
         await s.say("Карта не успела проверить часть адресов или не ответила. Отмечу пробелы на карточках — близость нужных объектов пока не подтверждена.")
@@ -111,6 +137,7 @@ async def _more_pages(s, until) -> None:
         await check_map(s, fresh)
         st["pool"] += fresh
         st["comps"] += extra
+        report_progress(s,st['listings'],'collect')
 
 
 
@@ -128,17 +155,26 @@ async def search_listings(s) -> dict:
     room_label = "/".join(map(str, p["rooms_options"])) + "-комнатные" if len(p.get("rooms_options") or []) > 1 else rooms_text(p["rooms"])
     await s.say(f"Ищу на Циане: {where}, {room_label}, {market_txt}, до {fmt(p['budget_max'])}.")
     s.push("search_progress", on=True, text="Ищу объявления и сравниваю варианты…")
-    listings, report = await sources.collect(p)
+    observed={}
+    s._progress_signature=None
+    def batch(items):
+        observed.update({x['id']:x for x in items})
+        report_progress(s,list(observed.values()),'collect')
+    listings, report = await sources.collect(p,on_batch=batch)
     known = sources.stored(p, exclude={x["id"] for x in listings})
     if known:
         listings += known
         report.append({"source": "База агента", "count": len(known), "status": "db",
                        "note": f"видели на Циане за {sources.store.SEEN_DAYS} дней"})
+    batch(listings)
     pool = [x for x in listings if passes_hard_filters(x, p)]
     comps = list({x["id"]: x for x in [*sources.comparables(p), *listings]}.values())
     st = s.search = {"listings": listings, "pool": pool, "comps": comps, "report": report, "meta": {}, "pages": 1,
-                     "named": p.get("districts") or [], "strict": False, "map_ok": True, "shown_ids": set(), "map_deadline": time.monotonic() + settings.places_budget_s, "map_revision": s.client_revision}
+                     "named": p.get("districts") or [], "strict": False, "map_ok": True,
+                     "shown_ids": set(p.get('_seen_listing_ids') or [x['id'] for x in s.shown]),
+                     "map_deadline": time.monotonic() + settings.places_budget_s, "map_revision": s.client_revision}
     if not pool:
+        if s.shown:s.push('selection_notice',text='По новым условиям результатов пока нет. Сохранена предыдущая подборка; она относится к прежним условиям.')
         alternatives = ["Рассмотреть меньше комнат", "Изменить район"]
         if p.get("housing") in ("secondary", "new"):
             alternatives.insert(0, "Посмотреть новостройки" if p["housing"] == "secondary" else "Посмотреть вторичку")
@@ -181,6 +217,7 @@ async def search_listings(s) -> dict:
     s.push("result", step=3, kind="search", data={"report": report, "total": len(st["listings"]), "matched": len(good),
                                                    "rows": rows, "store": sources.store.stats(p), **out})
     over = sum(1 for x in good if st["meta"][x["id"]]["fair"]["overprice_pct"] > 1)
+    report_progress(s,st['listings'],'ready')
     s.push("search_progress", on=False)
     await s.finish_step(3)
     return {"found": len(st["listings"]), "in_budget": len(st["pool"]), "selectable": len(good),
@@ -211,56 +248,186 @@ async def probe_budget(s, budget_max: int) -> dict:
 
 
 @action("show_selection", 4,
-        "Показать подборку (до 10 квартир, лучшие по цене и пожеланиям; уже отмеченные «нравится» остаются) и дождаться "
-        "клиента. Возвращает: action = proceed (звонить по отмеченным) | more (подобрать ещё) | text (клиент написал — "
-        "пойми и, если это пожелание, запиши update_request и покажи снова), отметки и номера карточек.")
-async def show_selection(s) -> dict:
+        "Выполнить уже разобранную команду пользователя над подборкой: отобрать/сортировать, сравнить, "
+        "посчитать статистику или показать новые варианты. Параметры уже приняты входным контрактом; "
+        "не нужно придумывать их заново. Сравнение/статистика отвечают в чат и сохраняют карточки. "
+        "Затем ждёт ответ клиента.")
+async def show_selection(s, query: dict | None = None) -> dict:
+    if s.selection_operation in ('compare','analyze'):
+        return await read_selection(s)
     st = s.search
     if not st:
         raise ActionError("Сначала search_listings.")
+    # Модель выбирает инструмент; принятую команду компилирует входной контракт.
+    # Аргументы планировщика не заменяют уже проверенный запрос пользователя.
+    effective = s.selection_query or query or Q.default_query()
+    try:
+        Q.validate_query(effective)
+    except (ValueError, TypeError, KeyError) as exc:
+        raise ActionError(f'Неверный запрос к подборке: {exc}') from exc
     p, prefs, meta = s.profile, s.prefs, st["meta"]
-    new_poi = [k for k in prefs.poi if any(k not in (x.get("nearby") or {}) for x in st["pool"])]
-    if new_poi:
-        st["map_ok"] = await check_map(s, st["pool"], announce=True)
-    pool = [x for x in st["pool"] if passes_hard_filters(x, p)
-            and x.get("district") not in prefs.districts_minus and selectable(x, prefs)]
-    if not pool:
-        return {"shown": 0, "no_fit": wishes_text(prefs) or "текущим условиям",
-                "in_budget_without_wishes": len(st["pool"]),
-                "hint": "скажи клиенту честно; предложи снять условие (update_request) или проверь дороже (probe_budget)"}
-    unseen = [x for x in pool if x["id"] not in st["shown_ids"] and x["id"] not in prefs.disliked]
-    if len(unseen) < BATCH:  # новых мало — догружаем следующую страницу выдачи
-        before = len(st["pool"])
-        await _more_pages(s, lambda: len(st["pool"]) > before)
-        pool += [x for x in st["pool"][before:] if selectable(x, prefs) and x.get("district") not in prefs.districts_minus]
-    score_into(pool, st["comps"], p, meta)
-    order = ranked(pool, meta, prefs)
-    liked = [x for x in order if x["id"] in prefs.liked]
-    fresh = [x for x in order if x["id"] not in st["shown_ids"] and x["id"] not in prefs.disliked and x["id"] not in prefs.liked]
-    batch = liked[:BATCH] + fresh[:max(0, BATCH - len(liked))]
+    poi = set(prefs.poi) | {f['field'].split(':',1)[1] for f in effective['filters'] if f['field'].startswith('nearby:')}
+    if any(k not in (x.get('nearby') or {}) for x in st['pool'] for k in poi):
+        st['map_ok'] = await check_map(s,st['pool'], kinds=list(poi))
+    pool = [x for x in st['pool'] if passes_hard_filters(x,p)
+            and x.get('district') not in prefs.districts_minus and selectable(x,prefs)
+            and x['id'] not in prefs.disliked]
+    # Подгрузка нужна для следующей страницы, но не для ограничения текущих карточек.
+    if effective['scope']=='all' and (effective['mode']=='more' or not s.shown):
+        unseen=[x for x in pool if x['id'] not in st['shown_ids']]
+        if len(unseen)<effective['limit']:
+            before=len(st['pool'])
+            await _more_pages(s,lambda:len(st['pool'])>before)
+            pool += [x for x in st['pool'][before:] if passes_hard_filters(x,p)
+                     and selectable(x,prefs) and x['id'] not in prefs.disliked
+                     and x.get('district') not in prefs.districts_minus]
+    score_into(pool,st['comps'],p,meta)
+    order=ranked(pool,meta,prefs)
+    data=[{**x,'ranking':meta[x['id']]['ranking']} for x in order]
+    result=Q.execute(data,effective,liked=prefs.liked,
+                     shown=s.selection_scope_ids or [x['id'] for x in s.shown],seen=st['shown_ids'])
+    batch=result.pop('items')
     if not batch:
-        return {"shown": 0, "note": "новых вариантов нет — все подходящие уже показаны", "liked": prefs.liked}
-    st["shown_ids"] |= {x["id"] for x in batch}
-    first = not s.shown
-    s.shown = [card(x, meta, prefs) for x in batch]
-    s.push("result", step=4, kind="selection", data={
-        "cards": s.shown, "liked": prefs.liked, "disliked": prefs.disliked, "learned": prefs.learned(),
-        "remaining": max(0, len(fresh) - BATCH),
+        text=('По этой команде подходящих вариантов нет. '
+              + (f'Сохранил предыдущие {len(s.shown)} предложения; их можно сравнить или изменить отбор.' if s.shown else
+                 'Можно изменить условия; новых данных для карточек пока нет.'))
+        s.last_issue={'kind':'selection_empty','message':text}
+        s.profile['_last_issue']=dict(s.last_issue)
+        s.push('selection_notice',text=text)
+        await s.say(text)
+        s.selection_dirty=False
+        s.selection_query=dict(s.profile.get('_selection_query') or Q.default_query())
+        s.remember()
+        return await wait_selection(s,s.selection_query,result)
+    first=not s.shown
+    s.shown=[card(x,meta,prefs) for x in batch]
+    s.selection_scope_ids=[x['id'] for x in batch]
+    s.selection_dirty=False
+    s.selection_profile_stale=False
+    s.profile.pop('_selection_stale',None)
+    st['shown_ids'].update(x['id'] for x in batch)
+    s.profile['_seen_listing_ids']=sorted(st['shown_ids'])[-3000:]
+    s.call_targets=[]
+    s.selection_query=dict(effective)
+    s.profile['_selection_query']=dict(effective)
+    s.last_issue=None
+    s.profile.pop('_last_issue',None)
+    s.remember()
+    s.push('result',step=4,kind='selection',data={
+        'cards':s.shown,'liked':prefs.liked,'disliked':prefs.disliked,'learned':prefs.learned(),
+        'query':effective,'remaining':result['remaining'],'total':result['total'],'aggregates':result['aggregates'],'groups':result['groups'],
     })
-    if first:
-        await s.say("Вот лучшие варианты. Отметьте «Нравится» или «Не то» — учту и подберу ещё. Пожелания можно написать "
-                    "или сказать. Когда будете готовы — позвоню по отмеченным.")
-    r = await s.ask("selection", "Подборка", "Отметьте квартиры на экране подбора.")
-    d = r["data"]
-    by_id = {x["id"]: x for x in st["pool"]}
-    prefs.liked = [i for i in d.get("liked", []) if i in by_id and selectable(by_id[i], prefs)]
-    prefs.disliked = [i for i in d.get("disliked", []) if i in by_id]
-    P.learn(prefs, by_id)
-    number = {x["id"]: i + 1 for i, x in enumerate(batch)}  # номера карточек на экране: «вторая нравится»
-    return {"action": d.get("action") or "text", "client_said": d.get("text"),
-            "shown": [{"n": number[x["id"]], **brief(x, meta), "match": match(x, prefs)} for x in batch],
-            "liked": [{"n": number.get(i), **brief(by_id[i], meta)} for i in prefs.liked],
-            "disliked_count": len(prefs.disliked), "learned": prefs.learned(), "remaining": max(0, len(fresh) - BATCH)}
+    if first and effective == Q.default_query():
+        await s.say('Вот лучшие варианты. Отметьте «Нравится» или «Не то» — учту и подберу ещё. Можно менять условия, порядок и количество; звоню только по вашей просьбе.')
+    else:
+        sort = effective['sort']
+        label = ('с наибольшей площадью' if sort and sort[0] == {'field':'area','direction':'desc'} else
+                 'с наилучшим соотношением оценки и цены' if not sort or sort[0] == {'field':'value_score','direction':'desc'} else
+                 'по вашему запросу')
+        text = f"Отобрал для вас {len(batch)} {plural(len(batch),'предложение','предложения','предложений')} {label}."
+        if len(batch) < effective['limit']:
+            text += f" Запрошено {effective['limit']}; в выбранной области нашлось только {len(batch)}."
+        if sort:
+            text += ' Порядок: ' + ', '.join(Q.FIELDS[x['field']][1] + (' по убыванию' if x['direction']=='desc' else ' по возрастанию') for x in sort) + '.'
+        await s.say(text)
+    if batch and p.get('_unsupported_conditions'):
+        await s.say('В этой подборке не проверено: ' + '; '.join(p['_unsupported_conditions']) + '.')
+    return await wait_selection(s,effective,result)
+
+
+async def wait_selection(s,effective,result):
+    """Одна обработка кнопок для выдачи и операций чтения над ней."""
+    st=s.search or {}
+    batch=list(s.shown)
+    prefs=s.prefs
+    r=await s.ask('selection','Подборка','Выберите квартиры, попросите ещё или уточните условия.')
+    d=r['data']
+    by_id={x['id']:x for x in batch}
+    by_id.update({x['id']:x for x in st.get('pool',[])})
+    for key,x in list(by_id.items()):
+        if isinstance(x.get('nearby'),list):
+            by_id[key]={**x,'nearby':{p['kind']:p if p.get('dist') is not None else None for p in x['nearby']}}
+    prefs.liked=[i for i in d.get('liked',prefs.liked) if i in by_id and selectable(by_id[i],prefs)]
+    prefs.disliked=[i for i in d.get('disliked',prefs.disliked) if i in by_id]
+    P.learn(prefs,by_id)
+    if d.get('action')=='more':
+        s.selection_query={**effective,'mode':'more','scope':'all'}
+        s.selection_dirty=True
+        s.request_intent='selection'
+        s.selection_operation='more'
+    elif d.get('action')=='proceed':
+        s.call_targets=list(prefs.liked)
+        if not prefs.liked and batch:
+            # Кнопка без отметок отдельно спрашивает согласие на три текущих лучших.
+            s.call_targets=[x['id'] for x in batch[:3]]
+        s.request_intent='call'
+    number={x['id']:i+1 for i,x in enumerate(batch)}
+    return {'action':d.get('action') or 'text','client_said':d.get('text'),
+            'shown':[{'n':number[x['id']],'id':x['id'],'address':x.get('address'),'price':x['price'],'area':x.get('area')} for x in batch],
+            'liked':[{'n':number.get(i),'id':i,'address':by_id[i].get('address'),'price':by_id[i]['price']} for i in prefs.liked],
+            'call_targets':s.call_targets,'remaining':result['remaining'],'aggregates':result['aggregates'],'groups':result['groups'],'learned':prefs.learned()}
+
+
+def metric_text(value,field):
+    if value is None:return 'нет данных'
+    if field=='price_per_m2':return fmt(value)+'/м²'
+    if field=='price':return fmt(value)
+    if isinstance(value,(int,float)):
+        text=f'{value:,.2f}'.rstrip('0').rstrip('.').replace(',',' ').replace('.',',')
+        return text+(' м²' if field in ('area','kitchen') else ' км' if field=='center_km' else '')
+    return str(value)
+
+
+async def read_selection(s):
+    """Сравнение/статистика не заменяют видимые карточки и не обращаются к источнику."""
+    query=dict(s.selection_query or Q.default_query())
+    operation=s.selection_operation
+    if query['scope']!='shown' and s.search is None:
+        await s.say('Сейчас доступен только снимок последних показанных квартир. Для сравнения всего пула нужно заново получить объявления; карточки сохранил.')
+        s.selection_dirty=False
+        return await wait_selection(s,s.profile.get('_selection_query') or Q.default_query(),{'remaining':0,'aggregates':[],'groups':[]})
+    rows=s.shown if query['scope']=='shown' else (s.search or {}).get('pool',s.shown)
+    if query['scope']!='shown' and s.search:
+        meta=s.search.get('meta',{})
+        rows=[{**x,'ranking':meta.get(x['id'],{}).get('ranking',x.get('ranking'))} for x in rows if selectable(x,s.prefs)]
+    result=Q.execute(rows,{**query,'limit':30},shown=[x['id'] for x in s.shown],liked=s.prefs.liked)
+    if operation=='compare':
+        field=query['sort'][0]['field']
+        known=[x for x in result['items'] if Q.field_value(x,field) is not None]
+        scope=set(s.prefs.liked if query['scope']=='liked' else [x['id'] for x in s.shown])
+        unknown=sum(Q.field_value(x,field) is None for x in rows if query['scope']=='all' or x['id'] in scope)
+        if len(known)<2:
+            text=f'Для сравнения по показателю «{Q.FIELDS[field][1]}» недостаточно данных: известно {len(known)} значений. Карточки сохранил.'
+            s.last_issue={'kind':'comparison_data','message':text}
+        else:
+            winner=known[0]
+            ties=[x for x in known if Q.field_value(x,field)==Q.field_value(winner,field)]
+            text=('По показателю «'+Q.FIELDS[field][1]+'» значения совпадают: '+metric_text(Q.field_value(winner,field),field)+'.' if len(ties)==len(known) else
+                  'Среди этих '+str(result['total'])+' предложений '+('меньшее' if query['sort'][0]['direction']=='asc' else 'большее')+
+                  ' значение «'+Q.FIELDS[field][1]+'» у квартиры '+str(winner.get('address') or winner['id'])+': '+metric_text(Q.field_value(winner,field),field)+'.')
+            if len(known)==2:
+                other=known[1]
+                text+=' У второй квартиры — '+metric_text(Q.field_value(other,field),field)+'.'
+            if unknown:text+=f' У {unknown} предложений значение неизвестно; их сравнить не могу.'
+            text+=' Карточки оставил на месте.'
+            s.last_issue=None
+    else:
+        names={'count':'Количество известных значений','mean':'Среднее','median':'Медиана','min':'Минимум','max':'Максимум'}
+        def aggregate_text(values):
+            return '; '.join(names[a['function']]+' ('+Q.FIELDS[a['field']][1]+'): '+
+                             (str(a['value']) if a['function']=='count' else metric_text(a['value'],a['field'])) for a in values)
+        text=aggregate_text(result['aggregates'])
+        if result['groups']:
+            text+='; '+ '; '.join(str(g['value'] or 'Нет данных')+': '+aggregate_text(g['aggregates']) for g in result['groups'][:5])
+        s.last_issue=None
+        text=(text+'. Карточки сохранил.' if text else 'Уточните, какой показатель посчитать: среднюю цену, цену за м² или площадь. Карточки сохранил.')
+    await s.say(text)
+    s.selection_dirty=False
+    s.selection_query=dict(s.profile.get('_selection_query') or Q.default_query())
+    if s.last_issue:s.profile['_last_issue']=dict(s.last_issue)
+    else:s.profile.pop('_last_issue',None)
+    s.remember()
+    return await wait_selection(s,s.selection_query,result)
 
 
 @action("offer_search_alternatives", 3,
@@ -281,5 +448,10 @@ async def offer_search_alternatives(s):
         options = ["Повторить поиск", *options]
     text = ("Не удалось получить выдачу от источника — это не означает, что квартир нет. Можно повторить запрос или изменить условия."
             if unavailable else "Подходящих подтверждённых вариантов пока нет. Что готовы рассмотреть? Бюджет без вашего решения не увеличу.")
+    if not unavailable:
+        rejected=Counter(label for x in s.search.get('listings',[]) for label in C.evaluate(s.profile,x)['failed'])
+        unknown=Counter(label for x in s.search.get('listings',[]) for label in C.evaluate(s.profile,x)['unknown'])
+        if rejected:text='Среди полученных объявлений не нашёл подтверждённых совпадений. Чаще всего не выполнено: '+ '; '.join(label for label,_ in rejected.most_common(2))+'. Какое условие готовы изменить?'
+        elif unknown:text='Не могу подтвердить совпадения: в объявлениях не хватает данных для проверки — '+ '; '.join(label for label,_ in unknown.most_common(2))+'. Можно сохранить прежние карточки или изменить условие.'
     r = await s.ask("clarify", "Источник недоступен" if unavailable else "Расширить поиск?", text, chips=options)
     return {"client_said": r["data"].get("text", ""), "hint": "запиши только выбранное изменение через update_request и повтори поиск"}

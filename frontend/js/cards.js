@@ -27,7 +27,7 @@ async function decide(card, kind, approved, data, label) {
   const said = card.dataset.said; // решение сказано голосом — фраза попадёт в историю диалога
   delete card.dataset.said;
   try {
-    await api.confirm(state.sid, kind, approved, { ...data, _label: label, ...(said ? { _said: said } : {}) });
+    await api.confirm(state.sid, kind, approved, { ...data, _label: label, ...(said ? { _said: said } : {}) }, card.dataset.decisionId);
     if (kind === "call" && approved && state.call) state.call.mode = data.mode;
   } catch (e) {
     card.querySelectorAll("button, input, select").forEach((x) => (x.disabled = false));
@@ -115,12 +115,15 @@ function presentDecision(card, live) {
 function archiveDecision(card) {
   card.querySelectorAll("button, input, select").forEach((x) => (x.disabled = true));
   const extra = card.querySelector("[data-extra]");
-  if (extra?.childElementCount && !card.querySelector(".decision-archive")) {
+  if ((extra?.childElementCount || card.classList.contains('confirm-clarify')) && !card.querySelector(".decision-archive")) {
     const details = el(html`<details class="decision-archive"><summary>Параметры решения</summary></details>`);
     extra.replaceWith(details);
     details.append(extra);
+    if (card.classList.contains('confirm-clarify')) {
+      const question = card.querySelector(':scope > p');
+      if (question) details.prepend(question);
+    }
   }
-  chatLog.append(card);
   updateDecisionLayout();
 }
 
@@ -130,6 +133,11 @@ export function confirmCard(ev) {
   const card = el(html`<div class="confirm confirm-${ev.kind}"><h4>${ev.title}</h4><p>${ev.text}</p><div data-extra></div><div class="actions"></div></div>`);
   const extra = card.querySelector("[data-extra]");
   const actions = card.querySelector(".actions");
+  card.dataset.decisionId = ev.decision_id || '';
+  if (state.cards[ev.kind]?.nodeType && !state.cards[ev.kind].classList.contains('is-done')) {
+    state.cards[ev.kind].classList.add('is-done');
+    archiveDecision(state.cards[ev.kind]);
+  }
   state.cards[ev.kind] = card;
 
   if (ev.kind === "clarify") {
@@ -181,6 +189,11 @@ export function confirmCard(ev) {
     extra.innerHTML = html`<label class="phone-field">Ваш телефон — агент позвонит вам как продавцу
       <input type="tel" inputmode="tel" placeholder="+7 999 123-45-67" value="${storedPhone()}" data-phone autocomplete="tel"></label>`;
   }
+  if (ev.kind === 'call') {
+    extra.insertAdjacentHTML('beforeend', html`<label class="phone-field">Что уточнить у продавца? Измените или добавьте вопросы, по одному на строку.
+      <textarea data-seller-questions rows="5" maxlength="4500">${(ev.questions || []).map(q => q.question || q.label).join('\n')}</textarea></label>`);
+    collect = () => ({questions: collectQuestions(card)});
+  }
 
   const buttons = {
     red_lines: [["Подтвердить рамки", true, {}], ["Изменить запрос", false, {}]],
@@ -227,6 +240,7 @@ export function confirmCard(ev) {
 /** Клиент решил (событие resolved): карточка закрывается с подписью решения. */
 export function resolved(ev) {
   const card = state.cards[ev.kind];
+  if (ev.decision_id && card?.dataset?.decisionId && ev.decision_id !== card.dataset.decisionId) return;
   if (ev.kind === "selection") {
     stage.querySelectorAll("[data-selection]").forEach((b) => (b.disabled = true));
   } else if (card && !card.classList.contains("is-done")) {
@@ -292,5 +306,9 @@ async function dialSeller(card, label) {
   phone.onEnded = () => {
     if (state.phone === phone && state.call && !state.call.ended) addMsg("note", "Продавец положил трубку.");
   };
-  await decide(card, "call", true, { mode: "phone" }, `${label}: ${formatPhone(number)}`);
+  await decide(card, "call", true, { mode: "phone", questions: collectQuestions(card) }, `${label}: ${formatPhone(number)}`);
+}
+
+function collectQuestions(card) {
+  return (card.querySelector('[data-seller-questions]')?.value || '').split('\n').map(s => s.trim()).filter(Boolean).slice(0,15);
 }

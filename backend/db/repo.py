@@ -60,6 +60,13 @@ def chat_events(db: Session, chat_id: str, after: int = 0) -> list[dict]:
     return [r.payload for r in rows]
 
 
+def last_nonempty_selection(db: Session, chat_id: str) -> dict | None:
+    rows=db.scalars(select(ChatEvent).where(ChatEvent.chat_id==chat_id,ChatEvent.type=='result')
+                    .order_by(ChatEvent.seq.desc()).limit(100))
+    return next((r.payload['data'] for r in rows if r.payload.get('kind')=='selection'
+                 and r.payload.get('data',{}).get('cards')),None)
+
+
 def list_chats(db: Session, vid: str | None, user_id: int | None, limit: int = 50) -> list[dict]:
     """Диалоги этого браузера и пользователя — новые сверху."""
     owners = []

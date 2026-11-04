@@ -187,6 +187,10 @@ def value_rank(x: dict, profile: dict, fp: dict, match: dict, learned: float = 0
     relative = max(weights['relative_min'], min(weights['relative_max'], fp["fair"] / x["price"])) if supported else 1.0
     value = quality * relative / (x["price"] / 1_000_000)
     return {"value_score": round(value, 3), "fit_pct": round(fit * 100),
+            "conditions_confirmed":sum(r['status'] is True for r in checks),
+            "conditions_failed":sum(r['status'] is False for r in checks),
+            "conditions_unknown":sum(r['status'] is None for r in checks),
+            "conditions_total":len(checks),
             "center_km": distance, "center_preferred": distance is not None and distance <= weights['center_radius_km'], "center_requested": bool(profile.get("prefer_center")),
             "market_supported": supported,
             "discount_pct": round((fp["fair"] - x["price"]) / fp["fair"] * 100, 1) if supported else None,

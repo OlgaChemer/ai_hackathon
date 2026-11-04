@@ -69,6 +69,8 @@ async def execute(s, call: ToolCall) -> dict:
             return await a.run(s)  # уже проверенный ввод; повторная догадка не применяется
     replay = (call.name == "confirm_red_lines" and s.red_lines_ok) or (
         call.name == "mortgage_programs" and programs_current(s))
+    if s.requested_action and available(s,s.requested_action) and call.name not in ('update_request',s.requested_action):
+        return {'error':'Сначала выполните явно запрошенную карточку: '+s.requested_action}
     if not replay and not available(s, call.name):
         names = ", ".join(a.name for a in REGISTRY.values() if available(s, a.name))
         hint = ""
@@ -88,7 +90,12 @@ async def execute(s, call: ToolCall) -> dict:
     if a.step and not replay:
         await s.step(a.step)
     try:
-        return await a.run(s, **args)
+        result=await a.run(s, **args)
+        if s.requested_action==call.name:
+            s.requested_action=None
+            s.profile.pop('_requested_action',None)
+            s.remember()
+        return result
     except ActionError as exc:
         return {"error": str(exc)}
     except TypeError:  # модель передала параметры не того вида

@@ -105,7 +105,7 @@ class PolicyLLM(LLMClient):
         if tag == "answer" or (messages and messages[0]["role"] == "system" and "Клиент задал вопрос" in messages[0]["content"]):
             return LLMResponse(text="Сервис безопасных расчётов: деньги уходят продавцу только после регистрации права. "
                                     "Возвращаемся к текущему шагу.")
-        if json_mode:
+        if json_mode or tag == 'request_review':
             return LLMResponse(text=json.dumps(await self.chat_json(messages, tag=tag)))
         if tools is None:
             return LLMResponse(text="Готово. Напишите, что дальше.")

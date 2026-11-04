@@ -242,7 +242,7 @@ function offerCard(c, vote, no) {
       <p class="meta">${meta}</p>
       ${html.raw(params ? html`<p class="meta">${params}</p>` : "")}
       ${html.raw(correctedLine(c))}
-      ${html.raw(c.ranking ? html`<p class="ranking-note">Совпадение проверяемых пожеланий: ${c.ranking.fit_pct}% · ${c.ranking.value_score.toFixed(1)} балла/млн ₽${c.ranking.center_requested ? c.ranking.center_km != null ? ` · ~${c.ranking.center_km} км по прямой до опорной точки центра` : " · близость к центру не проверена" : ""}${c.ranking.discount_pct != null && c.ranking.discount_pct > 0 ? ` · на ${c.ranking.discount_pct}% ниже оценки по аналогам` : ""}</p>` : "")}
+      ${html.raw(c.ranking ? html`<p class="ranking-note">Дополнительные условия: подтверждено ${c.ranking.conditions_confirmed ?? 0} из ${c.ranking.conditions_total ?? c.match?.checks?.length ?? 0}${c.ranking.conditions_unknown ? ` · не проверено ${c.ranking.conditions_unknown}` : ''}${c.ranking.conditions_failed ? ` · не совпало ${c.ranking.conditions_failed}` : ''} · ${c.ranking.value_score.toFixed(1)} балла/млн ₽${c.ranking.center_requested ? c.ranking.center_km != null ? ` · ~${c.ranking.center_km} км по прямой до опорной точки центра` : " · близость к центру не проверена" : ""}${c.ranking.discount_pct != null && c.ranking.discount_pct > 0 ? ` · на ${c.ranking.discount_pct}% ниже оценки по аналогам` : ""}</p>` : "")}
       ${html.raw(c.match ? html`<p class="meta ${c.match.status === "confirmed" ? "" : "missing"}">${c.match.status === "confirmed" ? "Обязательные условия подтверждены" : c.match.status === "rejected" ? "Есть несоответствия условиям" : `Нужно проверить: ${c.match.unknown.join(", ")}`}</p>` : "")}
       ${html.raw(c.match?.checks?.filter((r) => r.source === "cian_description" && r.key.startsWith("poi:")).map((r) => html`<p class="hint">В описании упомянуто: ${r.label}. Расстояние по карте не подтверждено.</p>`).join("") || "")}
 
@@ -285,6 +285,10 @@ export function selection(d, marks) {
     </div>
     ${html.raw(d.learned?.length ? html`<div class="learned"><span>Учёл:</span>${html.raw(d.learned.map((l) => html`<span class="chip">${l}</span>`).join(""))}</div>` : "")}
     ${html.raw(d.cards.some((c) => c.lat && c.lng) ? mapBlock(d.cards) : "")}
+    ${html.raw(d.aggregates?.length ? html`<p class="hint">Расчёт по ${d.total} вариантам: ${d.aggregates.map(a => `${a.function}(${a.field}) = ${a.value == null ? 'нет данных' : Number(a.value).toLocaleString('ru-RU', {maximumFractionDigits:2})}${a.unknown ? `; нет данных у ${a.unknown}` : ''}`).join(' · ')}</p>` : '')}
+    ${html.raw(d.groups?.length ? html`<p class="hint">Группы: ${d.groups.map(g => `${g.value ?? 'нет данных'} — ${g.count}${g.aggregates.map(a => `; ${a.function}(${a.field})=${a.value ?? 'нет данных'}`).join('')}`).join(' · ')}</p>` : '')}
+    ${html.raw(d.liked?.length ? html`<p class="hint">В избранном ${d.liked.length}. Отметки сохраняются отдельно от новых рекомендаций. Чтобы вернуться к ним, напишите «покажи понравившиеся».</p>` : '')}
+    ${html.raw(!d.cards.length ? html`<p class="hint">По текущей команде вариантов нет. Измените условия или попросите показать понравившиеся.</p>` : '')}
     <div class="offers">${html.raw(d.cards.map((c, i) => offerCard(c, vote(c.id), i + 1)).join(""))}</div>
     <div class="sel-actions">
       <button class="btn btn-ghost" data-selection="more">Подобрать ещё с учётом отметок</button>

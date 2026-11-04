@@ -35,7 +35,7 @@ def read_until(client: TestClient, url: str, stop) -> list[dict]:
             if not line.startswith("data: "):
                 continue
             ev = json.loads(line[6:])
-            if ev["type"] == "typing":  # сигнал «агент думает» — не событие ленты
+            if ev["type"] in ("typing", "model_wait"):  # временные сигналы — не события ленты
                 continue
             out.append(ev)
             if stop(ev):

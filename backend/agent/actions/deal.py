@@ -72,8 +72,12 @@ async def call_seller(s, listing_id: str) -> dict:
         raise ActionError("Сначала выясни способ покупки — ask_payment, затем звонок продавцу.")
     if not s.red_lines_ok:
         raise ActionError("Рамки не подтверждены — сначала confirm_red_lines.")
-    if not any(card['id'] == listing_id for card in s.shown):
+    if not any(card['id'] == listing_id for card in s.shown) and listing_id not in s.prefs.liked:
         raise ActionError("Сначала show_selection: звонить можно только по квартире из текущей подборки.")
+    if s.selection_profile_stale:
+        raise ActionError('Сначала show_selection: обнови подборку под новые условия. Сохранённые на экране карточки относятся к прежним условиям.')
+    if listing_id not in s.call_targets:
+        raise ActionError('Клиент ещё не просил звонить по этой квартире. Уточнение фильтра не разрешает звонок; дождись выбора и просьбы звонить.')
     x = _listing(s, listing_id)
     check = legal_check(x)
     s.push("result", step=5, kind="legal", data={"checks": [check], "listings": [card(x, s.search["meta"], s.prefs)]
@@ -98,16 +102,22 @@ async def call_seller(s, listing_id: str) -> dict:
     authority = min(s.profile["budget_max"], x["price"], fp["high"])
     seller = seller_sim.build(x)
     questions = missing_info(x, 3, s.prefs.features)
+    questions += [{'key':f'client_{i}','label':q,'question':q} for i,q in enumerate(s.profile.get('seller_questions') or [])]
     slots = client_slots()
     r = await s.ask(
         "call", "Звонок продавцу",
         f"Звоню по объекту {x['address']}: уточню {', '.join(q['label'] for q in questions)}, поторгуюсь до "
-        f"{fmt(fp['target'])} (без вашего согласия — не выше {fmt(authority)}) и договорюсь о просмотре.",
+        f"{fmt(fp['target'])} (без вашего согласия — не выше {fmt(authority)}) и договорюсь о просмотре. "
+        "Что ещё уточнить у продавца? Ниже можно изменить список вопросов до звонка.",
         listing=x, fair=fp, authority=authority, arguments=bargaining_arguments(x, fp), legal=check,
         questions=questions, seller_name=seller["name"], seller_role=seller["role"], simulated=True, page=page,
     )
     if not r["approved"]:
         return {"called": False, "client_said": r["data"].get("text") or "клиент пропустил эту квартиру"}
+    if 'questions' in r['data']:
+        questions = [{'key':f'client_{i}','label':q,'question':q} for i,q in enumerate(r['data']['questions'])]
+        s.profile['seller_questions'] = list(r['data']['questions'])
+        s.remember()
     mode = r["data"].get("mode") if r["data"].get("mode") in N.LIVE_MODES else "auto"
     neg = N.Negotiation(listing=x, seller=seller, fair=fp, authority=authority, questions=questions, slots=slots, mode=mode)
     s.journal = {"listing_id": x["id"], "base_price": x["price"], "fixed_at": date.today().isoformat(), "url": x.get("url")}

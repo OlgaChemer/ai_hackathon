@@ -6,7 +6,18 @@ from backend.agent import input_frame
 from backend.agent.request_schema import CHANGE_SCHEMA
 
 
-def slots(*, fields=None, criteria=None, places=None, intent="refine"):
+def slots(*, fields=None, criteria=None, places=None, intent="refine", selection=None, call_ids=None, unsupported=None):
+    fields=deepcopy(fields or {})
+    if 'rooms' in fields:
+        rooms=fields.pop('rooms')
+        if rooms==0:fields['studio_requested']=True
+        elif 'rooms_options' not in fields:fields['rooms_options']=[rooms]
+    if 0 in (fields.get('rooms_options') or []):
+        fields['studio_requested']=True
+        fields['rooms_options']=[n for n in fields['rooms_options'] if n!=0]
+    if selection is not None and 'operation' not in selection:
+        selection={'operation':'more' if selection['mode']=='more' else 'rank',
+                   **{k:selection[k] for k in ('scope','limit','sort','aggregates','group_by')}}
     schema = input_frame.schema(CHANGE_SCHEMA)
     return {
         "places": [
@@ -15,7 +26,7 @@ def slots(*, fields=None, criteria=None, places=None, intent="refine"):
         ],
         "fields": {
             **{key: None for key in schema["properties"]["fields"]["properties"]},
-            **(fields or {}),
+            **{k: {'value':v,'source':''} if v is not None else None for k,v in (fields or {}).items()},
         },
         "criteria": {
             **{key: None for key in schema["properties"]["criteria"]["properties"]},
@@ -24,16 +35,24 @@ def slots(*, fields=None, criteria=None, places=None, intent="refine"):
         "question": "",
         "options": [],
         "intent": intent,
+        "selection": selection,
+        "unsupported": unsupported or [],
+        "call_ids": call_ids,
     }
 
 
 def input_reply(text, changes=None, *, intent="refine", profile=None):
     """Компактные фикстуры параметров превращаются в настоящий внешний контракт только в тестах."""
     changes, profile = deepcopy(changes or {}), profile or {}
+    if 'rooms' in changes and 'rooms_options' not in changes:
+        changes['rooms_options']=[changes['rooms']]
+    if 0 in (changes.get('rooms_options') or []):
+        changes['studio_requested']=True
+        changes['rooms_options']=[n for n in changes['rooms_options'] if n!=0]
     result = slots(intent=intent)
     for key in result["fields"]:
         if key in changes:
-            result["fields"][key] = changes[key]
+            result["fields"][key] = {"value":changes[key],"source":text} if changes[key] is not None else None
     preferred = set(changes.get("soft_criteria", profile.get("soft_criteria") or []))
     for key in result["criteria"]:
         if key in changes:

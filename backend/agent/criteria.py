@@ -70,6 +70,13 @@ def evaluate(profile: dict, x: dict) -> dict:
                 source, note = 'cian_description', quote
                 # Упоминание парка в рекламе не доказывает расстояние до него.
         add(f'poi:{k}', geo.POI[k][0], status, source, note, evidence.get('checked_at'))
+    from .listing_query import filter_checks
+    rows.extend(filter_checks(x, profile.get('filters') or []))
+    if profile.get('center_required'):
+        from .pricing import center_distance
+        distance = center_distance(x)
+        add('center_required','центр: не дальше 5 км по прямой',distance <= 5 if distance is not None else None,
+            'map', f'{distance} км' if distance is not None else None)
     failed = [r['label'] for r in rows if r['required'] and r['status'] is False]
     unknown = [r['label'] for r in rows if r['required'] and r['status'] is None]
     score = sum(6 if r['status'] is True else -4 if r['status'] is False else 0 for r in rows if not r['required'])
@@ -82,4 +89,6 @@ def match(x, prefs):
 
 
 def selectable(x, prefs):
-    return match(x, prefs)['status'] != 'rejected'
+    result = match(x, prefs)
+    return result['status'] != 'rejected' and not any(
+        row['required'] and row['key'].startswith('filter:') and row['status'] is None for row in result['checks'])

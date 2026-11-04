@@ -20,7 +20,7 @@ from . import actions, guard, prompts, understanding
 from .features import FEATURES
 from .numbers import fmt
 from .profile import missing_required
-from .workflow import next_search_action
+from .workflow import next_search_action,available
 from .session import close_dangling_calls
 
 MAX_ACTIONS_IN_ROW = 14  # действий подряд без ответа клиенту — дальше модель должна заговорить с клиентом
@@ -57,6 +57,16 @@ def state_brief(s) -> str:
                      + (", цену подтвердил клиент" if lid in s.agreed else "") + (", квартира выбрана" if s.chosen == lid else ""))
     if s.request_intent:
         lines.append("Проверенное намерение клиента: " + s.request_intent + ".")
+    if s.call_targets:
+        lines.append('Клиент просил звонить только по ID: ' + ', '.join(s.call_targets))
+    if s.selection_query:
+        lines.append('Проверенный запрос к подборке: ' + json.dumps(s.selection_query, ensure_ascii=False))
+    if s.profile.get('seller_questions'):
+        lines.append('Дополнительные вопросы продавцу: ' + json.dumps(s.profile['seller_questions'],ensure_ascii=False))
+    if s.profile.get('_unsupported_conditions'):
+        lines.append('Система НЕ проверяет эти пожелания: ' + json.dumps(s.profile['_unsupported_conditions'],ensure_ascii=False))
+    if s.last_issue:
+        lines.append('Последняя ошибка системы: '+s.last_issue['message'])
     return "\n".join(lines)
 
 
@@ -93,8 +103,10 @@ async def run(s) -> None:
                                        {"role":"user","content":checked['client_said']}])
                     s.remember()
                     continue
+            if s.requested_action and not available(s,s.requested_action):
+                s.requested_action=None;s.profile.pop('_requested_action',None);s.remember()
             intake = next_search_action(s)
-            if intake in ("confirm_red_lines", "ask_payment"):
+            if intake in ("confirm_red_lines", "ask_payment") or (intake and intake==s.requested_action):
                 forced = intake
             if forced:
                 resp = LLMResponse("", [ToolCall(forced, {}, f"progress_{uuid.uuid4().hex[:8]}")])
@@ -175,7 +187,7 @@ async def run(s) -> None:
                 turn = Turn(s.id, settings.agent_turn_timeout_s, s.signal)
                 continue
             if isinstance(exc, understanding.UnderstandingError):
-                text = "Не удалось надёжно проверить условия. Уточните запрос — прежние условия сохранены."
+                text = understanding.failed_input(s,exc)
             elif isinstance(exc, LLMBusy):
                 text = "Сейчас много обращений, модель занята. Напишите чуть позже — продолжу с сохранёнными условиями."
             elif isinstance(exc, LLMError):
