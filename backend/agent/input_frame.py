@@ -1,5 +1,6 @@
 """Типизированный ввод: модель понимает речь, код связывает условие с его приоритетом."""
 from copy import deepcopy
+from difflib import SequenceMatcher
 
 from . import validation
 from .criteria import CRITERIA_KEYS, SCALARS
@@ -44,10 +45,23 @@ def source_words(messages):
         for word in message['text'].split() if word.strip(punctuation)))
 
 
-def schema(changes, messages=None):
+def place_lemmas(source,words):
+    """Привязка сущности к словарю, не разбор команды/намерения пользователя."""
+    raw=source.casefold().replace('ё','е')
+    scores={word:SequenceMatcher(None,raw,word.casefold().replace('ё','е')).ratio()
+            for word in words if len(raw)>=2 and raw[:3]==word.casefold().replace('ё','е')[:3]}
+    best=max(scores.values(),default=0)
+    return [word for word,score in scores.items() if score==best and score>=.6]
+
+
+def catalog_words():
     from ..sources import SUPPORTED_CITIES
-    place_words = sorted({word for city in SUPPORTED_CITIES for word in city.split()} |
-                         {'Подмосковье','Питер','СПб','МСК','МО'})
+    return sorted({word for city in SUPPORTED_CITIES for word in city.split()} |
+                  {'Подмосковье','Питер','СПб','МСК','МО'})
+
+
+def schema(changes, messages=None):
+    place_words = catalog_words()
     priorities={'type':'string','enum':['required','preferred','remove','unmentioned']}
     criteria={}
     labels={**SCALARS,**{f'feature:{k}':v[0] for k,v in FEATURES.items()},**{f'poi:{k}':v[0] for k,v in geo.POI.items()}}
@@ -61,12 +75,12 @@ def schema(changes, messages=None):
         criteria[key]['description']=labels[key]+'. Не названо клиентом — null. Без предположительных значений.'
     source={'type':'string','maxLength':80,'description':'Выбери одно исходное слово из enum, сохранив его форму и регистр.'}
     if messages is not None:
-        source['enum']=source_words(messages)
+        source['enum']=[word for word in source_words(messages) if place_lemmas(word,place_words)]
     field_source = {'type':'string','maxLength':1000,'description':'Буквальное слово нового ввода, подтверждающее значение; либо всё исходное сообщение. Не цитата из профиля.'}
     if messages is not None:
         field_source['enum'] = list(dict.fromkeys([*source_words(messages), *(row['text'] for row in messages)]))
     return object_schema({
-        'places':{'type':'array','maxItems':3,'description':'Все явно названные допустимые города/области, включая варианты через «или». Москва и Подмосковье — два элемента. При неизменном городе пусто. Центр, школа, новостройка, срок сдачи НЕ территории.',
+        'places':{'type':'array','maxItems':0 if messages is not None and not source['enum'] else 3,'description':'Все явно названные допустимые города/области, включая варианты через «или». Москва и Подмосковье — два элемента. При неизменном городе пусто. Центр, школа, новостройка, срок сдачи НЕ территории.',
             'items':object_schema({'words':{'type':'array','minItems':1,'maxItems':8,'items':object_schema({
                 'source':source,
                 'lemma':{'type':'string','enum':place_words,'description':'Слово названия города в начальной форме. Не добавляй отсутствующие слова. Неподдержанный город — предметный question и places=[]; не подставляй похожий.'}})}})},
@@ -83,6 +97,31 @@ def schema(changes, messages=None):
         'options':{'type':'array','maxItems':5,'items':{'type':'string','maxLength':100}},
         'intent':{'type':'string','enum':INTENTS,'description':'selection — обработать текущие результаты, сравнить, оставить N; call — явно позвонить; seller_questions — добавить вопросы продавцу; refine — фильтры; question — информация; search — поиск; continue — продолжить; hold — стоп.'},
     })
+
+
+def sparse_schema(changes,messages):
+    value=schema(changes,messages)
+    value['required']=['intent']
+    value['properties']['fields']['required']=[]
+    value['properties']['criteria']['required']=[]
+    value['properties']['selection']['required']=['operation']
+    if not value['properties']['places']['items']['properties']['words']['items']['properties']['source']['enum']:
+        # Не передаём недопустимый enum=[]; maxItems=0 уже запрещает территории.
+        value['properties']['places']['items']['properties']['words']['items']['properties']['source'].pop('enum')
+    return value
+
+
+def complete_frame(result,changes_schema):
+    if not isinstance(result,dict):raise ValueError('Ожидался объект смысла реплики')
+    value={'fields':None,'criteria':None,'places':[],'selection':None,'call_ids':None,'unsupported':[],
+           'question':'','options':[],**deepcopy(result)}
+    if value['fields'] is not None:
+        value['fields']={**{key:None for key in basic_fields(changes_schema)},**value['fields']}
+    if value['criteria'] is not None:value['criteria']={**{key:None for key in CRITERIA_KEYS},**value['criteria']}
+    if isinstance(value['selection'],dict):
+        op=value['selection'].get('operation')
+        value['selection']={'scope':'shown' if op=='compare' else 'all','limit':None,'sort':None,'aggregates':None,'group_by':None,**value['selection']}
+    return value
 
 
 def decode(frame, profile, payload, changes_schema):
@@ -116,6 +155,10 @@ def decode(frame, profile, payload, changes_schema):
         return {'intent': intent, 'decision': 'unchanged', 'changes': {}, 'question': '', 'options': []}
     if intent == 'hold' and (frame['selection'] is not None or frame['call_ids'] is not None):
         raise ValueError('Остановка не разрешает поиск или звонок')
+    if intent=='refine' and not (any(v is not None for v in frame['fields'].values()) or
+            any(v is not None for v in frame['criteria'].values()) or frame['places'] or
+            frame['selection'] or frame['unsupported'] or frame['question'].strip()):
+        raise ValueError('Пустое уточнение: укажи названное изменение или конкретный вопрос о неясности. Если изменений нет, выбери continue/other/question.')
     changes = {}
     for key,slot in frame['fields'].items():
         if slot is None:
@@ -180,6 +223,7 @@ def decode(frame, profile, payload, changes_schema):
     choices = [item for item in payload['messages'][-1].get('options', []) if item in payload['supported_cities']]
     source_tokens = {word.casefold() for word in source_words(payload['messages'])}
     places = []
+    lemma_words=catalog_words()
     question, options = frame['question'], frame['options']
     for row in frame['places']:
         seen = set()
@@ -188,6 +232,10 @@ def decode(frame, profile, payload, changes_schema):
             raw, lemma = word['source'].strip().casefold(), word['lemma'].strip()
             if raw not in source_tokens or raw in seen or not lemma or any(char.isspace() for char in lemma):
                 valid = False
+            from ..sources import normalize_city
+            if lemma not in place_lemmas(word['source'],lemma_words):
+                if not (normalize_city(word['source']) and normalize_city(word['source'])==normalize_city(lemma)):
+                    valid=False
             seen.add(raw)
         name = ' '.join(word['lemma'].strip() for word in row['words'])
         normalized = name.casefold()

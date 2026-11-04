@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from collections import Counter
 
 from ... import geo, sources
 from ...config import settings
@@ -447,5 +448,10 @@ async def offer_search_alternatives(s):
         options = ["Повторить поиск", *options]
     text = ("Не удалось получить выдачу от источника — это не означает, что квартир нет. Можно повторить запрос или изменить условия."
             if unavailable else "Подходящих подтверждённых вариантов пока нет. Что готовы рассмотреть? Бюджет без вашего решения не увеличу.")
+    if not unavailable:
+        rejected=Counter(label for x in s.search.get('listings',[]) for label in C.evaluate(s.profile,x)['failed'])
+        unknown=Counter(label for x in s.search.get('listings',[]) for label in C.evaluate(s.profile,x)['unknown'])
+        if rejected:text='Среди полученных объявлений не нашёл подтверждённых совпадений. Чаще всего не выполнено: '+ '; '.join(label for label,_ in rejected.most_common(2))+'. Какое условие готовы изменить?'
+        elif unknown:text='Не могу подтвердить совпадения: в объявлениях не хватает данных для проверки — '+ '; '.join(label for label,_ in unknown.most_common(2))+'. Можно сохранить прежние карточки или изменить условие.'
     r = await s.ask("clarify", "Источник недоступен" if unavailable else "Расширить поиск?", text, chips=options)
     return {"client_said": r["data"].get("text", ""), "hint": "запиши только выбранное изменение через update_request и повтори поиск"}

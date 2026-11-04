@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 
-from ..llm import LLMError
+from ..llm import LLMError,Tool,parse_json_loose
 from ..llm.base import StructuredOutputError
 from ..runtime import Turn, record
 from ..config import settings
@@ -11,12 +11,12 @@ from . import guard, validation, input_frame
 from .request_schema import CHANGE_SCHEMA
 from .listing_query import FIELDS
 
-SYSTEM = """Разбери новый ввод покупателя квартиры строго по input_schema. Ничего не выполняй.
+SYSTEM = """Разбери новый ввод покупателя квартиры одним вызовом interpret_input. Ничего не выполняй.
 messages — только ещё не обработанные реплики; recent_dialogue — контекст, не источник новых условий.
 Более позднее уточнение дополняет/отменяет прежнее. Неназванное сохраняется. Не возвращай snapshot profile.
 
 УСЛОВИЯ
-fields: null — не названо; иначе {value: значение, source: буквальное слово/полное новое сообщение из enum}.
+fields содержит только изменённые именованные поля: {имя: {value: значение, source: буквальная цитата нового сообщения}}.
 Если условия не меняются (сортировка, количество, сравнение, статистика, новые варианты),
 ВЕСЬ объект fields=null и ВЕСЬ criteria=null. Не заполняй их неназванными нулями/пустыми списками.
 Суммы в рублях. rooms_options — ВСЕ допустимые комнатности 1–5, диапазон 1–2 = [1,2].
@@ -81,7 +81,7 @@ unsupported — явно запрошенное условие вне катал
 При выборе предложенной альтернативы unsupported=[]: код сохраняет отметку о непроверенном условии.
 При явной отмене action=remove, text — прежнее условие из workflow.unsupported_conditions.
 При новом неподдержанном условии intent=refine/search/hold. Если неподдержанного нет, unsupported=[].
-Верни JSON строго по схеме. Не выдавай разрешений на деньги/звонки/сделки и проценты уверенности.
+Верни один вызов interpret_input со sparse-аргументами по схеме функции. Не выдавай разрешений на деньги/звонки/сделки и проценты уверенности.
 """
 
 class UnderstandingError(LLMError):
@@ -137,9 +137,9 @@ async def prepare(s):
         return s.request_review
     from .. import sources
     base_profile=deepcopy(s.profile)
-    contract=input_frame.schema(CHANGE_SCHEMA, inputs)
+    contract=input_frame.sparse_schema(CHANGE_SCHEMA, inputs)
     payload={'supported_cities':sources.SUPPORTED_CITIES,'ambiguous_catalog_names':catalog_ambiguities(sources.SUPPORTED_CITIES),
-             'messages':inputs,'profile':{k:v for k,v in base_profile.items() if not k.startswith('_')},'input_schema':contract,
+             'messages':inputs,'profile':{k:v for k,v in base_profile.items() if not k.startswith('_')},
              'listing_fields':{key: {'type':v[0],'label':v[1]} for key,v in FIELDS.items()},
              'recent_dialogue':dialogue_context(s),
              'workflow':{'has_search':s.search is not None,'has_selection':bool(s.shown),'has_calls':bool(s.calls),'chosen':bool(s.chosen),
@@ -154,7 +154,14 @@ async def prepare(s):
         if error:instruction+='\nПредыдущий ответ не прошёл проверку формата: '+error+'. Исправь поля, смысл не угадывай.'
         messages=[{'role':'system','content':instruction},guard.data_message('request_review',payload)]
         try:
-            result=await s.llm.chat_json(messages,tag='request_review',temperature=.01,max_tokens=3500,json_schema=contract)
+            response=await s.llm.chat(messages,tools=[Tool('interpret_input','Описать только смысл нового ввода: изменения профиля, цель операции чтения, вопрос или уточнение. Не выполняет бизнес-действий.',contract)],
+                                      tag='request_review',temperature=.01,max_tokens=2500)
+            if response.tool_calls:
+                if len(response.tool_calls)!=1 or response.tool_calls[0].name!='interpret_input':
+                    raise ValueError('Ожидался один смысловой результат interpret_input')
+                result=response.tool_calls[0].arguments
+            else:result=parse_json_loose(response.text)
+            result=input_frame.complete_frame(result,CHANGE_SCHEMA)
             result = input_frame.decode(result, payload['profile'], payload, CHANGE_SCHEMA)
             validation.validate(result['changes'], CHANGE_SCHEMA)
             if not guard.input_verdict(result['changes']).ok or guard.output(result['changes'], limit=False) != result['changes']:

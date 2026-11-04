@@ -398,13 +398,13 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(s.profile['city'],'Самара')
         self.assertEqual(len(s.llm.seen),2)
 
-    async def test_missing_required_metadata_requires_one_repair(self):
+    async def test_sparse_response_does_not_need_unused_question_metadata(self):
         value=slots(places=['Казань'])
         del value['question'],value['options']
         s=self.agent('Казань',value,slots(places=['Казань']))
         await U.ensure(s)
         self.assertEqual(s.profile['city'],'Казань')
-        self.assertEqual(len(s.llm.seen),2)
+        self.assertEqual(len(s.llm.seen),1)
 
     async def test_missing_actual_clarification_question_still_fails_closed(self):
         text = 'Новгород'
