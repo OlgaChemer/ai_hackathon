@@ -116,6 +116,18 @@ def catalog_ambiguities(cities):
     return {word: names for word, names in parts.items() if len(names) > 1}
 
 
+def dialogue_context(s):
+    rows=[{'role':e['role'],'text':e['text']} for e in s.history
+          if e.get('type')=='message' and e.get('role') in ('user','agent')]
+    if sum(row['role']=='user' for row in rows)<2:
+        # После перезапуска история событий ещё не загружена в Session,
+        # но сохранённый разговор уже есть. Он нужен для коротких исправлений.
+        memory=[{'role':'agent' if m['role']=='assistant' else 'user','text':m['content']}
+                for m in s.messages if m.get('role') in ('user','assistant') and m.get('content')]
+        rows=memory+[row for row in rows if not memory or row!=memory[-1]]
+    return rows[-8:]
+
+
 async def prepare(s):
     """Один принятый разбор на сообщение; предложения инструментов не служат источником пожеланий."""
     inputs=[x for x in s.request_inputs if x['seq'] > s.request_review_seq]
@@ -129,8 +141,7 @@ async def prepare(s):
     payload={'supported_cities':sources.SUPPORTED_CITIES,'ambiguous_catalog_names':catalog_ambiguities(sources.SUPPORTED_CITIES),
              'messages':inputs,'profile':{k:v for k,v in base_profile.items() if not k.startswith('_')},'input_schema':contract,
              'listing_fields':{key: {'type':v[0],'label':v[1]} for key,v in FIELDS.items()},
-             'recent_dialogue':[{'role':e['role'],'text':e['text']} for e in s.history
-                                if e.get('type')=='message' and e.get('role') in ('user','agent')][-8:],
+             'recent_dialogue':dialogue_context(s),
              'workflow':{'has_search':s.search is not None,'has_selection':bool(s.shown),'has_calls':bool(s.calls),'chosen':bool(s.chosen),
                          'selection_query':s.selection_query or s.profile.get('_selection_query'),
                          'unsupported_conditions':s.profile.get('_unsupported_conditions') or [],
@@ -186,9 +197,11 @@ async def ensure(s):
     for item in review.get('unsupported') or []:
         if item['action'] == 'remove':
             unsupported = [text for text in unsupported if text != item['text']]
-        elif item['text'] not in unsupported:
-            unsupported.append(item['text'])
-            additions.append(item['text'])
+        else:
+            if item['text'] not in unsupported:
+                unsupported.append(item['text'])
+            if item['text'] not in additions:
+                additions.append(item['text'])
     if review.get('unsupported'):
         s.profile['_unsupported_conditions'] = unsupported
     if additions:
