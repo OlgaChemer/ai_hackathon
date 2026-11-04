@@ -128,6 +128,26 @@ class ReadingAndRecovery(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('recent_dialogue',payload)
         self.assertEqual([r['text'] for r in payload['messages']],[text])
 
+    async def test_rank_route_still_applies_a_new_delivery_condition(self):
+        s=self.agent();s.shown=list(s.search['pool'])
+        text='Сдача именно в 2027 году, покажи три самых просторных.'
+        filters=[{'field':'delivery_year','op':'eq','values':['2027'],'priority':'required'}]
+        frame=slots(fields={'filters':filters})
+        frame['fields']['filters']['source']=text
+        values={k:v for k,v in frame.items() if k not in ('intent','call_ids','question','options','selection')}
+        class SplitModel:
+            async def chat(self,messages,**kwargs):
+                if kwargs['tag']=='request_review':
+                    return LLMResponse('',[ToolCall('read_selection',read_args(limit=3,count_source='три'))])
+                return LLMResponse(json.dumps(values,ensure_ascii=False))
+        s.llm=SplitModel()
+        event=s.push('message',role='user',text=text);s.accept_request(text,event['seq'])
+        review=await U.prepare(s)
+        self.assertEqual(review['intent'],'refine')
+        self.assertEqual(review['changes']['filters'],filters)
+        self.assertEqual(review['selection']['limit'],3)
+        self.assertEqual(review['selection']['sort'],[{'field':'area','direction':'desc'}])
+
     async def test_partial_city_is_a_specific_question_not_an_internal_error(self):
         text='1-2 комнаты ближе к центральной улице нижнего'
         frame=slots(places=['Нижний'],fields={'rooms_options':[1,2]})

@@ -1,12 +1,13 @@
 """Типизированный ввод: модель понимает речь, код связывает условие с его приоритетом."""
 from copy import deepcopy
 from difflib import SequenceMatcher
+import re
 
 from . import validation
 from .criteria import CRITERIA_KEYS, SCALARS
 from .features import FEATURES
 from .. import geo
-from .listing_query import validate_filters
+from .listing_query import FIELDS,validate_filters
 from . import selection_request
 
 EXCLUDED = {'city','cities','rooms','features','poi','soft_criteria','clear_criteria', *SCALARS}
@@ -187,6 +188,20 @@ def decode(frame, profile, payload, changes_schema):
         raise ValueError('selection меняет выдачу, не профиль. Неназванные поля '+', '.join(changes)+' должны быть null; количество — selection.limit. Явные новые условия требуют refine')
     if 'filters' in changes:
         validate_filters(changes['filters'])
+        # Проверка буквальных чисел — не классификация намерения. Модель
+        # не вправе добавлять 2026 год или радиус 3 км к запросу с бюджетом
+        # 30 млн. Словесные числа остаются задачей смыслового разбора.
+        literals=[float(n.replace(' ','').replace('\u00a0','').replace(',','.'))
+                  for text in input_texts for n in re.findall(r'(?<!\w)\d+(?:[ \u00a0]\d{3})*(?:[.,]\d+)?',text)]
+        if literals:
+            supported={n*scale for n in literals for scale in (1,1000,1_000_000,1_000_000_000)}
+            for item in changes['filters']:
+                if item['priority']=='remove':
+                    continue
+                if FIELDS[item['field']][0]!='number':continue
+                for value in item['values']:
+                    if float(value) not in supported:
+                        raise ValueError('Неназванный числовой фильтр '+item['field']+'='+value+': такого числа нет в новом сообщении. Убери предположительный фильтр.')
     if frame['call_ids'] is not None and intent != 'call':
         raise ValueError('Звонок требует отдельного явного намерения клиента')
     soft = set(profile.get('soft_criteria') or [])
