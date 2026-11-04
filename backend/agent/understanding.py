@@ -102,6 +102,20 @@ read_selection(operation:compare,scope:shown,limit:null,count_source:null,order_
 Верни один вызов смысловой функции по её схеме. Не выдавай разрешений на деньги/звонки/сделки и проценты уверенности.
 """
 
+# Входной разбор возвращает данные, не вызывает бизнес-инструменты.
+# Полная схема нужна провайдеру: пропуск optional-полей терял части составных
+# запросов даже при корректном выборе намерения.
+STRUCTURED_SYSTEM='''Верни один JSON-объект по схеме: intent, fields, criteria, places, selection, unsupported, call_ids, question, options.
+Не вызывай функции. Заполни ВСЕ явно названные условия вместе; неназванное null/пусто.
+fields: объект слотов {value,source}, criteria: обязательность; places: исходные слова города и их начальные формы.
+selection: operation rank/compare/more/analyze, scope all/shown/liked, limit, sort [{field,direction}], aggregates, group_by.
+selection не содержит фильтров; новое условие находится в fields/criteria и intent=refine.
+Один отбор/сравнение не меняет поля профиля. Сортировка null сохраняет прежнюю только при изменении одного количества.
+«4 а не 3» меняет limit на4; «три выгодных» -> limit3 и value_score desc, не прежняя площадь.
+''' + SYSTEM[SYSTEM.index('messages —'):SYSTEM.index('Примеры формы:')]+'''
+Верни JSON по схеме. Не выдавай согласий на звонки, деньги или сделку.
+'''
+
 class UnderstandingError(LLMError):
     """Не удалось надёжно проверить сообщение; неподтверждённые изменения не применяются."""
 
@@ -225,8 +239,11 @@ async def prepare(s):
         return s.request_review
     from .. import sources
     base_profile=deepcopy(s.profile)
-    contract=input_frame.sparse_schema(CHANGE_SCHEMA, inputs)
-    tools=semantic_tools(contract,inputs,s.profile.get('_unsupported_conditions') or [],bool(s.shown or s.search))
+    contract=input_frame.schema(CHANGE_SCHEMA, inputs)
+    quotes=list(dict.fromkeys([*input_frame.source_words(inputs),*(x['text'] for x in inputs),*(s.profile.get('_unsupported_conditions') or [])]))
+    contract['properties']['unsupported']['items']['properties']['text']['enum']=quotes
+    if contract['properties']['places']['maxItems']==0:
+        contract['properties']['places']['items']['properties']['words']['items']['properties']['source'].pop('enum',None)
     payload={'supported_cities':sources.SUPPORTED_CITIES,'ambiguous_catalog_names':catalog_ambiguities(sources.SUPPORTED_CITIES),
              'messages':inputs,'profile':{k:v for k,v in base_profile.items() if not k.startswith('_')},
              'listing_fields':{key: {'type':v[0],'label':v[1]} for key,v in FIELDS.items()},
@@ -239,16 +256,13 @@ async def prepare(s):
     revision=s.client_revision
     error=None
     for attempt in range(2):
-        instruction=SYSTEM+'\n'+guard.POLICY
+        instruction=STRUCTURED_SYSTEM+'\n'+guard.POLICY
         if error:instruction+='\nПредыдущий ответ не прошёл проверку формата: '+error+'. Исправь поля, смысл не угадывай.'
         messages=[{'role':'system','content':instruction},guard.data_message('request_review',payload)]
         try:
-            response=await s.llm.chat(messages,tools=tools,
+            response=await s.llm.chat(messages,json_schema=contract,
                                       tag='request_review',temperature=.01,max_tokens=2500)
-            if response.tool_calls:
-                if len(response.tool_calls)!=1:raise ValueError('Ожидался один смысловой результат')
-                result=frame_from_call(response.tool_calls[0],tools,inputs)
-            else:result=parse_json_loose(response.text)
+            result=parse_json_loose(response.text)
             result=input_frame.complete_frame(result,CHANGE_SCHEMA)
             result = input_frame.decode(result, payload['profile'], payload, CHANGE_SCHEMA)
             validation.validate(result['changes'], CHANGE_SCHEMA)

@@ -173,6 +173,14 @@ class ReadingAndRecovery(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(workflow.available(s,'show_selection'))
         self.assertIsNone(workflow.next_search_action(s))
 
+    def test_ready_profile_uses_budget_card_instead_of_repeating_a_question(self):
+        from backend.agent import workflow
+        s=self.agent();s.red_lines_ok=False;s.search=None;s.request_intent='refine'
+        self.assertFalse(workflow.available(s,'ask_client'))
+        self.assertEqual(workflow.next_search_action(s),'confirm_red_lines')
+        s.profile['budget_max']=None
+        self.assertTrue(workflow.available(s,'ask_client'))
+
     def test_sparse_profile_changes_do_not_require_other_conditions(self):
         inputs=[{'text':'Ищу 1–2 комнаты','seq':1}]
         tools=U.semantic_tools(input_frame.sparse_schema(CHANGE_SCHEMA,inputs),inputs,[])

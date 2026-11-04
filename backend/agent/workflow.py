@@ -34,7 +34,7 @@ def available(s, name: str) -> bool:
         or any(x["seq"] > s.request_review_seq for x in s.request_inputs),
         # Подтверждение рамок завершает вводную анкету. Если поиск ничего не даст,
         # снова разрешаем обсудить изменение условий.
-        "ask_client": not ready or not s.red_lines_ok or s.search is not None,
+        "ask_client": not ready or s.search is not None,
         "confirm_red_lines": ready and not s.red_lines_ok,
         "market_prices": bool(p.get("city") and p.get("rooms") is not None),
         "ask_payment": not p.get("payment"),

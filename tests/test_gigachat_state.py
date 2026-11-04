@@ -77,7 +77,7 @@ class GigaChatStateTest(unittest.TestCase):
     def test_confirmed_request_moves_to_search_before_optional_questionnaire(self):
         s = session.create_session('Квартира', ScriptedLLM())
         s.profile = {'city': 'Москва', 'rooms': 2, 'budget_max': 17_500_000, 'payment': 'mortgage_ready'}
-        self.assertIn('ask_client', [t.name for t in actions.tools(s)])
+        self.assertNotIn('ask_client', [t.name for t in actions.tools(s)])
         s.red_lines_ok = True
         self.assertNotIn('ask_client', [t.name for t in actions.tools(s)])
         self.assertIn('ask_family', [t.name for t in actions.tools(s)])
