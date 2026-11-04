@@ -51,6 +51,12 @@ async def main(base):
         result=await d.round()
         assert result['outcome']=='selection' and len(d.cards)==3,result
         reports.append({'input':'remove unsupported condition','cards':3})
+        start=len(d.messages)
+        await d.send('Нужна собственная сауна внутри квартиры.')
+        result=await d.round()
+        assert result['outcome']=='clarify',result
+        assert any('не умею' in message.casefold() and 'саун' in message.casefold() for message in d.messages[start:]),d.messages[start:]
+        reports.append({'input':'different unsupported condition: sauna','honest_limitation':True})
         print(json.dumps({'passed':len(reports)},ensure_ascii=False),flush=True)
     finally:
         await d.close()

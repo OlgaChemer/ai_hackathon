@@ -188,8 +188,18 @@ async def ensure(s):
     from .actions.request import apply_request
     if review.get('selection') is not None:
         s.selection_scope_ids = [x['id'] for x in s.shown]
-    if review['decision'] == 'apply':
-        result = apply_request(s, deepcopy(review['changes']))
+    changes = deepcopy(review['changes'])
+    has_unsupported = any(item['action']=='add' for item in review.get('unsupported') or [])
+    if has_unsupported:
+        # Неподдержанное условие нельзя молча подменить похожим проверяемым
+        # (бассейн внутри квартиры -> фитнес рядом). Существующий профиль
+        # сохраняем целиком; при первом входе принимаем только недостающие
+        # базовые факты, чтобы после выбора альтернативы не спрашивать их заново.
+        basic={'city','cities','rooms','rooms_options','budget_max','payment','housing'}
+        changes={key:value for key,value in changes.items() if key in basic
+                 and s.profile.get(key) in (None, [], '')}
+    if review['decision'] == 'apply' and changes:
+        result = apply_request(s, changes)
     else:
         result = None
     s.request_review_seq = review['seq']
@@ -215,7 +225,8 @@ async def ensure(s):
         explanation = ('Пока не умею надёжно проверять условие «' + '», «'.join(additions)
                        + '» по данным объявлений. Это не означает, что таких квартир нет. '
                        'Могу отобрать самые выгодные предложения по оценке и цене или самые просторные квартиры; '
-                       'это условие останется непроверенным.')
+                       'это условие останется непроверенным. '
+                       'Прежние параметры подбора сохранены; новые дополнительные фильтры из этой реплики не применяю.')
         await s.say(explanation)
         answer = await s.ask('clarify','Как продолжить?',
                              'Какой вариант вам показать? Остальные условия сохранены.',

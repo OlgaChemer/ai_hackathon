@@ -64,7 +64,8 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_unsupported_condition_pauses_and_explains_without_claiming_absence(self):
         text='Хочу квартиру где внутри бассейн'
-        frame=slots(intent='refine',unsupported=[{'text':'внутри бассейн','source':text,'action':'add'}])
+        frame=slots(intent='refine',criteria={'poi:fitness':'required'},fields={'children':0},
+                    unsupported=[{'text':'внутри бассейн','source':text,'action':'add'}])
         s=self.agent(text,frame,profile={'city':'Москва','rooms':2,'budget_max':20_000_000})
         s.call_targets=['old']
         s.ask=AsyncMock(return_value={'approved':None,'data':{'text':'Самые просторные'}})
@@ -73,11 +74,36 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(s.profile['rooms'],2)
         self.assertEqual(s.request_intent,'hold')
         self.assertFalse(s.call_targets)
+        self.assertNotIn('fitness',s.profile['poi'])
+        self.assertIsNone(s.profile['children'])
         self.assertIn('внутри бассейн',s.profile['_unsupported_conditions'])
         message=next(e['text'] for e in s.history if e.get('role')=='agent')
         self.assertIn('Пока не умею',message)
         self.assertIn('не означает, что таких квартир нет',message)
         self.assertIn('самые просторные',message)
+
+    async def test_unsupported_initial_request_saves_known_facts_without_starting_search(self):
+        from backend.agent.workflow import next_search_action
+        text='Москва, двушка до 20 млн за свои, внутри бассейн'
+        frame=slots(places=['Москва'],fields={'rooms':2,'budget_max':20_000_000,'payment':'cash'},intent='search',
+                    unsupported=[{'text':'внутри бассейн','source':text,'action':'add'}])
+        s=self.agent(text,frame)
+        s.ask=AsyncMock(return_value={'approved':None,'data':{'text':'Самые выгодные'}})
+        await U.ensure(s)
+        self.assertEqual((s.profile['city'],s.profile['rooms'],s.profile['budget_max']),('Москва',2,20_000_000))
+        self.assertIsNone(next_search_action(s))
+        self.assertIsNone(s.search)
+
+    async def test_unsupported_condition_can_be_removed_during_a_selection_command(self):
+        from backend.agent.listing_query import default_query
+        text='Бассейн больше не нужен, покажи три лучших'
+        frame=slots(intent='selection',selection={**default_query(),'limit':3},
+                    unsupported=[{'text':'внутри бассейн','source':text,'action':'remove'}])
+        s=self.agent(text,frame,profile={'city':'Москва','rooms':2})
+        s.profile['_unsupported_conditions']=['внутри бассейн']
+        await U.ensure(s)
+        self.assertFalse(s.profile['_unsupported_conditions'])
+        self.assertEqual(s.selection_query['limit'],3)
 
     async def test_criterion_and_priority_are_applied_together_in_one_call(self):
         s=self.agent('Парк желателен, первый и последний этаж запрещены.', slots(criteria={'poi:park':'preferred','not_first_floor':'required','not_last_floor':'required'}))
