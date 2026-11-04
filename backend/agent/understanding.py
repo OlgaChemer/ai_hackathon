@@ -18,9 +18,11 @@ clarify_input — один конкретный вопрос, если смыс�
 informational_question — информационный вопрос, в том числе «что непонятно/что сломалось».
 call_intent — явная просьба звонить; pause_request — явная пауза/«пока не звони».
 unsupported_condition — условие вне проверяемых параметров; continue_input/other_input — продолжить/остальное.
-Для read_selection передай operation, scope, limit, count_source, sort, aggregates, group_by. Там НЕТ полей профиля и фильтров.
+Для read_selection передай operation, scope, limit, count_source, sort, keep_order, aggregates, group_by. Там НЕТ полей профиля и фильтров.
 count_source — буквальная цитата нового сообщения с ЗАПРОШЕННЫМ количеством. При limit=null count_source=null.
-Количество из контекста нельзя выдавать за новое: «4 а не 3» -> limit=4, count_source="4", sort=null.
+Количество из контекста нельзя выдавать за новое: «4 а не 3» -> limit=4, count_source="4", sort=[], keep_order=true.
+keep_order=true ТОЛЬКО при изменении одного количества/просьбе сохранить порядок. Новая метрика -> false.
+sort=[] и keep_order=false означает обычный рейтинг выгодности, не прежнюю сортировку.
 Для profile_change передай только названные fields/criteria/places; не дублируй профиль из контекста.
 В profile_change fields и criteria — объекты, {} при отсутствии изменений, не null.
 Комнатность/студия/город в новом запросе — profile_change; число комнат не количество карточек.
@@ -151,6 +153,10 @@ def semantic_tools(contract,inputs,unsupported,has_results=True):
     for key in ('fields','criteria'):edits[key]['type']='object'
     quotes=list(dict.fromkeys([*input_frame.source_words(inputs),*(row['text'] for row in inputs),*unsupported]))
     read_schema=deepcopy(SCHEMA)
+    read_schema['properties']['sort']['type']='array'
+    read_schema['properties']['sort']['description']='Новый порядок по явно запрошенному показателю. Выгодность: value_score desc. Площадь: area desc. Дешевле метр: price_per_m2 asc. [] — обычная выгодность, НЕ прежний порядок.'
+    read_schema['properties']['keep_order']={'type':'boolean','description':'true только если клиент меняет ОДНО количество без новой метрики («4 а не 3») или явно сохраняет порядок. При словах выгоднее/дешевле/больше/новом показателе false.'}
+    read_schema['required'].append('keep_order')
     read_schema['properties']['count_source']={'type':['string','null'],
         'enum':[None,*quotes],
         'description':'Буквальная цитата НОВОЙ реплики, откуда взято количество limit. При limit=null — null. «4 а не 3» -> limit4, count_source:4. Не цитируй прежнюю выдачу.'}
@@ -180,6 +186,9 @@ def frame_from_call(call,tools,inputs):
     a=deepcopy(call.arguments)
     if call.name=='read_selection':
         quote=a.pop('count_source')
+        keep=a.pop('keep_order')
+        if keep:a['sort']=None
+        elif not a['sort']:a['sort']=[{'field':'value_score','direction':'desc'}]
         if a['limit'] is not None:
             if not quote or not any(quote.casefold() in row['text'].casefold() for row in inputs):
                 raise ValueError('Новое количество limit требует буквальной цитаты НОВОЙ реплики; иначе limit=null')

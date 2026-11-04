@@ -127,7 +127,7 @@ class ReadingAndRecovery(unittest.IsolatedAsyncioTestCase):
         inputs=[{'text':'среди этих двух какая выгоднее за кв м','seq':1}]
         tools=U.semantic_tools(input_frame.sparse_schema(CHANGE_SCHEMA,inputs),inputs,[])
         args=request('compare','shown',None,'price_per_m2','asc')
-        result=U.frame_from_call(ToolCall('read_selection',{**args,'count_source':None}),tools,inputs)
+        result=U.frame_from_call(ToolCall('read_selection',{**args,'count_source':None,'keep_order':False}),tools,inputs)
         self.assertEqual(result,{'intent':'selection','selection':args})
         for name,arguments in [('read_selection',{**args,'fields':{'rooms_options':[2]}}),
                                ('read_selection',{'operation':'compare'}),
@@ -140,8 +140,8 @@ class ReadingAndRecovery(unittest.IsolatedAsyncioTestCase):
         tools=U.semantic_tools(input_frame.sparse_schema(CHANGE_SCHEMA,inputs),inputs,[])
         for quote in ('4','4 а не 3'):
             with self.assertRaises(ValueError):
-                U.frame_from_call(ToolCall('read_selection',{**request(limit=2),'count_source':quote}),tools,inputs)
-        result=U.frame_from_call(ToolCall('read_selection',{**request(limit=4),'count_source':'4'}),tools,inputs)
+                U.frame_from_call(ToolCall('read_selection',{**request(limit=2),'count_source':quote,'keep_order':True}),tools,inputs)
+        result=U.frame_from_call(ToolCall('read_selection',{**request(limit=4),'count_source':'4','keep_order':True}),tools,inputs)
         self.assertEqual(result['selection']['limit'],4)
 
     def test_sparse_profile_changes_do_not_require_other_conditions(self):
