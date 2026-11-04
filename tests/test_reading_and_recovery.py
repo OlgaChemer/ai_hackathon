@@ -212,6 +212,34 @@ class ReadingAndRecovery(unittest.IsolatedAsyncioTestCase):
         for bad in ([],{'fields':['pool'],'criteria':[],'places':[],'unsupported':[],'selection':[]}):
             with self.assertRaises(ValueError):profile_patch.decode(bad,contract,inputs)
 
+    def test_explicit_preference_overrides_an_unqualified_presence_fact(self):
+        from backend.agent import profile_patch
+        text='Парк желателен, но не обязателен'
+        contract=profile_patch.schema(input_frame.schema(CHANGE_SCHEMA,[{'text':text}]))
+        result=profile_patch.decode({'fields':[{'key':'poi:park','value':True,'source':'Парк'}],
+            'criteria':[{'key':'poi:park','value':True,'priority':'preferred','source':text}],
+            'places':[],'unsupported':[],'selection':[]},contract,[{'text':text}])
+        self.assertEqual(result['criteria']['poi:park'],'preferred')
+
+    def test_place_grounding_does_not_invent_a_missing_city_adjective(self):
+        frame=slots(places=['Новгород'])
+        frame['places'][0]['words']=[{'source':'Новгороде','lemma':'Великий'},{'source':'Новгороде','lemma':'Новгород'}]
+        result=input_frame.decode(frame,{}, {'messages':[{'text':'Хочу квартиру в Новгороде'}],
+            'supported_cities':['Великий Новгород','Нижний Новгород'],
+            'ambiguous_catalog_names':{'Новгород':['Великий Новгород','Нижний Новгород']}},CHANGE_SCHEMA)
+        self.assertEqual(result['decision'],'clarify')
+        self.assertEqual(set(result['options']),{'Великий Новгород','Нижний Новгород'})
+
+    def test_city_fact_alias_uses_the_same_grounded_place_contract(self):
+        from backend.agent import profile_patch
+        text='Великий Новгород, не Нижний'
+        contract=profile_patch.schema(input_frame.schema(CHANGE_SCHEMA,[{'text':text}]))
+        frame=profile_patch.decode({'fields':[{'key':'city','value':'Великий Новгород','source':text}],
+            'criteria':[],'places':[],'unsupported':[],'selection':[]},contract,[{'text':text}])
+        result=input_frame.decode(input_frame.complete_frame({'intent':'refine',**frame},CHANGE_SCHEMA),{},
+            {'messages':[{'text':text}],'supported_cities':sources.SUPPORTED_CITIES,'ambiguous_catalog_names':{}},CHANGE_SCHEMA)
+        self.assertEqual(result['changes']['city'],'Великий Новгород')
+
     async def test_actual_batches_drive_progress_counts(self):
         s=self.agent()
         rows=[listing(id=f'cian-{i}',city='Казань',rooms=1,price=4_000_000) for i in range(5)]
