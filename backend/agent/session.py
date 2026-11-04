@@ -233,7 +233,7 @@ class Session:
             try:
                 review = await understanding.prepare_from_http(self)
             except (LLMError, TurnStopped):
-                await self.say("Не удалось надёжно разобрать сообщение. Попробуйте ещё раз — текущая карточка и условия сохранены.")
+                await self.say("Не удалось надёжно разобрать сообщение. Попробуйте ещё раз — текущая карточка и условия сохранены.", await_reply=True)
                 return "unresolved"
             if review and review['intent'] == 'question' and review['decision'] != 'clarify':
                 self.request_review_seq = review['seq']

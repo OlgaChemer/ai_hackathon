@@ -5,7 +5,7 @@ from copy import deepcopy
 from unittest.mock import AsyncMock, patch
 
 from backend import db, sources
-from backend.agent import input_frame, listing_query as Q, session, understanding, workflow
+from backend.agent import input_frame, listing_query as Q, session, workflow
 from backend.agent.actions import request, search, deal
 from backend.agent.criteria import evaluate, selectable
 from backend.agent.profile import merge_profile, passes_hard_filters

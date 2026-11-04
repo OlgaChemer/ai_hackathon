@@ -133,7 +133,8 @@ def validate_filters(filters):
         op = f['op']
         if ((op == 'exists' and size != 0) or (op == 'between' and size != 2)
                 or (op == 'in' and size < 1) or (op not in ('exists','between','in') and size != 1)):
-            raise ValueError('Число значений не соответствует операции фильтра')
+            expected = '0' if op == 'exists' else '2' if op == 'between' else '1 или больше' if op == 'in' else '1'
+            raise ValueError(f"Фильтр {f['field']}: {op} требует values длины {expected}, получено {size}. Укажи значения из нового ввода")
         if op in ('lt','lte','gt','gte','between') and FIELDS[f['field']][0] != 'number':
             raise ValueError('Сравнение диапазона требует числового поля')
         if op == 'between' and values[0] > values[1]:

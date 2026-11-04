@@ -429,6 +429,8 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await s.receive_text(text),'unresolved')
         self.assertFalse(future.done())
         self.assertEqual(s.profile['city'],'Москва')
+        messages=[e for e in s.history if e['type']=='message' and e.get('role')=='agent']
+        self.assertTrue(messages[-1]['await_reply'])
 
     async def test_new_input_during_review_cannot_apply_the_stale_result(self):
         entered, release = asyncio.Event(), asyncio.Event()
