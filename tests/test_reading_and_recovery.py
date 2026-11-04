@@ -166,6 +166,13 @@ class ReadingAndRecovery(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('read_selection',[t.name for t in tools])
         self.assertIn('profile_change',[t.name for t in tools])
 
+    async def test_pause_after_comparison_revokes_reading_as_well(self):
+        from backend.agent import workflow
+        s=self.agent();await self.show(s)
+        s.selection_operation='compare';s.selection_query['scope']='shown';s.request_intent='hold'
+        self.assertFalse(workflow.available(s,'show_selection'))
+        self.assertIsNone(workflow.next_search_action(s))
+
     def test_sparse_profile_changes_do_not_require_other_conditions(self):
         inputs=[{'text':'Ищу 1–2 комнаты','seq':1}]
         tools=U.semantic_tools(input_frame.sparse_schema(CHANGE_SCHEMA,inputs),inputs,[])

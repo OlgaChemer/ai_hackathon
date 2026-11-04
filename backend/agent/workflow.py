@@ -14,10 +14,10 @@ def programs_current(s):
 def available(s, name: str) -> bool:
     """Модель выбирает действия среди разрешённых текущим состоянием, порядок не диктуется."""
     p = s.profile
-    if name=='show_selection' and s.selection_operation in ('compare','analyze'):
-        return bool(s.shown) if s.selection_query.get('scope')=='shown' else s.search is not None
     if s.request_intent == "hold" and name != "update_request":
         return False
+    if name=='show_selection' and s.selection_operation in ('compare','analyze'):
+        return bool(s.shown) if s.selection_query.get('scope')=='shown' else s.search is not None
     if s.request_intent == 'call' and s.call_targets and not s.calls and not s.selection_profile_stale and name not in ('update_request','call_seller'):
         # Выбор уже сделан клиентом: новая подборка не должна молча стирать
         # прямую просьбу звонить по номеру текущей карточки.
