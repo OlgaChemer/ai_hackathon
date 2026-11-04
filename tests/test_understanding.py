@@ -64,7 +64,7 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_unsupported_condition_pauses_and_explains_without_claiming_absence(self):
         text='Хочу квартиру где внутри бассейн'
-        frame=slots(intent='refine',unsupported=[{'text':'бассейн внутри квартиры','source':text,'action':'add'}])
+        frame=slots(intent='refine',unsupported=[{'text':'внутри бассейн','source':text,'action':'add'}])
         s=self.agent(text,frame,profile={'city':'Москва','rooms':2,'budget_max':20_000_000})
         s.call_targets=['old']
         s.ask=AsyncMock(return_value={'approved':None,'data':{'text':'Самые просторные'}})
@@ -73,7 +73,7 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(s.profile['rooms'],2)
         self.assertEqual(s.request_intent,'hold')
         self.assertFalse(s.call_targets)
-        self.assertIn('бассейн внутри квартиры',s.profile['_unsupported_conditions'])
+        self.assertIn('внутри бассейн',s.profile['_unsupported_conditions'])
         message=next(e['text'] for e in s.history if e.get('role')=='agent')
         self.assertIn('Пока не умею',message)
         self.assertIn('не означает, что таких квартир нет',message)

@@ -91,9 +91,11 @@ def decode(frame, profile, payload, changes_schema):
     for condition in frame['unsupported']:
         if not condition['source'].strip() or not any(condition['source'].casefold() in text for text in input_texts):
             raise ValueError('Неподдержанное пожелание требует цитаты нового ввода')
+        if condition['action']=='add' and (not condition['text'].strip() or not any(condition['text'].casefold() in text for text in input_texts)):
+            raise ValueError('unsupported.add.text — буквальная цитата НОВОГО ввода. Не переноси старое неподдержанное условие в ответ на выбор альтернативы; тогда unsupported=[]')
     if frame['selection'] is not None:
         validate_query(frame['selection'])
-    if frame['unsupported'] and intent not in ('search','refine','hold'):
+    if any(x['action']=='add' for x in frame['unsupported']) and intent not in ('search','refine','hold'):
         raise ValueError('Неподдержанное новое условие — refine/search/hold, не обычный вопрос и не выполненная команда')
     if intent not in ('search', 'refine', 'selection', 'call', 'seller_questions', 'hold'):
         if frame['selection'] is not None or frame['call_ids'] is not None:
