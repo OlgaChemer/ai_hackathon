@@ -80,6 +80,9 @@ def schema(changes, messages=None):
     field_source = {'type':'string','maxLength':1000,'description':'Буквальное слово нового ввода, подтверждающее значение; либо всё исходное сообщение. Не цитата из профиля.'}
     if messages is not None:
         field_source['enum'] = list(dict.fromkeys([*source_words(messages), *(row['text'] for row in messages)]))
+    unsupported_item=object_schema({'text':{'type':'string','maxLength':200},'source':field_source,
+                                    'action':{'type':'string','enum':['add','remove']}})
+    unsupported_item['properties']['key']={'type':'string','maxLength':80,'description':'Стабильный идентификатор непроверяемого свойства, если известен.'}
     return object_schema({
         'places':{'type':'array','maxItems':0 if messages is not None and not source['enum'] else 3,'description':'Все явно названные допустимые города/области, включая варианты через «или». Москва и Подмосковье — два элемента. При неизменном городе пусто. Центр, школа, новостройка, срок сдачи НЕ территории.',
             'items':object_schema({'words':{'type':'array','minItems':1,'maxItems':8,'items':object_schema({
@@ -90,8 +93,7 @@ def schema(changes, messages=None):
         'criteria':nullable(object_schema(criteria)),
         'selection':nullable(selection_request.SCHEMA),
         'unsupported':{'type':'array','maxItems':5,'description':'Явно запрошенные условия, которых нет среди проверяемых полей/критериев. Не объявляй такие квартиры несуществующими.',
-            'items':object_schema({'text':{'type':'string','maxLength':200},'source':field_source,
-                                  'action':{'type':'string','enum':['add','remove']}})},
+            'items':unsupported_item},
         'call_ids':nullable({'type':'array','maxItems':10,'items':{'type':'string','maxLength':80},
                             'description':'Только при явной просьбе ЗВОНИТЬ: ID из показанных карточек; [] — по понравившимся. Иначе null. Вопросы продавцу не разрешают звонок.'}),
         'question':{'type':'string','maxLength':500,'description':'Один вопрос только при неясности, иначе пустая строка.'},

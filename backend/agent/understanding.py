@@ -44,6 +44,7 @@ selection — [] если команды нет, либо массив с одн
 Название улицы без указания, какой именно, не считается центром города: сохрани буквальное неподдержанное условие в unsupported. Частичное имя города не достраивай, код уточнит его по каталогу.
 unsupported — только НОВОЕ условие вне доступных свойств, с буквальной цитатой; бассейн внутри квартиры не равен фитнесу рядом.
 При явной отмене неподдержанного условия: unsupported action=remove, text дословно из unsupported_conditions, source — цитата нового ввода. Совмести отмену с selection, если просят отбор.
+unsupported_properties связывает ключ неизвестного свойства с его прежним названием. Его можно удалить по этому ключу, как обычное свойство.
 Пример: 1–2 комнаты, вторичка, за свои -> fields [{key:rooms_options,value:"[1,2]",source:"1–2"},{key:housing,value:"secondary",source:"вторичка"},{key:payment,value:"cash",source:"за свои"}].
 Верни JSON со списками фактов. Неназванное не добавляй. Не заполняй семью, маткапитал, срок и другие параметры предположениями.
 '''
@@ -229,6 +230,7 @@ async def prepare(s):
                 if extract:
                     data={k:payload[k] for k in ('messages','profile','supported_cities','ambiguous_catalog_names','listing_fields')}
                     data['unsupported_conditions']=s.profile.get('_unsupported_conditions') or []
+                    data['unsupported_properties']=s.profile.get('_unsupported_keys') or {}
                     data['allowed_fields']=input_frame.basic_fields(CHANGE_SCHEMA)
                     contract_for_changes=deepcopy(extraction)
                     if rank:
@@ -241,7 +243,7 @@ async def prepare(s):
                     parsed=await s.llm.chat([{'role':'system','content':prompt},guard.data_message('profile_changes',data)],
                         json_mode=True,tag='profile_extract',temperature=.01,max_tokens=3000)
                     changes=parse_json_loose(parsed.text)
-                    changes=profile_patch.decode(changes,contract_for_changes,inputs)
+                    changes=profile_patch.decode(changes,contract_for_changes,inputs,s.profile.get('_unsupported_keys'))
                     if rank and (any(v is not None for v in (changes.get('fields') or {}).values()) or
                                  any(v is not None for v in (changes.get('criteria') or {}).values()) or
                                  changes.get('places') or changes.get('unsupported')):
@@ -304,17 +306,24 @@ async def ensure(s):
     s.last_issue=None
     s.profile.pop('_last_issue',None)
     unsupported = list(s.profile.get('_unsupported_conditions') or [])
+    unsupported_keys=dict(s.profile.get('_unsupported_keys') or {})
     additions = []
     for item in review.get('unsupported') or []:
         if item['action'] == 'remove':
             unsupported = [text for text in unsupported if text != item['text']]
+            unsupported_keys={k:v for k,v in unsupported_keys.items() if v!=item['text']}
         else:
+            if item.get('key'):
+                old=unsupported_keys.get(item['key'])
+                if old and old!=item['text']:unsupported=[text for text in unsupported if text!=old]
+                unsupported_keys[item['key']]=item['text']
             if item['text'] not in unsupported:
                 unsupported.append(item['text'])
             if item['text'] not in additions:
                 additions.append(item['text'])
     if review.get('unsupported'):
         s.profile['_unsupported_conditions'] = unsupported
+        s.profile['_unsupported_keys']=unsupported_keys
     if additions:
         # Сохраняем явно названные поддержанные условия, но не выполняем
         # частичный поиск без решения клиента о неподдержанном пожелании.

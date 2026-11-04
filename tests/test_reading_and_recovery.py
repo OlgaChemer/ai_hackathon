@@ -198,7 +198,12 @@ class ReadingAndRecovery(unittest.IsolatedAsyncioTestCase):
         result=profile_patch.decode({'fields':[{'key':'pool','value':True,'source':'внутри бассейн'}],
             'criteria':[],'places':[],'unsupported':[],'selection':[]},contract,[{'text':text}])
         self.assertEqual(result['fields'],{})
-        self.assertEqual(result['unsupported'],[{'text':'внутри бассейн','source':'внутри бассейн','action':'add'}])
+        self.assertEqual(result['unsupported'],[{'text':'внутри бассейн','source':'внутри бассейн','action':'add','key':'pool'}])
+        remove='Бассейн больше не нужен'
+        removed=profile_patch.decode({'fields':[{'key':'pool','action':'remove','source':remove}],
+            'criteria':[],'places':[],'unsupported':[],'selection':[]},contract,[{'text':remove}],{'pool':'внутри бассейн'})
+        self.assertEqual(removed['unsupported'][0]['text'],'внутри бассейн')
+        self.assertEqual(removed['unsupported'][0]['action'],'remove')
 
     def test_malformed_model_patch_is_a_recoverable_validation_error(self):
         from backend.agent import profile_patch

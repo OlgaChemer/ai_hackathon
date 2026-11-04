@@ -43,12 +43,19 @@ def value(text,spec):
     return json.loads(text)
 
 
-def decode(patch,contract,inputs):
+def decode(patch,contract,inputs,aliases=None):
     if not isinstance(patch,dict):raise ValueError('Изменения должны быть JSON-объектом')
     patch=deepcopy(patch)
     if patch.get('unsupported') is None:patch['unsupported']=[]
     if not isinstance(patch['unsupported'],list):raise ValueError('unsupported должен быть списком')
     texts=[r['text'].casefold() for r in inputs]
+    aliases=aliases or {}
+    def unsupported(key,quote,remove=False):
+        if remove:
+            if key not in aliases:raise ValueError('Для отмены неизвестного свойства используй прежнее имя из unsupported_conditions либо ключ из unsupported_properties')
+            text=aliases[key]
+        else:text=quote[:200]
+        patch['unsupported'].append({'text':text,'source':quote,'action':'remove' if remove else 'add','key':key})
     for group in ('fields','criteria'):
         rows=patch.get(group) or []
         if not isinstance(rows,list) or any(not isinstance(row,dict) for row in rows):
@@ -62,11 +69,22 @@ def decode(patch,contract,inputs):
             if isinstance(row.get('key'),str) and row['key'] not in allowed and isinstance(quote,str) and quote and any(quote.casefold() in text for text in texts):
                 if row['key'] in input_frame.FIELDS:
                     raise ValueError('Свойство '+row['key']+' поддерживается: запиши его через fields с key filters, оператором op и values, а не как неподдержанное условие')
-                if row.get('action')=='remove' or row.get('priority')=='remove':
-                    raise ValueError('Неподдержанное условие отменяется через unsupported с action remove и прежним названием условия')
-                patch.setdefault('unsupported',[]).append({'text':quote[:200],'source':quote,'action':'add'})
+                unsupported(row['key'],quote,row.get('action')=='remove' or row.get('priority')=='remove')
             else:retained.append(row)
         patch[group]=retained
+    for row in patch['fields']:
+        if row.get('key')!='filters':continue
+        filters=json.loads(row['value'])
+        if not isinstance(filters,list):continue
+        retained=[]
+        for f in filters:
+            if isinstance(f,dict) and isinstance(f.get('field'),str) and f['field'] not in input_frame.FIELDS:
+                unsupported(f['field'],row.get('source',''),f.get('priority')=='remove')
+            else:retained.append(f)
+        row['value']=json.dumps(retained,ensure_ascii=False)
+    for condition in patch['unsupported']:
+        if isinstance(condition,dict) and condition.get('action')=='remove' and condition.get('key') in aliases:
+            condition['text']=aliases[condition['key']]
     validation.validate(patch,contract)
     frame={'fields':{},'criteria':{},'places':patch['places'],'unsupported':patch['unsupported']}
     known=input_frame.basic_fields(CHANGE_SCHEMA)
