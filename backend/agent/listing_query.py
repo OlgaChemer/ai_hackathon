@@ -115,6 +115,8 @@ def _typed(value, field):
         try:
             result = float(value)
         except (ValueError, TypeError) as exc:
+            if field.startswith('nearby:'):
+                raise ValueError('nearby измеряет расстояние до ВНЕШНЕГО объекта. true/false не число и не 0. Нет точного свойства — верни unsupported, не подменяй удобство.') from exc
             raise ValueError(f'Числовое поле {field}: values допускает только числа строкой, без имён полей и слов. Используй подходящий базовый criteria вместо неподдержанного сравнения') from exc
         if not math.isfinite(result):
             raise ValueError('Нечисловое значение фильтра')

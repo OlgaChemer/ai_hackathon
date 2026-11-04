@@ -55,6 +55,14 @@ def value(text,spec):
     return parsed
 
 
+def requires_colocation(f):
+    if not isinstance(f,dict) or not isinstance(f.get('field'),str):return False
+    if not f['field'].startswith('nearby:') or f.get('priority')=='remove':return False
+    if f.get('op') not in ('eq','lt','lte') or not f.get('values'):return False
+    try:return all(float(v)==0 for v in f['values'])
+    except (ValueError,TypeError):return False
+
+
 def decode(patch,contract,inputs,aliases=None):
     if not isinstance(patch,dict):raise ValueError('Изменения должны быть JSON-объектом')
     patch=deepcopy(patch)
@@ -96,6 +104,10 @@ def decode(patch,contract,inputs,aliases=None):
         for f in filters:
             if isinstance(f,dict) and isinstance(f.get('field'),str) and f['field'] not in input_frame.FIELDS:
                 unsupported(f['field'],row.get('source',''),f.get('priority')=='remove')
+            elif requires_colocation(f):
+                # Карта измеряет близость внешних объектов. Нулевой радиус
+                # не подтверждает наличие удобства внутри квартиры/дома.
+                unsupported(f['field'],row.get('source',''))
             else:retained.append(f)
         row['value']=json.dumps(retained,ensure_ascii=False)
     for condition in patch['unsupported']:

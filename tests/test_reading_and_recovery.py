@@ -355,6 +355,17 @@ class ReadingAndRecovery(unittest.IsolatedAsyncioTestCase):
         patch_data['requested_card']=['call_seller']
         with self.assertRaises(ValueError):profile_patch.decode(patch_data,contract,inputs)
 
+    def test_zero_distance_does_not_verify_an_amenity_inside_the_apartment(self):
+        from backend.agent import profile_patch
+        text='Хочу квартиру где внутри бассейн'
+        inputs=[{'text':text}]
+        contract=profile_patch.schema(input_frame.schema(CHANGE_SCHEMA,inputs))
+        f={'field':'nearby:fitness','op':'eq','values':['0'],'priority':'required'}
+        result=profile_patch.decode({'fields':[{'key':'filters','value':json.dumps([f]),'source':text}],
+                                    'criteria':[],'places':[],'unsupported':[],'selection':[]},contract,inputs)
+        self.assertEqual(result['fields']['filters']['value'],[])
+        self.assertEqual(result['unsupported'][0]['text'],text)
+
     def test_profile_route_requests_separate_extraction_without_guessing_values(self):
         inputs=[{'text':'Ищу 1–2 комнаты','seq':1}]
         tools=U.semantic_tools(input_frame.sparse_schema(CHANGE_SCHEMA,inputs),inputs,[])
