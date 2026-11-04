@@ -158,8 +158,9 @@ async def ensure(s):
         s.profile['_selection_query'] = deepcopy(s.selection_query)
     elif review['intent'] in ('search','refine'):
         from .listing_query import default_query
-        s.selection_query = default_query()
+        s.selection_query = {**(s.selection_query or default_query()),'mode':'rank','scope':'all'}
         s.selection_dirty = True
+        s.profile['_selection_query'] = deepcopy(s.selection_query)
     if review['intent'] == 'call' and review.get('call_ids') is not None:
         ids = review['call_ids'] or s.prefs.liked
         shown = {x['id'] for x in s.shown} | set(s.prefs.liked)
