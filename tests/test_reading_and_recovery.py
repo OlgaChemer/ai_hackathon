@@ -284,11 +284,18 @@ class ReadingAndRecovery(unittest.IsolatedAsyncioTestCase):
     def test_corrected_count_must_match_new_source_not_previous_count(self):
         inputs=[{'text':'4 а не 3','seq':1}]
         tools=U.semantic_tools(input_frame.sparse_schema(CHANGE_SCHEMA,inputs),inputs,[])
-        for quote in ('4','4 а не 3'):
+        for quote in ('4','4 а не 3',None):
             with self.assertRaises(ValueError):
                 U.frame_from_call(ToolCall('read_selection',read_args(limit=2,count_source=quote,keep_order=True)),tools,inputs)
         result=U.frame_from_call(ToolCall('read_selection',read_args(limit=4,count_source='4',keep_order=True)),tools,inputs)
         self.assertEqual(result['selection']['limit'],4)
+
+    def test_missing_count_evidence_keeps_a_valid_read_command(self):
+        inputs=[{'text':'Оставь три наиболее подходящих по моим параметрам','seq':1}]
+        tools=U.semantic_tools(input_frame.sparse_schema(CHANGE_SCHEMA,inputs),inputs,[])
+        result=U.frame_from_call(ToolCall('read_selection',read_args(limit=3,field='value_score')),tools,inputs)
+        self.assertEqual(result['selection']['limit'],3)
+        self.assertEqual(result['intent'],'selection')
 
     def test_new_ranking_does_not_inherit_previous_area_order(self):
         inputs=[{'text':'Выведи три наиболее выгодных','seq':1}]

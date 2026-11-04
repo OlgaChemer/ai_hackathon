@@ -173,7 +173,9 @@ def frame_from_call(call,tools,inputs):
         a['sort']=None if keep else [{'field':field,'direction':direction}]
         if a['limit'] is not None:
             if not quote or not any(quote.casefold() in row['text'].casefold() for row in inputs):
-                raise ValueError('Новое количество limit требует буквальной цитаты НОВОЙ реплики; иначе limit=null')
+                # Отсутствие вспомогательной цитаты не ломает корректный
+                # отбор: проверяем число по самой новой реплике целиком.
+                quote=inputs[-1]['text']
             numbers=[int(word) for word in input_frame.source_words([{'text':quote}]) if word.isdecimal()]
             if numbers and a['limit'] not in numbers:
                 raise ValueError('Количество limit не соответствует числу в count_source. Возьми запрошенное новое количество, не прежний размер выдачи.')
