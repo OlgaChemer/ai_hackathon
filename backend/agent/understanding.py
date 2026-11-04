@@ -18,7 +18,9 @@ clarify_input — один конкретный вопрос, если смыс�
 informational_question — информационный вопрос, в том числе «что непонятно/что сломалось».
 call_intent — явная просьба звонить; pause_request — явная пауза/«пока не звони».
 unsupported_condition — условие вне проверяемых параметров; continue_input/other_input — продолжить/остальное.
-Для read_selection передай operation, scope, limit, sort, aggregates, group_by. Там НЕТ полей профиля и фильтров.
+Для read_selection передай operation, scope, limit, count_source, sort, aggregates, group_by. Там НЕТ полей профиля и фильтров.
+count_source — буквальная цитата нового сообщения с ЗАПРОШЕННЫМ количеством. При limit=null count_source=null.
+Количество из контекста нельзя выдавать за новое: «4 а не 3» -> limit=4, count_source="4", sort=null.
 Для profile_change передай только названные fields/criteria/places; не дублируй профиль из контекста.
 messages — только ещё не обработанные реплики; recent_dialogue — контекст, не источник новых условий.
 Более позднее уточнение дополняет/отменяет прежнее. Неназванное сохраняется. Не возвращай snapshot profile.
@@ -144,8 +146,13 @@ def semantic_tools(contract,inputs,unsupported):
     def obj(props,required=()):return {'type':'object','additionalProperties':False,'properties':props,'required':list(required)}
     edits={k:deepcopy(properties[k]) for k in ('fields','criteria','places','selection','unsupported')}
     quotes=list(dict.fromkeys([*input_frame.source_words(inputs),*(row['text'] for row in inputs),*unsupported]))
+    read_schema=deepcopy(SCHEMA)
+    read_schema['properties']['count_source']={'type':['string','null'],
+        'enum':[None,*quotes],
+        'description':'Буквальная цитата НОВОЙ реплики, откуда взято количество limit. При limit=null — null. «4 а не 3» -> limit4, count_source:4. Не цитируй прежнюю выдачу.'}
+    read_schema['required'].append('count_source')
     return [
-        Tool('read_selection','Прочитать найденные данные: отобрать N, отсортировать, сравнить показанные, посчитать статистику или получить ещё варианты. Условия профиля не меняет.',deepcopy(SCHEMA)),
+        Tool('read_selection','Прочитать найденные данные: отобрать N, отсортировать, сравнить показанные, посчитать статистику или получить ещё варианты. Условия профиля не меняет. Новое количество только из новой реплики, при отсутствии limit=null.',read_schema),
         Tool('profile_change','Сохранить новые явно названные условия квартиры/города/бюджета либо вопросы продавцу. Передай только реальные изменения со ссылкой на слова клиента; для одного лишь отбора используй read_selection. fields содержит названные комнатность, бюджет, оплату и прочие поля; неназванные ключи пропускай.',obj(edits,['fields','criteria','places'])),
         Tool('clarify_input','Задать конкретный вопрос: какой город, какая улица, какая сумма или какой объект. Не проси менять понятную фразу из-за ошибки системы.',obj({
             'question':properties['question'],'options':properties['options']},['question'])),
@@ -166,7 +173,15 @@ def frame_from_call(call,tools,inputs):
     if tool is None:raise ValueError('Неизвестная смысловая функция')
     validation.validate(call.arguments,tool.parameters)
     a=deepcopy(call.arguments)
-    if call.name=='read_selection':return {'intent':'selection','selection':a}
+    if call.name=='read_selection':
+        quote=a.pop('count_source')
+        if a['limit'] is not None:
+            if not quote or not any(quote.casefold() in row['text'].casefold() for row in inputs):
+                raise ValueError('Новое количество limit требует буквальной цитаты НОВОЙ реплики; иначе limit=null')
+            numbers=[int(word) for word in input_frame.source_words([{'text':quote}]) if word.isdecimal()]
+            if numbers and a['limit'] not in numbers:
+                raise ValueError('Количество limit не соответствует числу в count_source. Возьми запрошенное новое количество, не прежний размер выдачи.')
+        return {'intent':'selection','selection':a}
     if call.name=='profile_change':return {'intent':'refine',**a}
     if call.name=='pause_request':return {'intent':'hold',**a}
     if call.name=='clarify_input':return {'intent':'refine',**a}
