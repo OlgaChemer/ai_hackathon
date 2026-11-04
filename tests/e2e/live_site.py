@@ -34,7 +34,7 @@ CONTINUE = {
 }
 
 
-async def scenario(base: str, name: str, until: str, timeout: float) -> dict:
+async def scenario(base: str, name: str, until: str, timeout: float, fixture: bool = False) -> dict:
     query, answers = CASES[name]
     summary = {'case': name, 'cards': [], 'results': [], 'sources': [], 'messages': []}
     selected = []
@@ -137,7 +137,7 @@ async def scenario(base: str, name: str, until: str, timeout: float) -> dict:
         if name == 'cash':
             if counts['housing'] != 1:
                 raise AssertionError('Не проверено ровно одно подтверждение карточки типа жилья')
-            if {r.get('new') for r in summary['sources'] if r.get('source', '').startswith('Циан')} != {False, True}:
+            if {r.get('new') for r in summary['sources'] if fixture or r.get('source', '').startswith('Циан')} != {False, True}:
                 raise AssertionError('После выбора обоих рынков поиск не охватил оба рынка')
         summary['seconds'] = round(time.monotonic() - started, 1)
         chats = await client.get('/api/chats')
@@ -164,7 +164,7 @@ async def main(args):
     names = [args.case] if args.case else list(CASES)
     for name in names:
         try:
-            summary = await scenario(args.base.rstrip('/'), name, args.until, args.timeout)
+            summary = await scenario(args.base.rstrip('/'), name, args.until, args.timeout, args.fixture)
             print(json.dumps({'ok': True, **summary}, ensure_ascii=False), flush=True)
             good += 1
         except Exception as exc:
@@ -181,4 +181,5 @@ if __name__ == '__main__':
     parser.add_argument('--case', choices=CASES)
     parser.add_argument('--until', choices=['selection', 'sign'], default='selection')
     parser.add_argument('--timeout', type=float, default=240)
+    parser.add_argument('--fixture', action='store_true', help='Синтетические источники: проверять оба рынка без требования живого Циана')
     raise SystemExit(asyncio.run(main(parser.parse_args())))
