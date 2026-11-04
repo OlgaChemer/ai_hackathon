@@ -47,6 +47,7 @@ unsupported — только НОВОЕ условие вне доступных
 При явной отмене неподдержанного условия: unsupported action=remove, text дословно из unsupported_conditions, source — цитата нового ввода. Совмести отмену с selection, если просят отбор.
 unsupported_properties связывает ключ неизвестного свойства с его прежним названием. Его можно удалить по этому ключу, как обычное свойство.
 Пример: 1–2 комнаты, вторичка, за свои -> fields [{key:rooms_options,value:"[1,2]",source:"1–2"},{key:housing,value:"secondary",source:"вторичка"},{key:payment,value:"cash",source:"за свои"}].
+requested_card — только ПРЯМАЯ просьба показать анкетную карточку: «сначала предложите выбор типа жилья через карточку Где искать» -> [ask_housing]. Если клиент просто не назвал рынок, []. Это не карточки квартир.
 Верни JSON со списками фактов. Неназванное не добавляй. Не заполняй семью, маткапитал, срок и другие параметры предположениями.
 '''
 
@@ -223,6 +224,7 @@ async def prepare(s):
         if error:instruction+='\nПредыдущий ответ не прошёл проверку формата: '+error+'. Исправь поля, смысл не угадывай.'
         messages=[{'role':'system','content':instruction},guard.data_message('request_review',payload)]
         try:
+            requested_action=None
             response=await s.llm.chat(messages,tools=tools,
                                       tag='request_review',temperature=.01,max_tokens=2500)
             if response.tool_calls:
@@ -249,6 +251,7 @@ async def prepare(s):
                         json_mode=True,tag='profile_extract',temperature=.01,max_tokens=3000)
                     changes=parse_json_loose(parsed.text)
                     changes=profile_patch.decode(changes,contract_for_changes,inputs,s.profile.get('_unsupported_keys'))
+                    requested_action=changes.pop('_requested_action',None)
                     if rank and (any(v is not None for v in (changes.get('fields') or {}).values()) or
                                  any(v is not None for v in (changes.get('criteria') or {}).values()) or
                                  changes.get('places') or changes.get('unsupported')):
@@ -257,6 +260,7 @@ async def prepare(s):
             else:result=parse_json_loose(response.text)
             result=input_frame.complete_frame(result,CHANGE_SCHEMA)
             result = input_frame.decode(result, payload['profile'], payload, CHANGE_SCHEMA)
+            if requested_action:result['requested_action']=requested_action
             validation.validate(result['changes'], CHANGE_SCHEMA)
             if not guard.input_verdict(result['changes']).ok or guard.output(result['changes'], limit=False) != result['changes']:
                 raise ValueError('Небезопасные изменения')
@@ -346,6 +350,9 @@ async def ensure(s):
                              chips=['Самые выгодные','Самые просторные','Оставить подборку'])
         return {'needs_clarification':True,'question':explanation,
                 'client_said':answer['data'].get('text','')}
+    s.requested_action=review.get('requested_action') if review['intent']!='hold' else None
+    if s.requested_action:s.profile['_requested_action']=s.requested_action
+    else:s.profile.pop('_requested_action',None)
     if review['intent'] not in ('seller_questions','question'):
         s.call_targets = []
     if review.get('selection') is not None:

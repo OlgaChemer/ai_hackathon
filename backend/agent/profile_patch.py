@@ -5,6 +5,8 @@ from copy import deepcopy
 from . import input_frame,selection_request,validation
 from .request_schema import CHANGE_SCHEMA
 
+QUESTIONNAIRES=['ask_housing','ask_payment','ask_family','confirm_red_lines']
+
 
 def schema(contract):
     props=contract['properties']
@@ -31,6 +33,8 @@ def schema(contract):
         'unsupported':deepcopy(props['unsupported']),
         'selection':{'type':'array','minItems':0,'maxItems':1,'items':reading,
                      'description':'[] если команды отбора нет. Иначе один запрос; limit0 — сохранить количество; group_by пусто — не группировать.'},
+        'requested_card':{'type':'array','minItems':0,'maxItems':1,'items':{'type':'string','enum':QUESTIONNAIRES},
+                          'description':'Только явно запрошенная анкетная карточка. Где искать/рынок -> ask_housing; оплата -> ask_payment; семья -> ask_family; лимит -> confirm_red_lines. Иначе [].'},
     })
     for key in ('places','unsupported'):result['properties'][key]['minItems']=0
     result['properties']['unsupported']['items']['properties']['source'].pop('enum',None)
@@ -53,6 +57,9 @@ def value(text,spec):
 def decode(patch,contract,inputs,aliases=None):
     if not isinstance(patch,dict):raise ValueError('Изменения должны быть JSON-объектом')
     patch=deepcopy(patch)
+    requested=patch.setdefault('requested_card',[])
+    if requested is None:patch['requested_card']=[]
+    elif isinstance(requested,str):patch['requested_card']=[requested]
     if patch.get('unsupported') is None:patch['unsupported']=[]
     if not isinstance(patch['unsupported'],list):raise ValueError('unsupported должен быть списком')
     texts=[r['text'].casefold() for r in inputs]
@@ -157,4 +164,5 @@ def decode(patch,contract,inputs,aliases=None):
     if patch.get('selection'):
         q=deepcopy(patch['selection'][0]);q['limit']=q['limit'] or None;q['group_by']=q['group_by'] or None
         frame['selection']=q
+    if patch['requested_card']:frame['_requested_action']=patch['requested_card'][0]
     return frame

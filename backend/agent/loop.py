@@ -20,7 +20,7 @@ from . import actions, guard, prompts, understanding
 from .features import FEATURES
 from .numbers import fmt
 from .profile import missing_required
-from .workflow import next_search_action
+from .workflow import next_search_action,available
 from .session import close_dangling_calls
 
 MAX_ACTIONS_IN_ROW = 14  # действий подряд без ответа клиенту — дальше модель должна заговорить с клиентом
@@ -103,8 +103,10 @@ async def run(s) -> None:
                                        {"role":"user","content":checked['client_said']}])
                     s.remember()
                     continue
+            if s.requested_action and not available(s,s.requested_action):
+                s.requested_action=None;s.profile.pop('_requested_action',None);s.remember()
             intake = next_search_action(s)
-            if intake in ("confirm_red_lines", "ask_payment"):
+            if intake in ("confirm_red_lines", "ask_payment") or (intake and intake==s.requested_action):
                 forced = intake
             if forced:
                 resp = LLMResponse("", [ToolCall(forced, {}, f"progress_{uuid.uuid4().hex[:8]}")])

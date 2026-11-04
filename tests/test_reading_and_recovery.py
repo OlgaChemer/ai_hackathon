@@ -330,6 +330,26 @@ class ReadingAndRecovery(unittest.IsolatedAsyncioTestCase):
         s.profile['budget_max']=None
         self.assertTrue(workflow.available(s,'ask_client'))
 
+    async def test_explicit_questionnaire_precedes_search_without_making_market_mandatory(self):
+        from backend.agent import workflow, profile_patch, actions
+        text='Сначала покажи карточку Где искать'
+        inputs=[{'text':text}]
+        contract=profile_patch.schema(input_frame.schema(CHANGE_SCHEMA,inputs))
+        patch_data={'fields':[],'criteria':[],'places':[],'unsupported':[],'selection':[],
+                    'requested_card':['ask_housing']}
+        decoded=profile_patch.decode(patch_data,contract,inputs)
+        s=self.agent();s.search=None;s.request_intent='search'
+        self.assertEqual(workflow.next_search_action(s),'search_listings')
+        s.requested_action=decoded['_requested_action']
+        self.assertEqual(workflow.next_search_action(s),'ask_housing')
+        result=await actions.execute(s,ToolCall('search_listings',{}))
+        self.assertIn('ask_housing',result['error'])
+        self.assertIsNone(s.search)
+        s.profile['housing']='both'
+        self.assertEqual(workflow.next_search_action(s),'search_listings')
+        patch_data['requested_card']=['call_seller']
+        with self.assertRaises(ValueError):profile_patch.decode(patch_data,contract,inputs)
+
     def test_profile_route_requests_separate_extraction_without_guessing_values(self):
         inputs=[{'text':'Ищу 1–2 комнаты','seq':1}]
         tools=U.semantic_tools(input_frame.sparse_schema(CHANGE_SCHEMA,inputs),inputs,[])

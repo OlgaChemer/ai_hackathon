@@ -42,6 +42,7 @@ class Session:
     request_review_seq: int = 0
     request_review: dict | None = None
     request_intent: str | None = None
+    requested_action: str | None = None
     client_revision: int = 0  # только принятые сообщения/решения клиента
     seq: int = 0                      # номер последнего события диалога
     history: list[dict] = field(default_factory=list)  # события этого запуска (если база недоступна)
@@ -293,6 +294,7 @@ def restore_session(chat_id: str, text: str, llm: LLMClient) -> Session:
     s = Session(id=chat_id, query=text.strip(), llm=llm, visitor_id=vid, user_id=uid, seq=last_seq or 0)
     s.profile = dict(profile or {})
     s.last_issue=s.profile.get('_last_issue')
+    s.requested_action=s.profile.get('_requested_action')
     s.selection_profile_stale=bool(s.profile.get('_selection_stale'))
     s.selection_query = s.profile.get('_selection_query') or {}
     previous=db.safe(repo.last_nonempty_selection,chat_id)

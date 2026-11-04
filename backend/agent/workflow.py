@@ -62,6 +62,7 @@ def available(s, name: str) -> bool:
 
 def next_search_action(s):
     """Только явное рабочее намерение разрешает продолжение без нового ответа клиента."""
+    if s.requested_action and available(s,s.requested_action):return s.requested_action
     if s.request_intent=='selection' and s.selection_operation in ('compare','analyze'):
         if s.selection_query.get('scope')!='shown' and s.search is None:
             return 'search_listings' if available(s,'search_listings') else None
