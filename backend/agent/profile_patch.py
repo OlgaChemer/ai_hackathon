@@ -18,8 +18,9 @@ def schema(contract):
     reading['properties']['sort']['type']='array';reading['properties']['aggregates']['type']='array'
     reading['properties']['group_by']['type']='string'
     reading['properties']['group_by']['enum']=['',*input_frame.FIELDS]
-    key={'type':'string','minLength':1,'maxLength':120,
-         'description':'Точное свойство клиента: известный ключ из allowed_fields/allowed_criteria, либо новое имя неподдержанного свойства. Не заменяй неизвестное ближайшим известным.'}
+    keys=list(dict.fromkeys([*input_frame.basic_fields(CHANGE_SCHEMA),*props['criteria']['properties'],'city','cities','unsupported']))
+    key={'type':'string','enum':keys,
+         'description':'Точный известный ключ либо unsupported для отсутствующего свойства. Не заменяй неизвестное ближайшим известным.'}
     result=obj({
         'fields':{'type':'array','minItems':0,'maxItems':20,'items':obj({
             'key':deepcopy(key),
