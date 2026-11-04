@@ -289,6 +289,15 @@ class ReadingAndRecovery(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(result['changes']['center_required'])
         self.assertTrue(result['changes']['prefer_center'])
 
+    def test_preserved_filter_does_not_need_to_be_reasserted_with_new_numbers(self):
+        text='Школа рядом, до 1 км. Остальное сохрани.'
+        year={'field':'delivery_year','op':'eq','values':['2027'],'priority':'required'}
+        school={'field':'nearby:school','op':'lte','values':['1000'],'priority':'required'}
+        frame=slots(fields={'filters':[year,school]});frame['fields']['filters']['source']=text
+        result=input_frame.decode(frame,merge_profile({'filters':[year]}),
+            {'messages':[{'text':text}],'supported_cities':sources.SUPPORTED_CITIES,'ambiguous_catalog_names':{}},CHANGE_SCHEMA)
+        self.assertEqual(result['changes']['filters'],[school])
+
     def test_number_of_candidates_does_not_create_price_or_area_thresholds(self):
         for operation in ('rank','compare','analyze','more'):
             query,_=R.compile_request(request(operation))

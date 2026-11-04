@@ -189,6 +189,9 @@ def decode(frame, profile, payload, changes_schema):
         raise ValueError('selection меняет выдачу, не профиль. Неназванные поля '+', '.join(changes)+' должны быть null; количество — selection.limit. Явные новые условия требуют refine')
     if 'filters' in changes:
         validate_filters(changes['filters'])
+        previous={f['field']:f for f in profile.get('filters') or []}
+        changes['filters']=[f for f in changes['filters'] if f!=previous.get(f['field'])]
+        if not changes['filters']:changes.pop('filters')
         # Проверка буквальных чисел — не классификация намерения. Модель
         # не вправе добавлять 2026 год или радиус 3 км к запросу с бюджетом
         # 30 млн. Словесные числа остаются задачей смыслового разбора.
@@ -196,7 +199,7 @@ def decode(frame, profile, payload, changes_schema):
                   for text in input_texts for n in re.findall(r'(?<!\d)[+-]?\d+(?:[ \u00a0]\d{3})*(?:[.,]\d+)?',text)]
         if literals:
             supported={n*scale for n in literals for scale in (1,1000,1_000_000,1_000_000_000)}
-            for item in changes['filters']:
+            for item in changes.get('filters',[]):
                 if item['priority']=='remove':
                     continue
                 if FIELDS[item['field']][0]!='number':continue
