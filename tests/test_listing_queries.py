@@ -154,6 +154,17 @@ class QueryEngineTest(unittest.TestCase):
                 input_frame.decode(frame,{'rooms':2},{'messages':[{'text':'4 а не 3','options':[]}],
                     'supported_cities':['Москва'],'ambiguous_catalog_names':{}},CHANGE_SCHEMA)
 
+    def test_query_with_a_typed_filter_is_a_compound_refinement(self):
+        text='Сдача в 2027, покажи три больших'
+        frame=slots(intent='selection',fields={'filters':[condition('delivery_year','eq',2027)]},
+                    selection={**Q.default_query(),'limit':3,'sort':[{'field':'area','direction':'desc'}]})
+        frame['fields']['filters']['source']=text
+        result=input_frame.decode(frame,{'city':'Москва','rooms':2},{'messages':[{'text':text,'options':[]}],
+            'supported_cities':['Москва'],'ambiguous_catalog_names':{}},CHANGE_SCHEMA)
+        self.assertEqual(result['intent'],'refine')
+        self.assertEqual(result['selection']['limit'],3)
+        self.assertEqual(result['changes']['filters'][0]['field'],'delivery_year')
+
 
 class DialogueStateTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self):

@@ -116,8 +116,13 @@ def decode(frame, profile, payload, changes_schema):
                 continue
             raise ValueError(f'Изменение {key} требует точной цитаты нового ввода; неназванное поле должно быть null')
         changes[key] = value
+    if intent == 'selection' and set(changes)=={'filters'}:
+        # Составной запрос «сдача в 2027, покажи три больших» содержит и
+        # условие, и команду выдачи. Тег нормализуется по типу данных, без
+        # повторного языкового разбора и без допуска к изменению комнат/семьи.
+        intent = 'refine'
     if intent == 'selection' and changes:
-        raise ValueError('selection меняет выдачу, не профиль квартиры. Количество предложений — selection.limit, не rooms. Для явно изменённых условий используй refine')
+        raise ValueError('selection меняет выдачу, не профиль. Неназванные поля '+', '.join(changes)+' должны быть null; количество — selection.limit. Явные новые условия требуют refine')
     if 'filters' in changes:
         validate_filters(changes['filters'])
     if frame['call_ids'] is not None and intent != 'call':
