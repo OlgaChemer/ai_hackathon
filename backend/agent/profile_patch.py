@@ -73,6 +73,9 @@ def decode(patch,contract,inputs,aliases=None):
     if not isinstance(patch['unsupported'],list):raise ValueError('unsupported должен быть списком')
     texts=[r['text'].casefold() for r in inputs]
     aliases=aliases or {}
+    def alias_for(key):
+        def canonical(k):return k.replace('poi:','nearby:',1) if k.startswith('poi:') else k
+        return next((k for k in aliases if isinstance(key,str) and canonical(k)==canonical(key)),None)
     def unsupported(key,quote,remove=False):
         if remove:
             if key not in aliases:raise ValueError('Для отмены неизвестного свойства используй прежнее имя из unsupported_conditions либо ключ из unsupported_properties')
@@ -90,10 +93,13 @@ def decode(patch,contract,inputs,aliases=None):
             if 'value' not in row and (row.get('action')=='remove' or row.get('priority')=='remove'):row['value']=''
             if 'value' in row and not isinstance(row['value'],str):row['value']=json.dumps(row['value'],ensure_ascii=False)
             quote=row.get('source')
+            removing=row.get('action')=='remove' or row.get('priority')=='remove'
+            alias=alias_for(row.get('key')) if removing else None
+            if alias and isinstance(quote,str):unsupported(alias,quote,True)
             if isinstance(row.get('key'),str) and row['key'] not in allowed and isinstance(quote,str) and quote and any(quote.casefold() in text for text in texts):
                 if row['key'] in input_frame.FIELDS:
                     raise ValueError('Свойство '+row['key']+' поддерживается: запиши его через fields с key filters, оператором op и values, а не как неподдержанное условие')
-                unsupported(row['key'],quote,row.get('action')=='remove' or row.get('priority')=='remove')
+                if not alias:unsupported(row['key'],quote,removing)
             else:retained.append(row)
         patch[group]=retained
     for row in patch['fields']:
@@ -102,8 +108,10 @@ def decode(patch,contract,inputs,aliases=None):
         if not isinstance(filters,list):continue
         retained=[]
         for f in filters:
+            alias=alias_for(f.get('field')) if isinstance(f,dict) and f.get('priority')=='remove' else None
+            if alias:unsupported(alias,row.get('source',''),True)
             if isinstance(f,dict) and isinstance(f.get('field'),str) and f['field'] not in input_frame.FIELDS:
-                unsupported(f['field'],row.get('source',''),f.get('priority')=='remove')
+                if not alias:unsupported(f['field'],row.get('source',''),f.get('priority')=='remove')
             elif requires_colocation(f):
                 # Карта измеряет близость внешних объектов. Нулевой радиус
                 # не подтверждает наличие удобства внутри квартиры/дома.
