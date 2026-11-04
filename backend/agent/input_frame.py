@@ -192,7 +192,7 @@ def decode(frame, profile, payload, changes_schema):
         # не вправе добавлять 2026 год или радиус 3 км к запросу с бюджетом
         # 30 млн. Словесные числа остаются задачей смыслового разбора.
         literals=[float(n.replace(' ','').replace('\u00a0','').replace(',','.'))
-                  for text in input_texts for n in re.findall(r'(?<!\w)\d+(?:[ \u00a0]\d{3})*(?:[.,]\d+)?',text)]
+                  for text in input_texts for n in re.findall(r'(?<!\d)[+-]?\d+(?:[ \u00a0]\d{3})*(?:[.,]\d+)?',text)]
         if literals:
             supported={n*scale for n in literals for scale in (1,1000,1_000_000,1_000_000_000)}
             for item in changes['filters']:

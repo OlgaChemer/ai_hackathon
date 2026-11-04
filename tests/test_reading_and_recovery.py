@@ -249,6 +249,17 @@ class ReadingAndRecovery(unittest.IsolatedAsyncioTestCase):
             input_frame.decode(frame,{}, {'messages':[{'text':text}],
                 'supported_cities':sources.SUPPORTED_CITIES,'ambiguous_catalog_names':{}},CHANGE_SCHEMA)
 
+    def test_numeric_predicate_cannot_invent_a_deadline_or_center_radius(self):
+        text='Ищу2 комнаты в центре Москвы до30млн'
+        payload={'messages':[{'text':text}],'supported_cities':sources.SUPPORTED_CITIES,'ambiguous_catalog_names':{}}
+        for field,value in [('delivery_year','2026'),('center_km','3')]:
+            frame=slots(fields={'filters':[{'field':field,'op':'lte','values':[value],'priority':'required'}]})
+            frame['fields']['filters']['source']=text
+            with self.assertRaises(ValueError):input_frame.decode(frame,{},payload,CHANGE_SCHEMA)
+        frame=slots(fields={'filters':[{'field':'price','op':'lte','values':['30000000'],'priority':'required'}]})
+        frame['fields']['filters']['source']=text
+        self.assertEqual(input_frame.decode(frame,{},payload,CHANGE_SCHEMA)['changes']['filters'][0]['values'],['30000000'])
+
     def test_number_of_candidates_does_not_create_price_or_area_thresholds(self):
         for operation in ('rank','compare','analyze','more'):
             query,_=R.compile_request(request(operation))
