@@ -46,6 +46,7 @@ CASES=[
  ('full_profile','Ищу двухкомнатную квартиру в центре Москвы до 30 млн рублей, в новостройке. Покупаю за свои. Рядом нужен детский сад.',None,None,None,None),
  ('full_profile_nizhny','Нижний Новгород, 1–2 комнаты до 6,7 млн рублей, только вторичка. Покупаю за свои средства.',None,None,None,None),
  ('delivery_rank','Оставь только те, что сдаются именно в 2027 году. Покажи три самых просторных из всех найденных.',None,None,None,None),
+ ('remove_area','Отмени ограничение площади. Покажи две самые большие квартиры.',None,None,None,None),
 ]
 
 
@@ -73,6 +74,7 @@ async def run(cases):
         s.search={'pool':list(s.shown)}
         s.prefs.sync(s.profile)
         if kind=='delivery_rank':s.profile['housing']='new'
+        if kind=='remove_area':s.profile['area_min']=1000
         s.last_issue={'kind':'previous_error','message':'Предыдущее сравнение завершилось ошибкой системы. Последние две карточки сохранены.'}
         if kind in ('clarify','rooms','studio','mixed','full_profile','full_profile_nizhny'):s.profile=merge_profile({});s.search=None;s.shown=[]
         s.messages=[{'role':'user','content':'Покажи два самых больших варианта'}] if s.shown else []
@@ -102,6 +104,11 @@ async def run(cases):
             elif kind=='delivery_rank':
                 assert any(f['field']=='delivery_year' and f['op']=='eq' and f['values']==['2027'] for f in r['changes'].get('filters',[])),r
                 assert r['selection']['limit']==3 and r['selection']['sort']==[{'field':'area','direction':'desc'}],r
+            elif kind=='remove_area':
+                from backend.agent.actions.request import updated_profile
+                p=updated_profile(s.profile,r['changes'])
+                assert p['area_min'] is None,r
+                assert r['selection']['limit']==2 and r['selection']['sort']==[{'field':'area','direction':'desc'}],r
             else:
                 p=merge_profile(r['changes'])
                 expected={'rooms':[1,2],'studio':[0],'mixed':[0,1]}[kind]

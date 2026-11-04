@@ -33,6 +33,7 @@ def schema(contract):
                      'description':'[] если команды отбора нет. Иначе один запрос; limit0 — сохранить количество; group_by пусто — не группировать.'},
     })
     for key in ('places','unsupported'):result['properties'][key]['minItems']=0
+    result['properties']['fields']['items']['properties']['action']={'type':'string','enum':['set','remove']}
     return result
 
 
@@ -42,6 +43,11 @@ def value(text,spec):
 
 
 def decode(patch,contract,inputs):
+    patch=deepcopy(patch)
+    for rows in (patch.get('fields') or [],patch.get('criteria') or []):
+        for row in rows:
+            if 'value' not in row and (row.get('action')=='remove' or row.get('priority')=='remove'):row['value']=''
+            if 'value' in row and not isinstance(row['value'],str):row['value']=json.dumps(row['value'],ensure_ascii=False)
     validation.validate(patch,contract)
     frame={'fields':{},'criteria':{},'places':patch['places'],'unsupported':patch['unsupported']}
     known=input_frame.basic_fields(CHANGE_SCHEMA)
@@ -70,8 +76,14 @@ def decode(patch,contract,inputs):
         raise ValueError('Противоречащие значения свойства '+key)
     for row in [*patch['fields'],*patch['criteria']]:
         key,priority=row['key'],row.get('priority','required')
+        if row.get('action')=='remove' or row['value'].strip() in ('null',''):priority='remove'
         if key in known:
-            put('fields',key,{'value':value(row['value'],known[key]),'source':row['source']})
+            if priority=='remove':
+                kind=known[key]['type']
+                if kind not in ('boolean','array'):raise ValueError('Для изменения '+key+' нужно новое значение')
+                actual=False if kind=='boolean' else []
+            else:actual=value(row['value'],known[key])
+            put('fields',key,{'value':actual,'source':row['source']})
             continue
         if key.startswith(('poi:','feature:')) or key in ('not_first_floor','not_last_floor'):
             put('criteria',key,priority)

@@ -32,6 +32,7 @@ rooms_options — все допустимые числа комнат 1–5: о�
 Площадь/кухня/год постройки — criteria. Произвольные проверяемые ограничения — fields.filters.
 Для одного свойства используй ОДНО представление: именованный criterion ИЛИ filters, не оба.
 При отмене свойства снимай его существующее представление из profile: filters с priority remove, values []; именованный criterion с priority remove.
+Отмени ограничение площади -> criteria [{key:area_min,priority:remove,value:"",source:"Отмени ограничение площади"}]. Не оставляй прежнюю area_min. Для отмены именованного поля можно также fields с action:remove; null означает удаление, не отсутствие изменения.
 Год СДАЧИ: filters delivery_year eq ['2027']; не позднее: lte; интервал: between. НЕ year_min. Неназванные фильтры не повторяй.
 Готовые критерии инфраструктуры: poi:school/clinic/kindergarten/...; не дублируй их в filters.
 Школа до1км пешком — poi:school required, учитываем близость; не обещай маршруты. Радиус по прямой проверяет код.
