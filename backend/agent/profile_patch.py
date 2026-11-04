@@ -125,7 +125,7 @@ def decode(patch,contract,inputs,aliases=None):
         if boolean and row['value'].strip()=='false':priority='remove'
         if key in ('city','cities'):
             from ..sources import normalize_city,SUPPORTED_CITIES
-            raw=row['value'].strip()
+            raw=value(row['value'],{'type':'string'}).strip()
             names=json.loads(raw) if raw.startswith('[') else [raw]
             for name in names:
                 city=normalize_city(name)
