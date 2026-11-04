@@ -127,6 +127,8 @@ def decode(patch,contract,inputs,aliases=None):
             from ..sources import normalize_city,SUPPORTED_CITIES
             raw=value(row['value'],{'type':'string'}).strip()
             names=json.loads(raw) if raw.startswith('[') else [raw]
+            if not isinstance(names,list) or any(not isinstance(name,str) for name in names):
+                raise ValueError('Название города должно быть строкой или списком строк')
             for name in names:
                 city=normalize_city(name)
                 if city not in SUPPORTED_CITIES:raise ValueError('Город нужно сопоставить с supported_cities; не подставляй похожий')

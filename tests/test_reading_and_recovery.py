@@ -211,6 +211,9 @@ class ReadingAndRecovery(unittest.IsolatedAsyncioTestCase):
         contract=profile_patch.schema(input_frame.schema(CHANGE_SCHEMA,inputs))
         for bad in ([],{'fields':['pool'],'criteria':[],'places':[],'unsupported':[],'selection':[]}):
             with self.assertRaises(ValueError):profile_patch.decode(bad,contract,inputs)
+        with self.assertRaises(ValueError):
+            profile_patch.decode({'fields':[{'key':'city','value':[{'name':'Москва'}],'source':'бассейн'}],
+                'criteria':[],'places':[],'unsupported':[],'selection':[]},contract,inputs)
 
     def test_explicit_preference_overrides_an_unqualified_presence_fact(self):
         from backend.agent import profile_patch
