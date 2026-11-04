@@ -22,6 +22,9 @@ unsupported_condition — условие вне проверяемых пара�
 count_source — буквальная цитата нового сообщения с ЗАПРОШЕННЫМ количеством. При limit=null count_source=null.
 Количество из контекста нельзя выдавать за новое: «4 а не 3» -> limit=4, count_source="4", sort=null.
 Для profile_change передай только названные fields/criteria/places; не дублируй профиль из контекста.
+В profile_change fields и criteria — объекты, {} при отсутствии изменений, не null.
+Комнатность/студия/город в новом запросе — profile_change; число комнат не количество карточек.
+read_selection работает с уже найденными квартирами. При новом запросе с условиями и отбором используй profile_change.selection.
 messages — только ещё не обработанные реплики; recent_dialogue — контекст, не источник новых условий.
 Более позднее уточнение дополняет/отменяет прежнее. Неназванное сохраняется. Не возвращай snapshot profile.
 
@@ -140,18 +143,19 @@ def dialogue_context(s):
     return rows[-8:]
 
 
-def semantic_tools(contract,inputs,unsupported):
+def semantic_tools(contract,inputs,unsupported,has_results=True):
     from .selection_request import SCHEMA
     properties=contract['properties']
     def obj(props,required=()):return {'type':'object','additionalProperties':False,'properties':props,'required':list(required)}
     edits={k:deepcopy(properties[k]) for k in ('fields','criteria','places','selection','unsupported')}
+    for key in ('fields','criteria'):edits[key]['type']='object'
     quotes=list(dict.fromkeys([*input_frame.source_words(inputs),*(row['text'] for row in inputs),*unsupported]))
     read_schema=deepcopy(SCHEMA)
     read_schema['properties']['count_source']={'type':['string','null'],
         'enum':[None,*quotes],
         'description':'Буквальная цитата НОВОЙ реплики, откуда взято количество limit. При limit=null — null. «4 а не 3» -> limit4, count_source:4. Не цитируй прежнюю выдачу.'}
     read_schema['required'].append('count_source')
-    return [
+    tools=[
         Tool('read_selection','Прочитать найденные данные: отобрать N, отсортировать, сравнить показанные, посчитать статистику или получить ещё варианты. Условия профиля не меняет. Новое количество только из новой реплики, при отсутствии limit=null.',read_schema),
         Tool('profile_change','Сохранить новые явно названные условия квартиры/города/бюджета либо вопросы продавцу. Передай только реальные изменения со ссылкой на слова клиента; для одного лишь отбора используй read_selection. fields содержит названные комнатность, бюджет, оплату и прочие поля; неназванные ключи пропускай.',obj(edits,['fields','criteria','places'])),
         Tool('clarify_input','Задать конкретный вопрос: какой город, какая улица, какая сумма или какой объект. Не проси менять понятную фразу из-за ошибки системы.',obj({
@@ -166,6 +170,7 @@ def semantic_tools(contract,inputs,unsupported):
         Tool('continue_input','Клиент просит продолжить без изменения условий.',obj({})),
         Tool('other_input','Прочая реплика без изменения параметров и без команды выдачи.',obj({})),
     ]
+    return tools if has_results else [tool for tool in tools if tool.name!='read_selection']
 
 
 def frame_from_call(call,tools,inputs):
@@ -204,7 +209,7 @@ async def prepare(s):
     from .. import sources
     base_profile=deepcopy(s.profile)
     contract=input_frame.sparse_schema(CHANGE_SCHEMA, inputs)
-    tools=semantic_tools(contract,inputs,s.profile.get('_unsupported_conditions') or [])
+    tools=semantic_tools(contract,inputs,s.profile.get('_unsupported_conditions') or [],bool(s.shown or s.search))
     payload={'supported_cities':sources.SUPPORTED_CITIES,'ambiguous_catalog_names':catalog_ambiguities(sources.SUPPORTED_CITIES),
              'messages':inputs,'profile':{k:v for k,v in base_profile.items() if not k.startswith('_')},
              'listing_fields':{key: {'type':v[0],'label':v[1]} for key,v in FIELDS.items()},
