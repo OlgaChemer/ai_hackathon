@@ -240,6 +240,18 @@ class ReadingAndRecovery(unittest.IsolatedAsyncioTestCase):
             {'messages':[{'text':text}],'supported_cities':sources.SUPPORTED_CITIES,'ambiguous_catalog_names':{}},CHANGE_SCHEMA)
         self.assertEqual(result['changes']['city'],'Великий Новгород')
 
+    def test_json_string_values_and_false_criterion_keep_their_meaning(self):
+        from backend.agent import profile_patch
+        text='Только вторичка, ремонт любой, первый этаж можно'
+        contract=profile_patch.schema(input_frame.schema(CHANGE_SCHEMA,[{'text':text}]))
+        frame=profile_patch.decode({'fields':[{'key':'housing','value':'"secondary"','source':'вторичка'}],
+            'criteria':[{'key':'condition','value':'"any"','priority':'required','source':'ремонт любой'},
+                        {'key':'not_first_floor','value':False,'priority':'required','source':'первый этаж можно'}],
+            'places':[],'unsupported':[],'selection':[]},contract,[{'text':text}])
+        self.assertEqual(frame['fields']['housing']['value'],'secondary')
+        self.assertEqual(frame['criteria']['condition']['value'],'any')
+        self.assertEqual(frame['criteria']['not_first_floor'],'remove')
+
     async def test_actual_batches_drive_progress_counts(self):
         s=self.agent()
         rows=[listing(id=f'cian-{i}',city='Казань',rooms=1,price=4_000_000) for i in range(5)]

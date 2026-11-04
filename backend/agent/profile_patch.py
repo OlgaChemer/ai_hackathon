@@ -39,8 +39,15 @@ def schema(contract):
 
 
 def value(text,spec):
-    if spec['type']=='string':return text
-    return json.loads(text)
+    if spec['type']=='string':
+        try:parsed=json.loads(text)
+        except ValueError:return text
+        return parsed if isinstance(parsed,str) else text
+    parsed=json.loads(text)
+    if isinstance(parsed,str):
+        try:return json.loads(parsed)
+        except ValueError:pass
+    return parsed
 
 
 def decode(patch,contract,inputs,aliases=None):
@@ -114,6 +121,8 @@ def decode(patch,contract,inputs,aliases=None):
     for row in [*patch['fields'],*patch['criteria']]:
         key,priority=row['key'],row.get('priority','required')
         if row.get('action')=='remove' or row['value'].strip() in ('null',''):priority='remove'
+        boolean=key.startswith(('poi:','feature:')) or key in ('not_first_floor','not_last_floor')
+        if boolean and row['value'].strip()=='false':priority='remove'
         if key in ('city','cities'):
             from ..sources import normalize_city,SUPPORTED_CITIES
             raw=row['value'].strip()
@@ -137,7 +146,7 @@ def decode(patch,contract,inputs,aliases=None):
             else:actual=value(row['value'],known[key])
             put('fields',key,{'value':actual,'source':row['source']})
             continue
-        if 'priority' not in row and row.get('action')!='remove' and key in explicit:continue
+        if 'priority' not in row and priority!='remove' and key in explicit:continue
         if key.startswith(('poi:','feature:')) or key in ('not_first_floor','not_last_floor'):
             put('criteria',key,priority)
         else:
