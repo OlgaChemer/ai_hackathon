@@ -90,7 +90,12 @@ async def execute(s, call: ToolCall) -> dict:
     if a.step and not replay:
         await s.step(a.step)
     try:
-        return await a.run(s, **args)
+        result=await a.run(s, **args)
+        if s.requested_action==call.name:
+            s.requested_action=None
+            s.profile.pop('_requested_action',None)
+            s.remember()
+        return result
     except ActionError as exc:
         return {"error": str(exc)}
     except TypeError:  # модель передала параметры не того вида

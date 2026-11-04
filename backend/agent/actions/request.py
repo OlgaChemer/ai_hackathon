@@ -172,7 +172,7 @@ async def ask_client(s, question: str, options: list[str] | None = None) -> dict
         "Подтверждение один раз в начале подбора и заново только при изменении лимита. Клиент может поправить бюджет на карточке.")
 async def confirm_red_lines(s) -> dict:
     p = s.profile
-    if s.red_lines_ok:
+    if s.red_lines_ok and s.requested_action!='confirm_red_lines':
         return {"approved": True, "budget_max": p["budget_max"], "already_confirmed": True}
     if missing_required(p):
         raise ActionError(f"Не хватает: {', '.join(missing_required(p))} — сначала узнай у клиента и запиши (update_request).")

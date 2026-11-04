@@ -346,6 +346,11 @@ class ReadingAndRecovery(unittest.IsolatedAsyncioTestCase):
         self.assertIn('ask_housing',result['error'])
         self.assertIsNone(s.search)
         s.profile['housing']='both'
+        self.assertEqual(workflow.next_search_action(s),'ask_housing')
+        s.ask=AsyncMock(return_value={'approved':True,'data':{'housing':'both'}})
+        await actions.execute(s,ToolCall('ask_housing',{}))
+        s.ask.assert_awaited_once()
+        self.assertIsNone(s.requested_action)
         self.assertEqual(workflow.next_search_action(s),'search_listings')
         patch_data['requested_card']=['call_seller']
         with self.assertRaises(ValueError):profile_patch.decode(patch_data,contract,inputs)

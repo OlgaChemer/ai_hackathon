@@ -35,11 +35,11 @@ def available(s, name: str) -> bool:
         # Подтверждение рамок завершает вводную анкету. Если поиск ничего не даст,
         # снова разрешаем обсудить изменение условий.
         "ask_client": not ready or s.search is not None,
-        "confirm_red_lines": ready and not s.red_lines_ok,
+        "confirm_red_lines": ready and (not s.red_lines_ok or s.requested_action=='confirm_red_lines'),
         "market_prices": bool(p.get("city") and p.get("rooms") is not None),
-        "ask_payment": not p.get("payment"),
-        "ask_housing": not p.get("housing"),
-        "ask_family": p.get("children") is None and p.get("payment") != "cash",
+        "ask_payment": not p.get("payment") or s.requested_action=='ask_payment',
+        "ask_housing": not p.get("housing") or s.requested_action=='ask_housing',
+        "ask_family": (p.get("children") is None and p.get("payment") != "cash") or s.requested_action=='ask_family',
         "mortgage_programs": not programs_current(s)
         and ready
         and bool(p.get("payment"))
