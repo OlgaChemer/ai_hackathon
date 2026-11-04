@@ -190,6 +190,7 @@ class DialogueStateTest(unittest.IsolatedAsyncioTestCase):
         s=self.agent();s.call_targets=['cian-1']
         request.apply_request(s,{'budget_max':12_000_000})
         s.request_intent='hold'
+        self.assertFalse(workflow.available(s,'ask_client'))
         self.assertEqual(s.profile['budget_max'],12_000_000)
         self.assertFalse(s.red_lines_ok)
         self.assertFalse(workflow.available(s,'search_listings'))

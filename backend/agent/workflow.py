@@ -14,7 +14,7 @@ def programs_current(s):
 def available(s, name: str) -> bool:
     """Модель выбирает действия среди разрешённых текущим состоянием, порядок не диктуется."""
     p = s.profile
-    if s.request_intent == "hold" and name not in ("update_request", "ask_client"):
+    if s.request_intent == "hold" and name != "update_request":
         return False
     if s.request_intent == 'call' and s.call_targets and not s.calls and name not in ('update_request','call_seller'):
         # Выбор уже сделан клиентом: новая подборка не должна молча стирать
