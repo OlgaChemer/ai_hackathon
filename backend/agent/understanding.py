@@ -11,7 +11,15 @@ from . import guard, validation, input_frame
 from .request_schema import CHANGE_SCHEMA
 from .listing_query import FIELDS
 
-SYSTEM = """Разбери новый ввод покупателя квартиры одним вызовом interpret_input. Ничего не выполняй.
+SYSTEM = """Определи смысл новой реплики одним вызовом подходящей смысловой функции. Ничего не выполняй.
+read_selection — отбор/сортировка/сравнение/статистика/новые варианты по найденным данным.
+profile_change — новые условия квартиры, бюджет, город или вопросы продавцу.
+clarify_input — один конкретный вопрос, если смысл действительно неоднозначен.
+informational_question — информационный вопрос, в том числе «что непонятно/что сломалось».
+call_intent — явная просьба звонить; pause_request — явная пауза/«пока не звони».
+unsupported_condition — условие вне проверяемых параметров; continue_input/other_input — продолжить/остальное.
+Для read_selection передай operation, scope, limit, sort, aggregates, group_by. Там НЕТ полей профиля и фильтров.
+Для profile_change передай только названные fields/criteria/places; не дублируй профиль из контекста.
 messages — только ещё не обработанные реплики; recent_dialogue — контекст, не источник новых условий.
 Более позднее уточнение дополняет/отменяет прежнее. Неназванное сохраняется. Не возвращай snapshot profile.
 
@@ -81,7 +89,9 @@ unsupported — явно запрошенное условие вне катал
 При выборе предложенной альтернативы unsupported=[]: код сохраняет отметку о непроверенном условии.
 При явной отмене action=remove, text — прежнее условие из workflow.unsupported_conditions.
 При новом неподдержанном условии intent=refine/search/hold. Если неподдержанного нет, unsupported=[].
-Верни один вызов interpret_input со sparse-аргументами по схеме функции. Не выдавай разрешений на деньги/звонки/сделки и проценты уверенности.
+Примеры формы: profile_change(fields={rooms_options:{value:[1,2],source:'1–2'}});
+read_selection(operation:compare,scope:shown,limit:null,sort:[{field:price_per_m2,direction:asc}],aggregates:null,group_by:null).
+Верни один вызов смысловой функции по её схеме. Не выдавай разрешений на деньги/звонки/сделки и проценты уверенности.
 """
 
 class UnderstandingError(LLMError):
@@ -128,6 +138,47 @@ def dialogue_context(s):
     return rows[-8:]
 
 
+def semantic_tools(contract,inputs,unsupported):
+    from .selection_request import SCHEMA
+    properties=contract['properties']
+    def obj(props,required=()):return {'type':'object','additionalProperties':False,'properties':props,'required':list(required)}
+    edits={k:deepcopy(properties[k]) for k in ('fields','criteria','places','selection','unsupported')}
+    quotes=list(dict.fromkeys([*input_frame.source_words(inputs),*(row['text'] for row in inputs),*unsupported]))
+    return [
+        Tool('read_selection','Прочитать найденные данные: отобрать N, отсортировать, сравнить показанные, посчитать статистику или получить ещё варианты. Условия профиля не меняет.',deepcopy(SCHEMA)),
+        Tool('profile_change','Сохранить новые явно названные условия квартиры/города/бюджета либо вопросы продавцу. Передай только реальные изменения со ссылкой на слова клиента; для одного лишь отбора используй read_selection.',obj(edits)),
+        Tool('clarify_input','Задать конкретный вопрос: какой город, какая улица, какая сумма или какой объект. Не проси менять понятную фразу из-за ошибки системы.',obj({
+            'question':properties['question'],'options':properties['options']},['question'])),
+        Tool('informational_question','Клиент задаёт информационный вопрос и не меняет условия/не выбирает действие. Включая вопрос о предыдущем сбое.',obj({})),
+        Tool('call_intent','Клиент явно просит звонить. Сам ничего не исполняет. Без явной просьбы запрещён; для вопросов продавцу используй profile_change.',obj({
+            'listing_ids':{'type':'array','maxItems':10,'items':{'type':'string'},'description':'ID показанных объектов; пусто — по понравившимся'}},['listing_ids'])),
+        Tool('pause_request','Клиент просит остановиться/пока не искать/пока не звонить. Можно сохранить явно добавленные вопросы и условия без действий.',obj(edits)),
+        Tool('unsupported_condition','Клиент требует условие, которое система не умеет проверять (например, бассейн ВНУТРИ квартиры). Не подменяй похожим удобством. Для отмены — remove.',obj({
+            'text':{'type':'string','enum':quotes},'action':{'type':'string','enum':['add','remove']},
+            'fields':properties['fields'],'selection':properties['selection']},['text','action'])),
+        Tool('continue_input','Клиент просит продолжить без изменения условий.',obj({})),
+        Tool('other_input','Прочая реплика без изменения параметров и без команды выдачи.',obj({})),
+    ]
+
+
+def frame_from_call(call,tools,inputs):
+    tool=next((tool for tool in tools if tool.name==call.name),None)
+    if tool is None:raise ValueError('Неизвестная смысловая функция')
+    validation.validate(call.arguments,tool.parameters)
+    a=deepcopy(call.arguments)
+    if call.name=='read_selection':return {'intent':'selection','selection':a}
+    if call.name=='profile_change':return {'intent':'refine',**a}
+    if call.name=='pause_request':return {'intent':'hold',**a}
+    if call.name=='clarify_input':return {'intent':'refine',**a}
+    if call.name=='informational_question':return {'intent':'question'}
+    if call.name=='call_intent':return {'intent':'call','call_ids':a['listing_ids']}
+    if call.name=='unsupported_condition':
+        return {'intent':'refine','unsupported':[{'text':a['text'],'action':a['action'],
+                 'source':a['text'] if a['action']=='add' else inputs[-1]['text']}],
+                **{k:a[k] for k in ('fields','selection') if k in a}}
+    return {'intent':'continue' if call.name=='continue_input' else 'other'}
+
+
 async def prepare(s):
     """Один принятый разбор на сообщение; предложения инструментов не служат источником пожеланий."""
     inputs=[x for x in s.request_inputs if x['seq'] > s.request_review_seq]
@@ -138,6 +189,7 @@ async def prepare(s):
     from .. import sources
     base_profile=deepcopy(s.profile)
     contract=input_frame.sparse_schema(CHANGE_SCHEMA, inputs)
+    tools=semantic_tools(contract,inputs,s.profile.get('_unsupported_conditions') or [])
     payload={'supported_cities':sources.SUPPORTED_CITIES,'ambiguous_catalog_names':catalog_ambiguities(sources.SUPPORTED_CITIES),
              'messages':inputs,'profile':{k:v for k,v in base_profile.items() if not k.startswith('_')},
              'listing_fields':{key: {'type':v[0],'label':v[1]} for key,v in FIELDS.items()},
@@ -154,12 +206,11 @@ async def prepare(s):
         if error:instruction+='\nПредыдущий ответ не прошёл проверку формата: '+error+'. Исправь поля, смысл не угадывай.'
         messages=[{'role':'system','content':instruction},guard.data_message('request_review',payload)]
         try:
-            response=await s.llm.chat(messages,tools=[Tool('interpret_input','Описать только смысл нового ввода: изменения профиля, цель операции чтения, вопрос или уточнение. Не выполняет бизнес-действий.',contract)],
+            response=await s.llm.chat(messages,tools=tools,
                                       tag='request_review',temperature=.01,max_tokens=2500)
             if response.tool_calls:
-                if len(response.tool_calls)!=1 or response.tool_calls[0].name!='interpret_input':
-                    raise ValueError('Ожидался один смысловой результат interpret_input')
-                result=response.tool_calls[0].arguments
+                if len(response.tool_calls)!=1:raise ValueError('Ожидался один смысловой результат')
+                result=frame_from_call(response.tool_calls[0],tools,inputs)
             else:result=parse_json_loose(response.text)
             result=input_frame.complete_frame(result,CHANGE_SCHEMA)
             result = input_frame.decode(result, payload['profile'], payload, CHANGE_SCHEMA)
