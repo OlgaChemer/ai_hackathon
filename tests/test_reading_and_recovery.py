@@ -177,10 +177,20 @@ class ReadingAndRecovery(unittest.IsolatedAsyncioTestCase):
         inputs=[{'text':'Ищу 1–2 комнаты','seq':1}]
         tools=U.semantic_tools(input_frame.sparse_schema(CHANGE_SCHEMA,inputs),inputs,[])
         args={'fields':{'rooms_options':{'value':[1,2],'source':'1–2'}},'criteria':{},'places':[]}
+        args=input_frame.complete_frame({'intent':'refine',**args},CHANGE_SCHEMA)
+        args={k:args[k] for k in ('fields','criteria','places')}
         result=U.frame_from_call(ToolCall('profile_change',args),tools,inputs)
         result=input_frame.decode(input_frame.complete_frame(result,CHANGE_SCHEMA),{},
             {'messages':inputs,'supported_cities':sources.SUPPORTED_CITIES,'ambiguous_catalog_names':{}},CHANGE_SCHEMA)
         self.assertEqual(result['changes'],{'rooms_options':[1,2]})
+
+    def test_removing_named_condition_also_removes_its_generic_filter(self):
+        from backend.agent.actions.request import updated_profile
+        profile=merge_profile({'city':'Казань','filters':[
+            {'field':'area','op':'gte','values':['1000'],'priority':'required'},
+            {'field':'delivery_year','op':'eq','values':['2027'],'priority':'required'}]})
+        result=updated_profile(profile,{'clear_criteria':['area_min']})
+        self.assertEqual([f['field'] for f in result['filters']],['delivery_year'])
 
     def test_city_cannot_be_invented_from_other_words(self):
         text='Покажи три самых выгодных'

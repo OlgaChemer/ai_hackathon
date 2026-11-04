@@ -25,7 +25,7 @@ keep_order=true ТОЛЬКО при изменении одного количе
 order_by и direction задают показатель и направление: больше площадь -> area/desc;
 дешевле -> price/asc; дешевле за метр -> price_per_m2/asc; выгоднее без уточнения -> value_score/desc.
 Для profile_change передай только названные fields/criteria/places; не дублируй профиль из контекста.
-В profile_change fields и criteria — объекты, {} при отсутствии изменений, не null.
+В profile_change fields и criteria — объекты; неназванные слоты null. Проверь ВСЕ явно названные условия, ничего не пропускай.
 Комнатность/студия/город в новом запросе — profile_change; число комнат не количество карточек.
 read_selection работает с уже найденными квартирами. При новом запросе с условиями и отбором используй profile_change.selection.
 messages — только ещё не обработанные реплики; recent_dialogue — контекст, не источник новых условий.
@@ -151,7 +151,9 @@ def semantic_tools(contract,inputs,unsupported,has_results=True):
     properties=contract['properties']
     def obj(props,required=()):return {'type':'object','additionalProperties':False,'properties':props,'required':list(required)}
     edits={k:deepcopy(properties[k]) for k in ('fields','criteria','places','selection','unsupported')}
-    for key in ('fields','criteria'):edits[key]['type']='object'
+    for key in ('fields','criteria'):
+        edits[key]['type']='object'
+        edits[key]['required']=list(edits[key]['properties'])
     quotes=list(dict.fromkeys([*input_frame.source_words(inputs),*(row['text'] for row in inputs),*unsupported]))
     read_schema=deepcopy(SCHEMA)
     read_schema['properties'].pop('sort')

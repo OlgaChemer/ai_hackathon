@@ -60,6 +60,12 @@ def updated_profile(profile, changes):
             else: filters[f['field']]=f
         p['filters']=list(filters.values())
     for key in changes.get("clear_criteria", []):
+        # Старые именованные условия и универсальный фильтр представляют
+        # одно свойство. Его явная отмена снимает оба представления.
+        field={'area_min':'area','kitchen_min':'kitchen','year_min':'year',
+               'metro_max_minutes':'metro_minutes','prefer_center':'center_km'}.get(key,key)
+        if field.startswith('poi:'):field='nearby:'+field[4:]
+        p['filters']=[f for f in p.get('filters') or [] if f['field']!=field]
         if key.startswith("poi:"):
             p["poi"] = [v for v in p["poi"] if v != key[4:]]
         elif key.startswith("feature:"):
