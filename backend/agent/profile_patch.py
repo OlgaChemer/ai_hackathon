@@ -46,23 +46,38 @@ def decode(patch,contract,inputs):
     frame={'fields':{},'criteria':{},'places':patch['places'],'unsupported':patch['unsupported']}
     known=input_frame.basic_fields(CHANGE_SCHEMA)
     texts=[r['text'].casefold() for r in inputs]
-    seen=set()
     for rows in (patch['fields'],patch['criteria']):
         for row in rows:
-            if row['key'] in seen:raise ValueError('Повтор одного свойства в списке изменений')
-            seen.add(row['key'])
             if not row['source'] or not any(row['source'].casefold() in text for text in texts):
                 raise ValueError('Каждое изменение требует буквальной цитаты нового ввода')
+    def put(group,key,item):
+        old=frame[group].get(key)
+        if old is None:frame[group][key]=item;return
+        if group=='fields':
+            a,b=old['value'],item['value']
+            if isinstance(a,list) and isinstance(b,list):
+                if key=='filters':
+                    merged={f['field']:f for f in a}
+                    for f in b:
+                        if f['field'] in merged and merged[f['field']]!=f:
+                            raise ValueError('Противоречащие фильтры свойства '+f['field'])
+                        merged[f['field']]=f
+                    old['value']=list(merged.values())
+                else:old['value']=list(dict.fromkeys([*a,*b]))
+                return
+            if a==b:return
+        elif old==item:return
+        raise ValueError('Противоречащие значения свойства '+key)
     for row in [*patch['fields'],*patch['criteria']]:
         key,priority=row['key'],row.get('priority','required')
         if key in known:
-            frame['fields'][key]={'value':value(row['value'],known[key]),'source':row['source']}
+            put('fields',key,{'value':value(row['value'],known[key]),'source':row['source']})
             continue
         if key.startswith(('poi:','feature:')) or key in ('not_first_floor','not_last_floor'):
-            frame['criteria'][key]=priority
+            put('criteria',key,priority)
         else:
-            frame['criteria'][key]={'value':None if priority=='remove' else value(row['value'],input_frame.criterion_value(key,CHANGE_SCHEMA)),
-                                     'priority':priority}
+            put('criteria',key,{'value':None if priority=='remove' else value(row['value'],input_frame.criterion_value(key,CHANGE_SCHEMA)),
+                               'priority':priority})
     if patch.get('selection'):
         q=deepcopy(patch['selection'][0]);q['limit']=q['limit'] or None;q['group_by']=q['group_by'] or None
         frame['selection']=q
