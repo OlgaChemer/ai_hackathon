@@ -372,6 +372,14 @@ class ReadingAndRecovery(unittest.IsolatedAsyncioTestCase):
                                       'places':[],'unsupported':[],'selection':[]},contract,inputs,{'nearby:fitness':text})
         self.assertEqual(removed['unsupported'][0]['text'],text)
         self.assertEqual(removed['unsupported'][0]['action'],'remove')
+        inputs=[{'text':text}]
+        contract=profile_patch.schema(input_frame.schema(CHANGE_SCHEMA,inputs))
+        duplicate=profile_patch.decode({'fields':[{'key':'filters','value':json.dumps([f]),'source':text}],
+                                        'criteria':[],'places':[],
+                                        'unsupported':[{'text':'внутри бассейн','source':text,'action':'add','key':'pool'}],
+                                        'selection':[]},contract,inputs)
+        self.assertEqual({c['text'] for c in duplicate['unsupported']},{'внутри бассейн'})
+        self.assertEqual({c['key'] for c in duplicate['unsupported']},{'pool','nearby:fitness'})
 
     def test_profile_route_requests_separate_extraction_without_guessing_values(self):
         inputs=[{'text':'Ищу 1–2 комнаты','seq':1}]

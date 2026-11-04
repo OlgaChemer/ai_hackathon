@@ -81,7 +81,13 @@ def decode(patch,contract,inputs,aliases=None):
         if remove:
             if key not in aliases:raise ValueError('Для отмены неизвестного свойства используй прежнее имя из unsupported_conditions либо ключ из unsupported_properties')
             text=aliases[key]
-        else:text=quote[:200]
+        else:
+            text=quote[:200]
+            # Одно неподдержанное пожелание могло прийти явно и одновременно
+            # как неверный фильтр. Сохраняем один текст и все его ключи-алиасы.
+            matches={c['text'] for c in patch['unsupported'] if isinstance(c,dict)
+                     and c.get('action')=='add' and c.get('text') and c['text'].casefold() in quote.casefold()}
+            if len(matches)==1:text=matches.pop()
         patch['unsupported'].append({'text':text,'source':quote,'action':'remove' if remove else 'add','key':key})
     for group in ('fields','criteria'):
         rows=patch.get(group) or []
