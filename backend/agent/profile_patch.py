@@ -18,14 +18,15 @@ def schema(contract):
     reading['properties']['sort']['type']='array';reading['properties']['aggregates']['type']='array'
     reading['properties']['group_by']['type']='string'
     reading['properties']['group_by']['enum']=['',*input_frame.FIELDS]
-    keys=list(dict.fromkeys([*input_frame.basic_fields(CHANGE_SCHEMA),*props['criteria']['properties'],'city','cities']))
+    key={'type':'string','minLength':1,'maxLength':120,
+         'description':'Точное свойство клиента: известный ключ из allowed_fields/allowed_criteria, либо новое имя неподдержанного свойства. Не заменяй неизвестное ближайшим известным.'}
     result=obj({
         'fields':{'type':'array','minItems':0,'maxItems':20,'items':obj({
-            'key':{'type':'string','enum':keys},
+            'key':deepcopy(key),
             'value':{'type':'string','maxLength':3000,'description':'Строковое поле — обычная строка; число/boolean/массив — JSON-значение, например [1,2], 30000000, true.'},
             'source':source})},
         'criteria':{'type':'array','minItems':0,'maxItems':30,'items':obj({
-            'key':{'type':'string','enum':keys},
+            'key':deepcopy(key),
             'priority':{'type':'string','enum':['required','preferred','remove']},
             'value':{'type':'string','maxLength':1000,'description':'Значение в формате поля; для poi/feature и запрета этажей true; для remove пустая строка.'},
             'source':source})},
@@ -74,7 +75,8 @@ def decode(patch,contract,inputs,aliases=None):
         rows=patch.get(group) or []
         if not isinstance(rows,list) or any(not isinstance(row,dict) for row in rows):
             raise ValueError(group+': ожидается список объектов изменений')
-        allowed=contract['properties'][group]['items']['properties']['key']['enum']
+        from .criteria import CRITERIA_KEYS
+        allowed={*input_frame.basic_fields(CHANGE_SCHEMA),*CRITERIA_KEYS,'city','cities'}
         retained=[]
         for row in rows:
             if 'value' not in row and (row.get('action')=='remove' or row.get('priority')=='remove'):row['value']=''
