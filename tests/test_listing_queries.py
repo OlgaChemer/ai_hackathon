@@ -145,6 +145,15 @@ class QueryEngineTest(unittest.TestCase):
             input_frame.decode(frame,{'rooms':2,'rooms_options':[2]},
                 {'messages':[{'text':text,'options':[]}]},CHANGE_SCHEMA)
 
+    def test_selection_command_cannot_change_family_or_profile_criteria(self):
+        for frame in [slots(intent='selection',fields={'children':4}),
+                      slots(intent='selection',criteria={'not_first_floor':'required'})]:
+            for slot in frame['fields'].values():
+                if slot is not None:slot['source']='4 а не 3'
+            with self.assertRaisesRegex(ValueError,'selection меняет'):
+                input_frame.decode(frame,{'rooms':2},{'messages':[{'text':'4 а не 3','options':[]}],
+                    'supported_cities':['Москва'],'ambiguous_catalog_names':{}},CHANGE_SCHEMA)
+
 
 class DialogueStateTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self):

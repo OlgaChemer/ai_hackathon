@@ -116,7 +116,7 @@ def decode(frame, profile, payload, changes_schema):
                 continue
             raise ValueError(f'Изменение {key} требует точной цитаты нового ввода; неназванное поле должно быть null')
         changes[key] = value
-    if intent == 'selection' and any(key in changes for key in ('rooms','rooms_options','budget_max','housing','payment')):
+    if intent == 'selection' and changes:
         raise ValueError('selection меняет выдачу, не профиль квартиры. Количество предложений — selection.limit, не rooms. Для явно изменённых условий используй refine')
     if 'filters' in changes:
         validate_filters(changes['filters'])
@@ -193,6 +193,8 @@ def decode(frame, profile, payload, changes_schema):
     if places:
         places = list(dict.fromkeys(places))
         changes.update(city=places[0], cities=places[1:])
+    if intent == 'selection' and changes:
+        raise ValueError('selection меняет только выдачу, не условия профиля. Для нового условия и запроса к выдаче вместе используй intent=refine и selection')
     if question.strip():
         return {'intent': intent, 'decision': 'clarify', 'changes': {}, 'question': question, 'options': options,
                 'selection':None,'call_ids':None,'unsupported':[]}

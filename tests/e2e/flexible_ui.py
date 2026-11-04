@@ -28,6 +28,7 @@ async def scenario(browser,base,width):
     await page.wait_for_function('(first)=>document.querySelectorAll(".offer").length===10 && [...document.querySelectorAll(".offer")].every(n=>!first.includes(n.dataset.id))',arg=first)
     await page.wait_for_function("!document.querySelector('[data-selection=more]').disabled")
     assert await page.locator('.msg-thinking').count()==0
+    assert await page.locator('.msg-agent').filter(has_text='Отобрал для вас 10').count()>=1
     # Старое решение остаётся до следующей реплики, устаревший resolved не закрывает новое.
     result=await page.evaluate("""async () => {
       const {state,chatLog,addMsg}=await import('/js/state.js');
