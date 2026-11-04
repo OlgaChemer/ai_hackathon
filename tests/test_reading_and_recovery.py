@@ -131,6 +131,7 @@ class ReadingAndRecovery(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await U.prepare(s),review)
         self.assertEqual(len(seen),2)
         payload=json.loads(seen[1][0][-1]['content'])['data']
+        self.assertTrue(seen[1][1]['json_mode'])
         self.assertNotIn('workflow',payload)
         self.assertNotIn('recent_dialogue',payload)
         self.assertEqual([r['text'] for r in payload['messages']],[text])
