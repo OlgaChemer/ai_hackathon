@@ -14,9 +14,11 @@ def programs_current(s):
 def available(s, name: str) -> bool:
     """Модель выбирает действия среди разрешённых текущим состоянием, порядок не диктуется."""
     p = s.profile
+    if name=='show_selection' and s.selection_operation in ('compare','analyze'):
+        return bool(s.shown) if s.selection_query.get('scope')=='shown' else s.search is not None
     if s.request_intent == "hold" and name != "update_request":
         return False
-    if s.request_intent == 'call' and s.call_targets and not s.calls and name not in ('update_request','call_seller'):
+    if s.request_intent == 'call' and s.call_targets and not s.calls and not s.selection_profile_stale and name not in ('update_request','call_seller'):
         # Выбор уже сделан клиентом: новая подборка не должна молча стирать
         # прямую просьбу звонить по номеру текущей карточки.
         return False
@@ -47,7 +49,7 @@ def available(s, name: str) -> bool:
         "show_selection": s.search is not None,
         "offer_search_alternatives": s.search is not None,
         "probe_budget": s.search is not None,
-        "call_seller": s.search is not None and search_ready and bool(s.shown) and bool(s.call_targets),
+        "call_seller": s.search is not None and search_ready and bool(s.shown) and bool(s.call_targets) and not s.selection_profile_stale,
         "confirm_price": bool(s.calls) and s.red_lines_ok,
         "plan_viewing": bool(s.agreed) and s.red_lines_ok,
         "prepare_deal": bool(s.chosen)
@@ -60,6 +62,10 @@ def available(s, name: str) -> bool:
 
 def next_search_action(s):
     """Только явное рабочее намерение разрешает продолжение без нового ответа клиента."""
+    if s.request_intent=='selection' and s.selection_operation in ('compare','analyze'):
+        if s.selection_query.get('scope')!='shown' and s.search is None:
+            return 'search_listings' if available(s,'search_listings') else None
+        return 'show_selection' if s.selection_dirty and available(s,'show_selection') else None
     if s.request_intent not in ("search", "refine", "selection", "continue") or missing_required(
         s.profile
     ):

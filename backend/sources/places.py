@@ -26,7 +26,7 @@ def status() -> dict:
             'retry_in': max(0, round(_retry_at - time.monotonic()))}
 
 
-async def enrich(listings: list[dict], kinds: list[str], radius: int) -> None:
+async def enrich(listings: list[dict], kinds: list[str], radius: int, on_progress=None) -> None:
     """До четырёх одновременных запросов. Неподдержанные виды останутся для OSM."""
     global _retry_at, _last_provider
     if not settings.twogis_api_key or time.monotonic() < _retry_at:
@@ -82,6 +82,7 @@ async def enrich(listings: list[dict], kinds: list[str], radius: int) -> None:
                         'source': '2gis', 'checked_at': datetime.now(timezone.utc).isoformat(timespec='seconds'),
                         'distance_kind': 'straight_line', 'radius': radius}
                     _last_provider = '2gis'
+                    if on_progress:on_progress()
                 except (httpx.HTTPError, ValueError, TypeError, KeyError):
                     # Не логируем URL: ключ передаётся в query string.
                     _retry_at = time.monotonic() + 60

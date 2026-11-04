@@ -78,7 +78,8 @@ def field_value(x, field):
         return (x.get('ranking') or {}).get(field)
     if field.startswith('nearby:'):
         kind = field.split(':',1)[1]
-        item = (x.get('nearby') or {}).get(kind)
+        nearby=x.get('nearby') or {}
+        item = next((p for p in nearby if p.get('kind')==kind),None) if isinstance(nearby,list) else nearby.get(kind)
         return item.get('dist') if item else None
     if field == 'metro_minutes':
         metro = x.get('metro') or {}

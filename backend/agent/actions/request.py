@@ -111,13 +111,17 @@ def apply_request(s, changes):
             s.search["pool"] = [x for x in s.search["listings"] if passes_hard_filters(x, p)
                                 and (not s.search.get("strict") or in_districts(x, s.search.get("named")))]
         s.search["shown_ids"].clear()
-        s.shown = []
+        # Видимые карточки — последний успешный снимок, не рабочий пул.
+        # Меняем их только после успешного вычисления следующей выдачи.
         s.calls.clear()
         s.agreed.clear()
         s.chosen = s.current = None
         s.journal.clear()
         notes.append("Пожелания учтены: при следующем показе подборки (show_selection) отфильтрую и пересортирую.")
     if any(p.get(k) != old_profile.get(k) for k in changes if k != 'seller_questions'):
+        s.selection_profile_stale=True
+        s.profile['_selection_stale']=True
+        if s.shown:s.push('selection_notice',text='Условия изменились. До успешного нового отбора сохранены предыдущие карточки; они относятся к прежним условиям.')
         s.call_targets = []
     emit_profile(s)
     return {"profile": profile_brief(p), "missing": missing, "red_lines_confirmed": s.red_lines_ok, "notes": notes}

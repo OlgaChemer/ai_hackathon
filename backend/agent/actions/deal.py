@@ -74,6 +74,8 @@ async def call_seller(s, listing_id: str) -> dict:
         raise ActionError("Рамки не подтверждены — сначала confirm_red_lines.")
     if not any(card['id'] == listing_id for card in s.shown) and listing_id not in s.prefs.liked:
         raise ActionError("Сначала show_selection: звонить можно только по квартире из текущей подборки.")
+    if s.selection_profile_stale:
+        raise ActionError('Сначала show_selection: обнови подборку под новые условия. Сохранённые на экране карточки относятся к прежним условиям.')
     if listing_id not in s.call_targets:
         raise ActionError('Клиент ещё не просил звонить по этой квартире. Уточнение фильтра не разрешает звонок; дождись выбора и просьбы звонить.')
     x = _listing(s, listing_id)

@@ -137,8 +137,9 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
         words=contract['properties']['places']['items']['properties']['words']['items']['properties']['source']['enum']
         self.assertIn('Москве',words)
         self.assertNotIn('Москва',words)
-        validation_schema=contract['properties']['fields']['properties']['rooms']['properties']['value']
-        self.assertEqual(validation_schema['minimum'],0)
+        validation_schema=contract['properties']['fields']['properties']['rooms_options']['properties']['value']
+        self.assertEqual(validation_schema['items']['minimum'],1)
+        self.assertNotIn('rooms',contract['properties']['fields']['properties'])
 
     async def test_qualitative_wish_without_a_numeric_limit_does_not_reject_other_fields(self):
         value=slots(fields={'rooms':2,'wishes':['рядом с метро']},places=['Москва'],

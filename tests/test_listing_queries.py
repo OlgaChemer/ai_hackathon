@@ -224,7 +224,7 @@ class DialogueStateTest(unittest.IsolatedAsyncioTestCase):
         s=self.agent();s.shown=s.search['pool'][:10];s.call_targets=['cian-1']
         request.apply_request(s,{'filters':[condition('delivery_year','eq',2027)]})
         self.assertTrue(s.red_lines_ok)
-        self.assertFalse(s.shown)
+        self.assertEqual(len(s.shown),10)  # видимый снимок сохранён; допуск к звонкам отозван
         self.assertFalse(s.call_targets)
         self.assertFalse(workflow.available(s,'call_seller'))
 

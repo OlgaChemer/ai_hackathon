@@ -18,7 +18,7 @@ def patch(live_llm=False):
     if not live_llm:
         main.get_llm = lambda: PolicyLLM()
 
-    async def collect(profile):
+    async def collect(profile,on_batch=None):
         rows=[]
         reports=[]
         cities=[profile['city'],*(profile.get('cities') or [])]
@@ -35,6 +35,7 @@ def patch(live_llm=False):
                             photo=None,description='Синтетическое объявление из тестового стенда'))
                     reports.append({'source':'Изолированный тестовый пул','status':'live','count':40,
                                     'city':city,'rooms':rooms,'new':new})
+                    if on_batch:on_batch(rows[-40:])
         return rows,reports
 
     async def nearby(rows,kinds,**kwargs):

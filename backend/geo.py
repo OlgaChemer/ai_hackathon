@@ -191,7 +191,7 @@ def _nearest(lat: float, lng: float, rows: list[list]) -> dict | None:
     return best
 
 
-async def _live(listings: list[dict], kinds: list[str]) -> bool:
+async def _live(listings: list[dict], kinds: list[str], on_progress=None) -> bool:
     """Спрашивает Overpass, что в 1 км от квартир (ответы кэшируются на время работы сервера)."""
     now = time.time()
     for key in list(_live_cache):
@@ -219,6 +219,7 @@ async def _live(listings: list[dict], kinds: list[str]) -> bool:
                 _live_cache[cache_key] = _nearest(x["lat"], x["lng"], rows[k])
                 _cache_times[cache_key] = time.time()
             _apply_osm(x, kinds)
+        if on_progress:on_progress()
     for x in listings:
         _apply_osm(x, kinds)
     return True
@@ -246,7 +247,7 @@ def _matches(tags: dict, kind: str) -> bool:
     return False
 
 
-async def nearby(listings: list[dict], kinds: list[str], budget_s: float | None = None) -> bool:
+async def nearby(listings: list[dict], kinds: list[str], budget_s: float | None = None, on_progress=None) -> bool:
     """None в nearby — проверено, не найдено; отсутствующий ключ — неизвестно.
 
     В БД сохраняем значение, источник, дату и координаты. Частичные результаты не теряются при таймауте.
@@ -274,16 +275,19 @@ async def nearby(listings: list[dict], kinds: list[str], budget_s: float | None 
                 x.setdefault("nearby_evidence", {})[k] = {"source": "osm", "checked_at": None}
         if any(k not in (x.get("nearby") or {}) for k in kinds):
             todo.append(x)
+    if on_progress:on_progress()
 
     async def fill():
         if settings.twogis_api_key:
             try:
-                await asyncio.wait_for(places.enrich(todo, kinds, RADIUS), timeout=min(8, budget * .7))
+                operation=places.enrich(todo,kinds,RADIUS,on_progress=on_progress) if on_progress else places.enrich(todo,kinds,RADIUS)
+                await asyncio.wait_for(operation, timeout=min(8, budget * .7))
             except asyncio.TimeoutError:
                 pass
         missing = [x for x in todo if any(k not in (x.get("nearby") or {}) for k in kinds)]
         if missing:
-            await _live(missing, kinds)
+            if on_progress:await _live(missing,kinds,on_progress=on_progress)
+            else:await _live(missing,kinds)
     if todo and budget > 0:
         try:
             await asyncio.wait_for(fill(), timeout=budget)

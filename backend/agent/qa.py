@@ -28,6 +28,7 @@ def build_context(s) -> dict:
                                    *(value[0] for value in FEATURES.values()),
                                    *(value[0] for value in geo.POI.values())]
     ctx['непроверяемые пожелания'] = p.get('_unsupported_conditions') or []
+    ctx['последняя ошибка обработки'] = s.last_issue
     if p.get("city"):
         ctx["запрос"] = p.get("summary") or {k: p.get(k) for k in ("city", "rooms", "budget_max")}
         ctx["способ оплаты"] = {"cash": "наличные", "mortgage_ready": "ипотека, взнос есть",

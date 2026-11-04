@@ -5,15 +5,18 @@ from . import validation
 from .criteria import CRITERIA_KEYS, SCALARS
 from .features import FEATURES
 from .. import geo
-from .listing_query import QUERY_SCHEMA, validate_filters, validate_query
+from .listing_query import validate_filters
+from . import selection_request
 
-EXCLUDED = {'city','cities','features','poi','soft_criteria','clear_criteria', *SCALARS}
+EXCLUDED = {'city','cities','rooms','features','poi','soft_criteria','clear_criteria', *SCALARS}
 INTENTS = ['search','refine','selection','call','seller_questions','question','continue','hold','other']
 
 
 def basic_fields(changes):
     fields={k:deepcopy(v) for k,v in changes['properties'].items() if k not in EXCLUDED}
-    fields['rooms_options']['description']='Все допустимые числа жилых комнат. 0 — только студия, 1 — однокомнатная, 2 — двухкомнатная и т.д. Неизвестность — null, не 0. Не сужай диапазон или перечисление.'
+    fields['rooms_options']['items']['minimum']=1
+    fields['rooms_options']['description']='Все явно допустимые числа комнат 1–5. 1–2 комнаты -> [1,2], без студии. Неизвестность — null. Студия задаётся отдельно studio_requested.'
+    fields['studio_requested']={'type':'boolean','description':'true — клиент явно просит/допускает студию; false — явно исключает. Неназванная студия — null, не true.'}
     return fields
 
 
@@ -70,7 +73,7 @@ def schema(changes, messages=None):
         'fields':object_schema({key:nullable(object_schema({'value':value,'source':field_source}))
                                for key,value in basic_fields(changes).items()}),
         'criteria':object_schema(criteria),
-        'selection':nullable(QUERY_SCHEMA),
+        'selection':nullable(selection_request.SCHEMA),
         'unsupported':{'type':'array','maxItems':5,'description':'Явно запрошенные условия, которых нет среди проверяемых полей/критериев. Не объявляй такие квартиры несуществующими.',
             'items':object_schema({'text':{'type':'string','maxLength':200},'source':field_source,
                                   'action':{'type':'string','enum':['add','remove']}})},
@@ -86,15 +89,22 @@ def decode(frame, profile, payload, changes_schema):
     """Единственный внешний формат — nullable fields/criteria по схеме модели."""
     validation.validate(frame, schema(changes_schema))
     intent = frame['intent']
-    commands = {'selection': frame['selection'], 'call_ids': frame['call_ids'], 'unsupported':frame['unsupported']}
+    query,operation=(selection_request.compile_request(frame['selection'],payload.get('workflow',{}).get('selection_query'))
+                     if frame['selection'] is not None else (None,'rank'))
+    commands = {'selection':query,'selection_operation':operation,'call_ids':frame['call_ids'],'unsupported':frame['unsupported']}
     input_texts = [row['text'].casefold() for row in payload['messages']]
     for condition in frame['unsupported']:
         if not condition['source'].strip() or not any(condition['source'].casefold() in text for text in input_texts):
             raise ValueError('Неподдержанное пожелание требует цитаты нового ввода')
         if condition['action']=='add' and (not condition['text'].strip() or not any(condition['text'].casefold() in text for text in input_texts)):
             raise ValueError('unsupported.add.text — буквальная цитата НОВОГО ввода. Не переноси старое неподдержанное условие в ответ на выбор альтернативы; тогда unsupported=[]')
-    if frame['selection'] is not None:
-        validate_query(frame['selection'])
+    if operation in ('compare','analyze','more') and not any(x['action']=='add' for x in frame['unsupported']):
+        # Чтение найденных данных не имеет полномочий изменять профиль.
+        frame=deepcopy(frame)
+        frame['fields']={k:None for k in frame['fields']}
+        frame['criteria']={k:None for k in frame['criteria']}
+        frame['places']=[]
+        intent='selection'
     if any(x['action']=='add' for x in frame['unsupported']) and intent not in ('search','refine','hold'):
         raise ValueError('Неподдержанное новое условие — refine/search/hold, не обычный вопрос и не выполненная команда')
     if intent not in ('search', 'refine', 'selection', 'call', 'seller_questions', 'hold'):
@@ -116,6 +126,10 @@ def decode(frame, profile, payload, changes_schema):
                 continue
             raise ValueError(f'Изменение {key} требует точной цитаты нового ввода; неназванное поле должно быть null')
         changes[key] = value
+    studio=changes.pop('studio_requested',None)
+    if studio is not None:
+        rooms=list(changes.get('rooms_options',profile.get('rooms_options') or []))
+        changes['rooms_options']=sorted(set([*rooms,0] if studio else [n for n in rooms if n!=0]))
     if intent == 'selection' and set(changes)=={'filters'}:
         # Составной запрос «сдача в 2027, покажи три больших» содержит и
         # условие, и команду выдачи. Тег нормализуется по типу данных, без
@@ -194,7 +208,11 @@ def decode(frame, profile, payload, changes_schema):
             if alias in payload['supported_cities']:
                 places.append(alias)
             else:
-                raise ValueError('Фрагмент не является поддержанным названием территории. Не меняй известный город; уточни только действительно неизвестное место.')
+                candidates=[city for city in payload['supported_cities'] if set(normalized.split())<=set(city.casefold().split())]
+                options=candidates[:5]
+                question=('Вы имеете в виду '+candidates[0]+'?' if len(candidates)==1 else
+                          'Какой город вы имеете в виду: '+ ' или '.join(options)+'?' if options else
+                          'Не смог сопоставить название «'+name+'» с городом. Напишите полное название города.')
     if places:
         places = list(dict.fromkeys(places))
         changes.update(city=places[0], cities=places[1:])

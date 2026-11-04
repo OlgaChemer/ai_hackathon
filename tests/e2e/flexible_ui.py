@@ -29,6 +29,26 @@ async def scenario(browser,base,width):
     await page.wait_for_function("!document.querySelector('[data-selection=more]').disabled")
     assert await page.locator('.msg-thinking').count()==0
     assert await page.locator('.msg-agent').filter(has_text='Отобрал для вас 10').count()>=1
+    # Прогресс обновляет тот же узел; старый пустой SSE-результат не стирает карточки.
+    await page.evaluate("""async()=>{
+      const {state}=await import('/js/state.js');
+      state.es.onmessage(new MessageEvent('message',{data:JSON.stringify({type:'search_progress',on:true,text:'Получено 2 реальных объявления'})}));
+    }""")
+    await page.wait_for_function("document.querySelector('[data-search-progress]')?.textContent.includes('Получено 2')")
+    await page.evaluate("window.progressNode=document.querySelector('[data-search-progress]')")
+    await page.evaluate("""async()=>{
+      const {state}=await import('/js/state.js');
+      state.es.onmessage(new MessageEvent('message',{data:JSON.stringify({type:'search_progress',on:true,text:'Получено 5 реальных объявлений'})}));
+    }""")
+    await page.wait_for_function("document.querySelector('[data-search-progress]')?.textContent.includes('Получено 5')")
+    assert await page.evaluate("window.progressNode===document.querySelector('[data-search-progress]')")
+    await page.evaluate("""async()=>{
+      const {state}=await import('/js/state.js');
+      state.es.onmessage(new MessageEvent('message',{data:JSON.stringify({type:'search_progress',on:false})}));
+      state.es.onmessage(new MessageEvent('message',{data:JSON.stringify({type:'result',step:4,kind:'selection',data:{cards:[]}})}));
+    }""")
+    await page.wait_for_function("document.querySelector('#stage').textContent.includes('Сохранена предыдущая подборка')")
+    assert await page.locator('.offer').count()==10
     # Старое решение остаётся до следующей реплики, устаревший resolved не закрывает новое.
     result=await page.evaluate("""async () => {
       const {state,chatLog,addMsg}=await import('/js/state.js');

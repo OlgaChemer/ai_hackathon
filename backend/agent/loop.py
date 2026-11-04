@@ -65,6 +65,8 @@ def state_brief(s) -> str:
         lines.append('Дополнительные вопросы продавцу: ' + json.dumps(s.profile['seller_questions'],ensure_ascii=False))
     if s.profile.get('_unsupported_conditions'):
         lines.append('Система НЕ проверяет эти пожелания: ' + json.dumps(s.profile['_unsupported_conditions'],ensure_ascii=False))
+    if s.last_issue:
+        lines.append('Последняя ошибка системы: '+s.last_issue['message'])
     return "\n".join(lines)
 
 
@@ -183,7 +185,7 @@ async def run(s) -> None:
                 turn = Turn(s.id, settings.agent_turn_timeout_s, s.signal)
                 continue
             if isinstance(exc, understanding.UnderstandingError):
-                text = "Не удалось надёжно проверить условия. Уточните запрос — прежние условия сохранены."
+                text = understanding.failed_input(s,exc)
             elif isinstance(exc, LLMBusy):
                 text = "Сейчас много обращений, модель занята. Напишите чуть позже — продолжу с сохранёнными условиями."
             elif isinstance(exc, LLMError):

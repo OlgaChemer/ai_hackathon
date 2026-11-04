@@ -22,7 +22,7 @@ def markets(profile: dict) -> list[bool]:
     return {None: [False, True], "new": [True], "both": [False, True]}.get(profile.get("housing"), [False])
 
 
-async def _collect_one(profile: dict) -> tuple[list[dict], list[dict]]:
+async def _collect_one(profile: dict, on_batch=None) -> tuple[list[dict], list[dict]]:
     """Возвращает (объявления, отчёт по рынкам): вторичка и/или новостройки — по выбору клиента."""
     items: list[dict] = []
     report: list[dict] = []
@@ -39,6 +39,7 @@ async def _collect_one(profile: dict) -> tuple[list[dict], list[dict]]:
         got = store.apply_corrections(cian.drop_outliers(got))
         items += got
         report.append({"source": label, "count": len(got), **rep, "new": new})
+        if on_batch:on_batch(got)
     return items, report
 
 
@@ -92,10 +93,10 @@ def unique(items):
     return list({x["id"]: x for x in items}.values())
 
 
-async def collect(profile: dict):
+async def collect(profile: dict, on_batch=None):
     items, reports = [], []
     for q in queries(profile):
-        got, report = await _collect_one(q)
+        got, report = await _collect_one(q,on_batch=on_batch) if on_batch else await _collect_one(q)
         items.extend(got)
         reports.extend({**r, "city": q["city"], "rooms": q["rooms"]} for r in report)
     return unique(items), reports

@@ -73,6 +73,9 @@ class Session:
     selection_query: dict = field(default_factory=dict)
     selection_scope_ids: list[str] = field(default_factory=list)
     selection_dirty: bool = False
+    selection_operation: str = 'rank'
+    selection_profile_stale: bool = False
+    last_issue: dict | None = None
     call_targets: list[str] = field(default_factory=list)
     calls: dict[str, dict] = field(default_factory=dict)     # итоги звонков по id объявления
     agreed: dict[str, int] = field(default_factory=dict)     # цена, которую клиент подтвердил
@@ -114,7 +117,8 @@ class Session:
         self.calls.clear()
         self.agreed.clear()
         self.chosen = self.current = None
-        self.shown = []
+        # Последняя видимая подборка остаётся до успешного нового результата.
+        # Допуски действий проверяют новый профиль и search, а не факт показа.
         self.call_targets = []
         self.journal.clear()
 
@@ -227,13 +231,13 @@ class Session:
         if self.refuse(text):
             return "blocked"
         self.accept_request(ev["text"], ev["seq"])
-        if self.pending:
+        if self.pending or self.last_issue is not None:
             from . import understanding
             from ..llm import LLMError
             try:
                 review = await understanding.prepare_from_http(self)
-            except (LLMError, TurnStopped):
-                await self.say("Не удалось надёжно разобрать сообщение. Попробуйте ещё раз — текущая карточка и условия сохранены.", await_reply=True)
+            except (LLMError, TurnStopped) as exc:
+                await self.say(understanding.failed_input(self,exc), await_reply=True)
                 return "unresolved"
             if review and review['intent'] == 'question' and review['decision'] != 'clarify':
                 self.request_review_seq = review['seq']
@@ -288,7 +292,17 @@ def restore_session(chat_id: str, text: str, llm: LLMClient) -> Session:
     profile, memory, vid, uid, last_seq = info or (None, None, None, None, 0)
     s = Session(id=chat_id, query=text.strip(), llm=llm, visitor_id=vid, user_id=uid, seq=last_seq or 0)
     s.profile = dict(profile or {})
+    s.last_issue=s.profile.get('_last_issue')
+    s.selection_profile_stale=bool(s.profile.get('_selection_stale'))
     s.selection_query = s.profile.get('_selection_query') or {}
+    previous=db.safe(repo.last_nonempty_selection,chat_id)
+    if previous:
+        s.shown=previous['cards']
+        s.selection_scope_ids=[x['id'] for x in s.shown]
+        s.selection_query=previous.get('query') or s.selection_query
+        s.profile['_selection_query']=dict(s.selection_query)
+        s.prefs.liked=list(previous.get('liked') or [])
+        s.prefs.disliked=list(previous.get('disliked') or [])
     s.messages = close_dangling_calls(list(memory or []))
     if '_approved_budget_max' not in s.profile:
         # Старый формат: доверяем только результатам серверных инструментов, не репликам.
