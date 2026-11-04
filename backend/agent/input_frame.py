@@ -141,6 +141,13 @@ def decode(frame, profile, payload, changes_schema):
             raise ValueError('Неподдержанное пожелание требует цитаты нового ввода')
         if condition['action']=='add' and (not condition['text'].strip() or not any(condition['text'].casefold() in text for text in input_texts)):
             raise ValueError('unsupported.add.text — буквальная цитата НОВОГО ввода. Не переноси старое неподдержанное условие в ответ на выбор альтернативы; тогда unsupported=[]')
+        if condition['action']=='remove':
+            known=payload.get('workflow',{}).get('unsupported_conditions') or []
+            if known and condition['text'] not in known:
+                label=condition['text'].strip().casefold()
+                matches=[old for old in known if label and (label in old.casefold() or old.casefold() in label)]
+                if len(matches)!=1:raise ValueError('Для отмены выбери точное прежнее условие из workflow.unsupported_conditions')
+                condition['text']=matches[0]
     if operation in ('compare','analyze','more') and not any(x['action']=='add' for x in frame['unsupported']):
         # Чтение найденных данных не имеет полномочий изменять профиль.
         frame=deepcopy(frame)

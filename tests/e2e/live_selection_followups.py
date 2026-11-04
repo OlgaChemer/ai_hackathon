@@ -47,9 +47,11 @@ async def main(base):
         assert any('не проверено' in text.casefold() and 'бассейн' in text.casefold() for text in d.messages),d.messages[-4:]
         reports.append({'input':'unsupported pool -> accepted alternative','cards':4,'honest_limitation':True})
         print(json.dumps(reports[-1],ensure_ascii=False),flush=True)
+        start=len(d.messages)
         await d.send('Бассейн больше не нужен. Покажи 3 самых выгодных.')
         result=await d.round()
         assert result['outcome']=='selection' and len(d.cards)==3,result
+        assert not any(message.startswith('В этой подборке не проверено:') and 'бассейн' in message.casefold() for message in d.messages[start:]),d.messages[start:]
         reports.append({'input':'remove unsupported condition','cards':3})
         start=len(d.messages)
         await d.send('Нужна собственная сауна внутри квартиры.')
