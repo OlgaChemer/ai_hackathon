@@ -85,10 +85,12 @@ def decode(frame, profile, payload, changes_schema):
     commands = {'selection': frame['selection'], 'call_ids': frame['call_ids']}
     if frame['selection'] is not None:
         validate_query(frame['selection'])
-    if intent not in ('search', 'refine', 'selection', 'call', 'seller_questions'):
+    if intent not in ('search', 'refine', 'selection', 'call', 'seller_questions', 'hold'):
         if frame['selection'] is not None or frame['call_ids'] is not None:
             raise ValueError('Информационный вопрос/остановка не могут исполнять команды')
         return {'intent': intent, 'decision': 'unchanged', 'changes': {}, 'question': '', 'options': []}
+    if intent == 'hold' and (frame['selection'] is not None or frame['call_ids'] is not None):
+        raise ValueError('Остановка не разрешает поиск или звонок')
     sources = {row['field']:row['text'].strip() for row in frame['field_sources']}
     input_texts = [row['text'].casefold() for row in payload['messages']]
     changes = {}

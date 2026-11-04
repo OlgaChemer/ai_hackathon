@@ -58,6 +58,7 @@ if __name__=='__main__':
     args=ap.parse_args()
     os.environ['DATABASE_URL']=f"sqlite:///{tempfile.mkdtemp(prefix='flexible-agent-')}/app.db"
     os.environ['REFRESH_AT']=''
+    os.environ['COOKIE_SECURE']='false'  # только изолированный HTTP-стенд на loopback
     patch(args.live_llm)
     import uvicorn
     from backend.main import app

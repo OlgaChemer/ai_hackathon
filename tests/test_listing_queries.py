@@ -108,6 +108,16 @@ class QueryEngineTest(unittest.TestCase):
             input_frame.decode(frame,{'city':'Казань'},{'messages':[{'text':'школа рядом','options':[]}],
                 'supported_cities':['Казань'],'ambiguous_catalog_names':{}},CHANGE_SCHEMA)
 
+    def test_hold_can_save_seller_questions_without_permitting_any_action(self):
+        text='Уточни шумоизоляцию, пока не звони'
+        frame=slots(fields={'seller_questions':['Как со звукоизоляцией?']},intent='hold')
+        frame['field_sources']=[{'field':'seller_questions','text':'Уточни шумоизоляцию'}]
+        result=input_frame.decode(frame,{'city':'Казань'},{'messages':[{'text':text,'options':[]}],
+            'supported_cities':['Казань'],'ambiguous_catalog_names':{}},CHANGE_SCHEMA)
+        self.assertEqual(result['intent'],'hold')
+        self.assertEqual(result['changes']['seller_questions'],['Как со звукоизоляцией?'])
+        self.assertIsNone(result['call_ids'])
+
 
 class DialogueStateTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self):

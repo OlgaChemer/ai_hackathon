@@ -115,10 +115,14 @@ function presentDecision(card, live) {
 function archiveDecision(card) {
   card.querySelectorAll("button, input, select").forEach((x) => (x.disabled = true));
   const extra = card.querySelector("[data-extra]");
-  if (extra?.childElementCount && !card.querySelector(".decision-archive")) {
+  if ((extra?.childElementCount || card.classList.contains('confirm-clarify')) && !card.querySelector(".decision-archive")) {
     const details = el(html`<details class="decision-archive"><summary>Параметры решения</summary></details>`);
     extra.replaceWith(details);
     details.append(extra);
+    if (card.classList.contains('confirm-clarify')) {
+      const question = card.querySelector(':scope > p');
+      if (question) details.prepend(question);
+    }
   }
   updateDecisionLayout();
 }
