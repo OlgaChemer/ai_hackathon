@@ -6,7 +6,7 @@ from backend.agent import input_frame
 from backend.agent.request_schema import CHANGE_SCHEMA
 
 
-def slots(*, fields=None, criteria=None, places=None, intent="refine"):
+def slots(*, fields=None, criteria=None, places=None, intent="refine", selection=None, call_ids=None):
     schema = input_frame.schema(CHANGE_SCHEMA)
     return {
         "places": [
@@ -17,6 +17,7 @@ def slots(*, fields=None, criteria=None, places=None, intent="refine"):
             **{key: None for key in schema["properties"]["fields"]["properties"]},
             **(fields or {}),
         },
+        "field_sources": [],
         "criteria": {
             **{key: None for key in schema["properties"]["criteria"]["properties"]},
             **(criteria or {}),
@@ -24,6 +25,8 @@ def slots(*, fields=None, criteria=None, places=None, intent="refine"):
         "question": "",
         "options": [],
         "intent": intent,
+        "selection": selection,
+        "call_ids": call_ids,
     }
 
 
@@ -34,6 +37,7 @@ def input_reply(text, changes=None, *, intent="refine", profile=None):
     for key in result["fields"]:
         if key in changes:
             result["fields"][key] = changes[key]
+            result['field_sources'].append({'field':key,'text':text})
     preferred = set(changes.get("soft_criteria", profile.get("soft_criteria") or []))
     for key in result["criteria"]:
         if key in changes:

@@ -313,6 +313,8 @@ def normalize(o: dict, city: str, today: date | None = None, new: bool = False) 
 def _new_fields(o: dict, terms: dict) -> dict:
     nb = o.get("newbuilding") or {}
     deadline, finished = _deadline(o)
+    house = nb.get('house') or {}
+    date = house.get('finishDate') or (o.get('building') or {}).get('deadline') or {}
     developer = _developer(o)
     user = o.get("user") or {}
     if _from_developer(o):
@@ -325,6 +327,8 @@ def _new_fields(o: dict, terms: dict) -> dict:
         "is_new": True,
         "complex": nb.get("name") or None,          # ЖК
         "deadline": deadline,                       # «4 кв. 2027» / «дом сдан»
+        "delivery_year": date.get('year'),
+        "delivery_quarter": QUARTERS.get(date.get('quarter')),
         "finished": finished,
         "developer": developer,
         "sale_type": SALE_TYPES.get(terms.get("saleType"), terms.get("saleType")),

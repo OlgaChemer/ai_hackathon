@@ -23,8 +23,8 @@ def validate(value, schema: dict, depth: int = 0) -> None:
     if kind in ("integer", "number"):
         if (type(value) is float and not math.isfinite(value)) or not schema.get("minimum", -1e12) <= value <= schema.get("maximum", 1e12):
             raise ValueError("Число вне допустимого диапазона")
-    elif kind == "string" and len(value) > schema.get("maxLength", 2000):
-        raise ValueError("Слишком длинный текст")
+    elif kind == "string" and not schema.get('minLength',0) <= len(value) <= schema.get("maxLength", 2000):
+        raise ValueError("Неверная длина текста")
     elif kind == "array":
         if len(value) < schema.get("minItems", 0):
             raise ValueError("Слишком мало элементов")
@@ -55,7 +55,8 @@ def choice(*values):
 CONFIRMATIONS = {
     "clarify": {}, "price": {}, "object": {}, "sign": {},
     "red_lines": {"budget_max": number(100_000)},
-    "call": {"mode": choice("auto", "human", "phone")},
+    "call": {"mode": choice("auto", "human", "phone"),
+             "questions":{"type":"array","maxItems":15,"items":{"type":"string","maxLength":300}}},
     "payment": {"payment": choice("cash", "mortgage_ready", "mortgage_saving")},
     "housing": {"housing": choice("secondary", "new", "both")},
     "family": {"children": number(0, 30), "youngest_age": {"type": ["number", "null"], "minimum": 0, "maximum": 100}, "matcap": number()},

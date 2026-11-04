@@ -26,6 +26,12 @@ class ReviewModel(LLMClient):
             raise answer
         if callable(answer):
             answer = await answer()
+        # Краткие unit-фикстуры slots не знают текст: снабжаем их цитатами.
+        # Отсутствующие/ложные evidence отдельно проверяются напрямую через decode.
+        if isinstance(answer,dict) and answer.get('field_sources') == []:
+            text=json.loads(messages[-1]['content'])['data']['messages'][-1]['text']
+            answer=deepcopy(answer)
+            answer['field_sources']=[{'field':k,'text':text} for k,v in answer.get('fields',{}).items() if v is not None]
         return LLMResponse(json.dumps(answer, ensure_ascii=False))
 
 

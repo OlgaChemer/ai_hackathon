@@ -91,6 +91,7 @@ class ConfirmRequest(BaseModel):
     voice_mode: StrictBool = False
     kind: str = Field(max_length=40)
     approved: StrictBool = False
+    decision_id: str | None = Field(default=None, max_length=40)
     data: dict = {}
 
 
@@ -364,7 +365,7 @@ async def confirm(sid: str, req: ConfirmRequest, request: Request):
     _cooldown(s)
     try:
         s.voice_mode = req.voice_mode
-        resolved = s.resolve(req.kind, req.approved, req.data)
+        resolved = s.resolve(req.kind, req.approved, req.data, req.decision_id)
     except guard.InputRejected as exc:
         raise HTTPException(422, str(exc)) from exc
     if not resolved:

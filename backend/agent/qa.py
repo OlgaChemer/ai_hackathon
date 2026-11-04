@@ -45,6 +45,9 @@ def build_context(s) -> dict:
         ctx["текущая квартира"] = {"адрес": x.get("address"), "цена в объявлении": fmt(x["price"]),
                                    "справедливая цена": fmt(fp["fair"]), "коридор": f"{fmt(fp['low'])}–{fmt(fp['high'])}",
                                    "основа оценки": fp["basis"], "цель торга": fmt(fp["target"])}
+    if s.current:
+        from .features import missing_info
+        ctx['программа разговора'] = [q['question'] for q in missing_info(s.current['listing'],3,s.prefs.features)] + list(p.get('seller_questions') or [])
     if s.journal.get("final_price"):
         ctx["итог торга"] = {"цена объявления": fmt(s.journal["base_price"]), "договорились": fmt(s.journal["final_price"]),
                              "экономия": fmt(s.journal.get("savings", 0))}

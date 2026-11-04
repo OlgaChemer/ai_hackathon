@@ -16,10 +16,12 @@ async function request(path, options = {}) {
 
 export const api = {
   voiceMode: false,
+  decisions: {},
   health: () => request("/api/health"),
   start: (query) => request("/api/session", { method: "POST", body: { query, voice_mode: api.voiceMode } }),
-  confirm: (sid, kind, approved, data = {}) =>
-    request(`/api/session/${sid}/confirm`, { method: "POST", body: { kind, approved, data, voice_mode: api.voiceMode } }),
+  confirm: (sid, kind, approved, data = {}, decisionId = api.decisions[kind]) =>
+    request(`/api/session/${sid}/confirm`, { method: "POST", body: { kind, approved, data, voice_mode: api.voiceMode,
+      ...(decisionId ? {decision_id: decisionId} : {}) } }),
   seller: (sid, text) => request(`/api/session/${sid}/seller`, { method: "POST", body: { text } }),
   product: (sid, product, amount) => request(`/api/session/${sid}/product`, { method: "POST", body: { product, amount } }),
   economics: (params) => request(`/api/economics?${new URLSearchParams(params)}`),

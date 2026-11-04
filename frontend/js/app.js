@@ -124,6 +124,8 @@ async function handle(ev, myGen) {
       await pause(ev.kind === "selection" ? 0 : 500);
       break;
     case "confirm":
+      showThinking(false);
+      api.decisions[ev.kind] = ev.decision_id;
       if (ev.kind !== "selection") setChatExpanded(true);
       if (ev.kind === "call") {
         state.call = createCall(ev);
@@ -140,7 +142,11 @@ async function handle(ev, myGen) {
       }
       confirmCard(ev);
       break;
-    case "resolved": resolved(ev); break;
+    case "resolved":
+      if (ev.decision_id && api.decisions[ev.kind] && ev.decision_id !== api.decisions[ev.kind]) break;
+      delete api.decisions[ev.kind];
+      resolved(ev);
+      break;
     case "product_opened":
       state.opened[ev.product] = ev.amount;
       if (!quiet && state.results[2]) renderChatResult(2);
@@ -410,10 +416,8 @@ async function sendText(text) {
     // вопрос агенту («что такое СБР?») или отклонённое фильтром сообщение карточку не закрывают:
     // подборка и подтверждение ждут дальше, их кнопки должны работать
     if (["question", "blocked", "unresolved"].includes(r.handled_as)) return;
-    if (state.awaiting === "clarify") {
-      $("chatLog").querySelectorAll(".confirm-clarify:not(.is-done)").forEach((c) => c.classList.add("is-done"));
-    }
-    state.awaiting = null;
+    // Актуальное ожидание задаёт только SSE confirm/resolved. Поздний HTTP-ответ
+    // не должен стирать уже пришедшую карточку следующего шага.
   } catch (e) {
     addMsg("error", `Сообщение не отправлено: ${e.message}`);
   }

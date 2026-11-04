@@ -16,7 +16,7 @@ def available(s, name: str) -> bool:
     p = s.profile
     if s.request_intent == "hold" and name not in ("update_request", "ask_client"):
         return False
-    work_intent = s.request_intent in (None, "search", "refine", "continue")
+    work_intent = s.request_intent in (None, "search", "refine", "selection", "call", "seller_questions", "continue")
     ready = not missing_required(p)
     finance_ready = p.get("payment") == "cash" or (
         s.mortgage is not None
@@ -43,7 +43,7 @@ def available(s, name: str) -> bool:
         "show_selection": s.search is not None,
         "offer_search_alternatives": s.search is not None,
         "probe_budget": s.search is not None,
-        "call_seller": s.search is not None and search_ready and bool(s.shown),
+        "call_seller": s.search is not None and search_ready and bool(s.shown) and bool(s.call_targets),
         "confirm_price": bool(s.calls) and s.red_lines_ok,
         "plan_viewing": bool(s.agreed) and s.red_lines_ok,
         "prepare_deal": bool(s.chosen)
@@ -56,7 +56,7 @@ def available(s, name: str) -> bool:
 
 def next_search_action(s):
     """Только явное рабочее намерение разрешает продолжение без нового ответа клиента."""
-    if s.request_intent not in ("search", "refine", "continue") or missing_required(
+    if s.request_intent not in ("search", "refine", "selection", "continue") or missing_required(
         s.profile
     ):
         return None
@@ -65,7 +65,7 @@ def next_search_action(s):
             return name
     if s.search is None:
         return "search_listings" if available(s, "search_listings") else None
-    if not s.shown:
+    if not s.shown or s.selection_dirty:
         return (
             "show_selection"
             if any(selectable(x, s.prefs) for x in s.search["pool"])

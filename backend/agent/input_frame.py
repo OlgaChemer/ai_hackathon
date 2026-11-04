@@ -5,9 +5,10 @@ from . import validation
 from .criteria import CRITERIA_KEYS, SCALARS
 from .features import FEATURES
 from .. import geo
+from .listing_query import QUERY_SCHEMA, validate_filters, validate_query
 
 EXCLUDED = {'city','cities','features','poi','soft_criteria','clear_criteria', *SCALARS}
-INTENTS = ['search','refine','question','continue','hold','other']
+INTENTS = ['search','refine','selection','call','seller_questions','question','continue','hold','other']
 
 
 def basic_fields(changes):
@@ -41,6 +42,9 @@ def source_words(messages):
 
 
 def schema(changes, messages=None):
+    from ..sources import SUPPORTED_CITIES
+    place_words = sorted({word for city in SUPPORTED_CITIES for word in city.split()} |
+                         {'Подмосковье','Питер','СПб','МСК','МО'})
     priorities={'type':'string','enum':['required','preferred','remove','unmentioned']}
     criteria={}
     labels={**SCALARS,**{f'feature:{k}':v[0] for k,v in FEATURES.items()},**{f'poi:{k}':v[0] for k,v in geo.POI.items()}}
@@ -56,15 +60,21 @@ def schema(changes, messages=None):
     if messages is not None:
         source['enum']=source_words(messages)
     return object_schema({
-        'places':{'type':'array','maxItems':3,'description':'Только названные итоговые территории поиска. Если не менялись — пустой список.',
+        'places':{'type':'array','maxItems':3,'description':'Только явно названные города/области. При неизменном городе пусто. Центр, школа, новостройка, срок сдачи НЕ территории.',
             'items':object_schema({'words':{'type':'array','minItems':1,'maxItems':8,'items':object_schema({
                 'source':source,
-                'lemma':{'type':'string','maxLength':80,'description':'Начальная форма этого слова. Не добавляй отсутствующие слова.'}})}})},
+                'lemma':{'type':'string','enum':place_words,'description':'Слово названия города в начальной форме. Не добавляй отсутствующие слова. Неподдержанный город — предметный question и places=[]; не подставляй похожий.'}})}})},
         'fields':object_schema({key:nullable(value) for key,value in basic_fields(changes).items()}),
+        'field_sources':{'type':'array','maxItems':30,'description':'Для каждого НЕ-null изменённого fields укажи точную цитату нового ввода. Не цитируй profile/вопрос агента; неизвестное не заполняй.',
+                         'items':object_schema({'field':{'type':'string','enum':list(basic_fields(changes))},
+                                                'text':{'type':'string','minLength':1,'maxLength':1000}})},
         'criteria':object_schema(criteria),
+        'selection':nullable(QUERY_SCHEMA),
+        'call_ids':nullable({'type':'array','maxItems':10,'items':{'type':'string','maxLength':80},
+                            'description':'Только при явной просьбе ЗВОНИТЬ: ID из показанных карточек; [] — по понравившимся. Иначе null. Вопросы продавцу не разрешают звонок.'}),
         'question':{'type':'string','maxLength':500,'description':'Один вопрос только при неясности, иначе пустая строка.'},
         'options':{'type':'array','maxItems':5,'items':{'type':'string','maxLength':100}},
-        'intent':{'type':'string','enum':INTENTS,'description':'question — информационный вопрос; refine — изменить условия; hold — пока не искать; search — начать; continue — продолжить; other — остальное.'},
+        'intent':{'type':'string','enum':INTENTS,'description':'selection — обработать текущие результаты, сравнить, оставить N; call — явно позвонить; seller_questions — добавить вопросы продавцу; refine — фильтры; question — информация; search — поиск; continue — продолжить; hold — стоп.'},
     })
 
 
@@ -72,9 +82,30 @@ def decode(frame, profile, payload, changes_schema):
     """Единственный внешний формат — nullable fields/criteria по схеме модели."""
     validation.validate(frame, schema(changes_schema))
     intent = frame['intent']
-    if intent not in ('search', 'refine'):
+    commands = {'selection': frame['selection'], 'call_ids': frame['call_ids']}
+    if frame['selection'] is not None:
+        validate_query(frame['selection'])
+    if intent not in ('search', 'refine', 'selection', 'call', 'seller_questions'):
+        if frame['selection'] is not None or frame['call_ids'] is not None:
+            raise ValueError('Информационный вопрос/остановка не могут исполнять команды')
         return {'intent': intent, 'decision': 'unchanged', 'changes': {}, 'question': '', 'options': []}
-    changes = {key: value for key, value in frame['fields'].items() if value is not None}
+    sources = {row['field']:row['text'].strip() for row in frame['field_sources']}
+    input_texts = [row['text'].casefold() for row in payload['messages']]
+    changes = {}
+    for key,value in frame['fields'].items():
+        if value is None or value == profile.get(key):
+            continue
+        quote = sources.get(key,'')
+        if not quote or not any(quote.casefold() in text for text in input_texts):
+            # Пустые неназванные значения от модели не стирают прежние условия.
+            if value in (False, [], ''):
+                continue
+            raise ValueError(f'Изменение {key} требует точной цитаты нового ввода; неназванное поле должно быть null')
+        changes[key] = value
+    if 'filters' in changes:
+        validate_filters(changes['filters'])
+    if frame['call_ids'] is not None and intent != 'call':
+        raise ValueError('Звонок требует отдельного явного намерения клиента')
     soft = set(profile.get('soft_criteria') or [])
     lists = {key: list(profile.get(key) or []) for key in ('poi', 'features')}
     for key, value in frame['criteria'].items():
@@ -142,14 +173,14 @@ def decode(frame, profile, payload, changes_schema):
             if alias in payload['supported_cities']:
                 places.append(alias)
             else:
-                question = f'Города «{name}» пока нет среди поддерживаемых. В каком городе искать?'
-                options = []
+                raise ValueError('Фрагмент не является поддержанным названием территории. Не меняй известный город; уточни только действительно неизвестное место.')
     if places:
         places = list(dict.fromkeys(places))
         changes.update(city=places[0], cities=places[1:])
     if question.strip():
-        return {'intent': intent, 'decision': 'clarify', 'changes': {}, 'question': question, 'options': options}
+        return {'intent': intent, 'decision': 'clarify', 'changes': {}, 'question': question, 'options': options,
+                'selection':None,'call_ids':None}
     if options:
         raise ValueError('Варианты ответа требуют уточняющего вопроса')
     return {'intent': intent, 'decision': 'apply' if changes else 'unchanged', 'changes': changes,
-            'question': '', 'options': []}
+            'question': '', 'options': [], **commands}

@@ -41,7 +41,7 @@ HEADERS = {"User-Agent": "domclick-agent-prototype/0.2 (hackathon demo)"}
 POI = {
     "school": ("школа", ['nwr["amenity"="school"]']),
     "kindergarten": ("детский сад", ['nwr["amenity"="kindergarten"]']),
-    "clinic": ("поликлиника", ['nwr["amenity"~"^(clinic|doctors)$"]']),
+    "clinic": ("поликлиника", ['nwr["amenity"~"^(clinic|doctors)$"]', 'nwr["healthcare"~"^(clinic|doctor)$"]']),
     "hospital": ("больница", ['nwr["amenity"="hospital"]']),
     "park": ("парк", ['nwr["leisure"~"^(park|garden|nature_reserve)$"]["name"]', 'nwr["landuse"="forest"]["name"]']),
     "water": ("вода", ['nwr["natural"="water"]["name"]', 'way["waterway"~"^(river|canal)$"]["name"]']),
@@ -54,9 +54,9 @@ POI = {
 AREAS = {"park", "water"}
 STEP_DEG = 0.0006  # ~60 м между сохранёнными точками контура
 
-LIVE_CHUNK = 25    # квартир в одном живом запросе
+LIVE_CHUNK = 8     # небольшая пачка успевает в общий бюджет, частичные результаты сохраняются
 POI_TTL_DAYS = 30  # что рядом с домом: пересчитываем раз в месяц
-LIVE_TIMEOUT = 60  # с — главный сервер Overpass бывает задумчив
+LIVE_TIMEOUT = 4   # каждый upstream должен оставить время зеркалу и обработке ответа
 
 _live_cache: dict[tuple[float, float, str], dict | None] = {}
 _cache_times: dict[tuple, float] = {}
@@ -207,7 +207,7 @@ async def _live(listings: list[dict], kinds: list[str]) -> bool:
         around = [f"(around:{RADIUS},{x['lat']:.5f},{x['lng']:.5f})" for x in chunk]
         t0 = time.monotonic()
         try:
-            elements = await _overpass(_query(kinds, around, LIVE_TIMEOUT), timeout=LIVE_TIMEOUT + 10)
+            elements = await _overpass(_query(kinds, around, LIVE_TIMEOUT), timeout=LIVE_TIMEOUT + 1)
         except RuntimeError as exc:
             log.warning("%s", exc)
             return False

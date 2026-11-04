@@ -14,6 +14,8 @@ from ..config import settings
 
 URL = 'https://catalog.api.2gis.com/3.0/items'
 RUBRICS = {'school': '245', 'kindergarten': '237', 'park': '168'}
+QUERIES = {'clinic':'поликлиника','hospital':'больница','pharmacy':'аптека',
+           'shop':'супермаркет','mall':'торговый центр','fitness':'фитнес'}
 _retry_at = 0.0
 _last_provider = 'auto'
 
@@ -36,9 +38,14 @@ async def enrich(listings: list[dict], kinds: list[str], radius: int) -> None:
             async with sem:
                 if time.monotonic() < _retry_at:
                     return
-                params = {'rubric_id': RUBRICS[kind], 'point': f"{x['lng']},{x['lat']}",
+                params = {'point': f"{x['lng']},{x['lat']}",
                           'radius': radius, 'key': settings.twogis_api_key, 'page_size': 10,
                           'sort': 'distance', 'fields': 'items.point,items.name'}
+                if kind in RUBRICS:
+                    params['rubric_id'] = RUBRICS[kind]
+                else:
+                    # Документированный поиск Places по категории/названию, без вымышленных rubric ID.
+                    params.update(q=QUERIES[kind], type='branch')
                 try:
                     response = await client.get(URL, params=params)
                     response.raise_for_status()
@@ -80,5 +87,5 @@ async def enrich(listings: list[dict], kinds: list[str], radius: int) -> None:
                     _retry_at = time.monotonic() + 60
                     _last_provider = 'osm'
         tasks = [one(x, k) for x in listings for k in kinds
-                 if k in RUBRICS and k not in (x.get('nearby') or {})]
+                 if k in RUBRICS.keys() | QUERIES.keys() and k not in (x.get('nearby') or {})]
         await asyncio.gather(*tasks)

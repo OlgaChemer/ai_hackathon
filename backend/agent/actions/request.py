@@ -8,14 +8,14 @@ from ..profile import in_districts, merge_profile, missing_required, passes_hard
 from . import ActionError, action
 
 LIST_KEYS = ("districts", "avoid_districts", "features", "poi", "wishes", "material", "soft_criteria", "rooms_options", "cities")
-CORE_KEYS = ("city", "rooms", "budget_max", "okrug", "housing", "rooms_options", "cities", "districts", "prefer_center")  # изменения отзывают подборку; согласие на лимит — только при смене суммы
+CORE_KEYS = ("city", "rooms", "budget_max", "okrug", "housing", "rooms_options", "cities", "districts", "prefer_center", "center_required")
 
 
 def profile_brief(p: dict) -> dict:
     """Профиль для модели: только то, что известно."""
     keys = ("city", "cities", "rooms", "rooms_options", "prefer_center", "budget_max", "okrug", "districts", "avoid_districts", "housing", "payment", "children",
             "youngest_age", "matcap", "kitchen_min", "area_min", "not_first_floor", "not_last_floor", "metro_max_minutes", "wishes",
-            "condition", "material", "year_min", "timeline", "soft_criteria")
+            "condition", "material", "year_min", "timeline", "soft_criteria", "filters", "center_required", "seller_questions")
     out = {k: p[k] for k in keys if p.get(k) not in (None, [], "", False)}
     if p.get("matcap") is False:
         out["matcap"] = False
@@ -51,6 +51,14 @@ async def update_request(s) -> dict:
 def updated_profile(profile, changes):
     """Чистое преобразование: одинаково для проверки кандидата и его применения."""
     p = merge_profile(changes, profile or None)
+    if 'filters' in changes:
+        from ..listing_query import validate_filters
+        validate_filters(changes['filters'])
+        filters = {f['field']:f for f in profile.get('filters') or []}
+        for f in changes['filters']:
+            if f['priority']=='remove': filters.pop(f['field'],None)
+            else: filters[f['field']]=f
+        p['filters']=list(filters.values())
     for key in changes.get("clear_criteria", []):
         if key.startswith("poi:"):
             p["poi"] = [v for v in p["poi"] if v != key[4:]]
@@ -96,7 +104,7 @@ def apply_request(s, changes):
         if p.get("city") != before["city"]:
             s.market = None
     elif s.search and any(p.get(k) != old_profile.get(k) for k in changes) and (changes.keys() & {"features", "poi", "kitchen_min", "area_min", "not_first_floor", "not_last_floor",
-                                         "condition", "material", "year_min", "metro_max_minutes", "soft_criteria", "clear_criteria", "avoid_districts"}):
+                                         "condition", "material", "year_min", "metro_max_minutes", "soft_criteria", "clear_criteria", "avoid_districts", "filters", "wishes"}):
         # Возвращаем ранее отфильтрованные варианты при снятии жёсткого ограничения.
         # Рынок/город/комнаты не менялись: исходная выдача остаётся актуальным пулом.
         if "listings" in s.search:
@@ -109,6 +117,8 @@ def apply_request(s, changes):
         s.chosen = s.current = None
         s.journal.clear()
         notes.append("Пожелания учтены: при следующем показе подборки (show_selection) отфильтрую и пересортирую.")
+    if any(p.get(k) != old_profile.get(k) for k in changes if k != 'seller_questions'):
+        s.call_targets = []
     emit_profile(s)
     return {"profile": profile_brief(p), "missing": missing, "red_lines_confirmed": s.red_lines_ok, "notes": notes}
 

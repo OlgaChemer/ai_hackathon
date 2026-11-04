@@ -9,6 +9,7 @@ from ..runtime import Turn, record
 from ..config import settings
 from . import guard, validation, input_frame
 from .request_schema import CHANGE_SCHEMA
+from .listing_query import FIELDS
 
 SYSTEM = """Разбери новый ввод покупателя квартиры в структурированные поля. Ты ничего не выполняешь.
 Вход — messages с seq, прежний profile, каталог городов и единственная схема ответа input_schema.
@@ -16,7 +17,11 @@ SYSTEM = """Разбери новый ввод покупателя кварти
 Запиши ВСЕ явно названные условия, включая оплату, рынок, отрицания и альтернативы. Суммы — целые рубли.
 Не оценивай доступность квартир: даже если бюджет кажется мал, сохрани названные комнаты и условия,
 не подменяй их более дешёвым вариантом. Условные будущие изменения сохраняй в wishes, а не применяй заранее.
+Сначала определи, какие части запроса действительно меняются. Город из profile сохраняется, если новый не назван.
 Сначала выдели территории, затем остальные поля и каждое условие вместе с его обязательностью.
+Центр Москвы — Москва и prefer_center=true; «в центре» обязательно: center_required=true,
+«желательно ближе к центру» — center_required=false. Не выделяй центр как город.
+Школа, садик, новостройка, срок сдачи не города: для них places=[].
 places — итоговые территории, где клиент ХОЧЕТ искать. Не включай территории из отрицаний.
 В places.words выбери каждое исходное слово названия из enum source (сохрани его форму),
 а в lemma приведи только его в начальную форму.
@@ -24,8 +29,32 @@ places — итоговые территории, где клиент ХОЧЕТ
 ambiguous_catalog_names перечисляет общие части разных названий. Передай такую часть без достраивания:
 код сам предложит уточнить, какой из соответствующих городов нужен. Полное позднейшее имя разрешает вопрос.
 fields — объект обычных параметров. Не названное клиентом поле = null, а не прежнее значение.
+field_sources содержит точные цитаты нового ввода для НЕ-null полей fields. Без прямых слов клиента
+не заполняй поле из profile, включая false/[]/0. Не повторяй snapshot профиля.
+Пример: profile={city:Москва,rooms:2,budget_max:30000000,center_required:true};
+«Оставь три лучших» -> fields ВСЕ null, field_sources=[], places=[], criteria все null,
+intent=selection, selection={scope:shown,mode:rank,limit:3,filters:[],sort:[],aggregates:[]}.
+Пример: «Школа рядом» -> fields все null, field_sources=[], places=[], criteria.poi:school=required.
+Пример: «Новостройка со сдачей в2027» -> fields.housing=new, fields.filters=[delivery_year eq ['2027'] required],
+field_sources=[{field:housing,text:Новостройка},{field:filters,text:со сдачей в2027}], остальные поля null.
+Не дублируй обычные poi/бюджет/комнаты универсальными filters, когда для них есть точное базовое поле.
 Альтернативы комнат сохраняй полностью в rooms_options; перечисление не превращай в диапазон.
 Неизвестное значение — null. Не добавляй параметров без слов клиента.
+fields.filters — универсальные сравнения полей из каталога listing_fields; можно комбинировать несколько.
+Сдача в 2027 -> delivery_year eq ['2027']; не позднее 2027 -> lte; 2027–2028 -> between.
+НЕ используй year/year_min для срока сдачи: это год постройки. Убрать условие -> priority=remove.
+Рядом поликлиника/сад/школа — criteria.poi. Не задавай время пешком по прямому расстоянию.
+Если клиент задаёт только качественное «рядом», критерий poi с проверкой в 1км по прямой.
+fields.seller_questions — только новые/сохранённые явно запрошенные вопросы продавцу, не разрешение звонка.
+selection — запрос к найденным объявлениям: scope all/shown/liked, mode rank/more, limit, filters, sort, aggregates, group_by(null если нет).
+Производные поля value_score/discount_pct используй только в selection.filters, не в fields.filters.
+«Оставь три лучших» -> intent=selection, selection.limit=3, mode=rank, scope=shown.
+«Ещё» -> mode=more, scope=all. «Самые просторные» -> sort area desc; «дешевле» -> price asc.
+Неограниченное количество/порядок не выдумывай: обычная порция limit=10, sort=[], filters=[], aggregates=[].
+Можно одновременно изменить поля и задать selection. Новые постоянные условия — fields/criteria,
+временные операции над выдачей — selection. Запрос подсчёта/сравнения квартир — selection, не FAQ.
+call_ids — только явная просьба звонить (intent=call). Возьми ID из workflow.selection; [] означает по понравившимся.
+«Что спросить продавца» и новые пожелания не разрешают звонить. Иначе call_ids=null.
 criteria — объект условий из input_schema. Не названный критерий = null.
 Для удобств, инфраструктуры и запретов этажей: required — обязательно, preferred — желательно,
 remove — снять условие, null — не менялся. Условие и его желательность — одно значение.
@@ -38,7 +67,8 @@ options — варианты только к такому вопросу; ина
 При коротком ответе учитывай его question и все ещё не разобранные сообщения вместе.
 После разбора определи intent:
 question — клиент спрашивает о термине/расчёте/уже показанной квартире, профиль не меняется, все списки пусты;
-refine — просит поменять подбор, в том числе в вопросительной форме; search — хочет начать поиск;
+refine — меняет фильтры, в том числе вопросом; selection — операции над выдачей; call — просьба звонить;
+seller_questions — дополнить вопросы продавцу; search — начать поиск;
 continue — просит продолжать прежнее; hold — явно просит пока не искать или остановиться; other — остальное.
 При continue/hold/other профиль не меняется: fields и criteria = null, places пуст.
 Ответ с новым значением на уточнение (даже из одного слова) — refine, а не continue.
@@ -71,7 +101,10 @@ async def prepare(s):
     contract=input_frame.schema(CHANGE_SCHEMA, inputs)
     payload={'supported_cities':sources.SUPPORTED_CITIES,'ambiguous_catalog_names':catalog_ambiguities(sources.SUPPORTED_CITIES),
              'messages':inputs,'profile':{k:v for k,v in base_profile.items() if not k.startswith('_')},'input_schema':contract,
-             'workflow':{'has_search':s.search is not None,'has_selection':bool(s.shown),'has_calls':bool(s.calls),'chosen':bool(s.chosen)}}
+             'listing_fields':{key: {'type':v[0],'label':v[1]} for key,v in FIELDS.items()},
+             'workflow':{'has_search':s.search is not None,'has_selection':bool(s.shown),'has_calls':bool(s.calls),'chosen':bool(s.chosen),
+                         'selection':[{'id':x['id'],'number':i+1,'address':x.get('address')} for i,x in enumerate(s.shown)],
+                         'liked':s.prefs.liked}}
     revision=s.client_revision
     error=None
     for attempt in range(2):
@@ -79,7 +112,7 @@ async def prepare(s):
         if error:instruction+='\nПредыдущий ответ не прошёл проверку формата: '+error+'. Исправь поля, смысл не угадывай.'
         messages=[{'role':'system','content':instruction},guard.data_message('request_review',payload)]
         try:
-            result=await s.llm.chat_json(messages,tag='request_review',temperature=.01,max_tokens=2200,json_schema=contract)
+            result=await s.llm.chat_json(messages,tag='request_review',temperature=.01,max_tokens=3500,json_schema=contract)
             result = input_frame.decode(result, payload['profile'], payload, CHANGE_SCHEMA)
             validation.validate(result['changes'], CHANGE_SCHEMA)
             if not guard.input_verdict(result['changes']).ok or guard.output(result['changes'], limit=False) != result['changes']:
@@ -109,13 +142,32 @@ async def ensure(s):
         # Ответ — новый ввод для следующего хода. Текущий инструмент не исполнялся.
         return {'needs_clarification': True, 'question': review['question'], 'client_said': answer['data'].get('text', '')}
     from .actions.request import apply_request
+    if review.get('selection') is not None:
+        s.selection_scope_ids = [x['id'] for x in s.shown]
     if review['decision'] == 'apply':
         result = apply_request(s, deepcopy(review['changes']))
     else:
         result = None
     s.request_review_seq = review['seq']
     s.request_intent = review['intent']
+    if review['intent'] not in ('seller_questions','question'):
+        s.call_targets = []
+    if review.get('selection') is not None:
+        s.selection_query = deepcopy(review['selection'])
+        s.selection_dirty = True
+        s.profile['_selection_query'] = deepcopy(s.selection_query)
+    elif review['intent'] in ('search','refine'):
+        from .listing_query import default_query
+        s.selection_query = default_query()
+        s.selection_dirty = True
+    if review['intent'] == 'call' and review.get('call_ids') is not None:
+        ids = review['call_ids'] or s.prefs.liked
+        shown = {x['id'] for x in s.shown} | set(s.prefs.liked)
+        s.call_targets = list(dict.fromkeys(i for i in ids if i in shown))
+        if not s.call_targets:
+            await s.say('Выберите квартиру для звонка: отметьте «Нравится» или укажите номер из текущей подборки.')
     s.request_inputs = [x for x in s.request_inputs if x['seq'] >= review['seq']]
+    s.remember()
     return {'reviewed': True, 'profile_result': result}
 
 

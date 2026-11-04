@@ -15,6 +15,7 @@ from ..numbers import fmt
 from ..pricing import fair_price, score_listing, value_rank
 from ..profile import in_districts, passes_hard_filters, rooms_text
 from . import ActionError, action
+from .. import listing_query as Q
 
 BATCH = 10       # квартир в подборке
 MAX_PAGES = 3   # страниц выдачи Циана на один поиск
@@ -39,9 +40,11 @@ def fits(x: dict, prefs: P.Prefs) -> bool:
     return C.evaluate(profile, x)['status'] == 'confirmed'
 
 
-async def check_map(s, listings: list[dict], announce: bool = False) -> bool:
+async def check_map(s, listings: list[dict], announce: bool = False, kinds=None) -> bool:
     """Что рядом с квартирами по карте. False — сервис карты не ответил (агент скажет об этом честно)."""
-    if not s.prefs.poi or not listings:
+    kinds = kinds if kinds is not None else list(set(s.prefs.poi) | {
+        f['field'].split(':',1)[1] for f in s.profile.get('filters') or [] if f['field'].startswith('nearby:')})
+    if not kinds or not listings:
         return True
     if announce:
         await s.say("Проверяю по карте, что рядом: " + ", ".join(geo.POI[k][0] for k in s.prefs.poi) + ".")
@@ -49,7 +52,12 @@ async def check_map(s, listings: list[dict], announce: bool = False) -> bool:
         s.search["map_revision"] = s.client_revision
         s.search["map_deadline"] = time.monotonic() + settings.places_budget_s
     deadline = (s.search or {}).get("map_deadline", time.monotonic() + settings.places_budget_s)
-    ok = await geo.nearby(listings, s.prefs.poi, budget_s=max(0, deadline - time.monotonic()))
+    # Сначала проверяем кандидатов первой выдачи; массовая проверка всего города
+    # съедала бюджет до появления полезной карточки.
+    score_into(listings, (s.search or {}).get('comps') or listings, s.profile, (s.search or {}).get('meta', {}))
+    meta = (s.search or {}).get('meta', {})
+    candidates = sorted(listings,key=lambda x:meta.get(x['id'],{}).get('score',0),reverse=True)
+    ok = await geo.nearby(candidates[:30], kinds, budget_s=max(0, deadline - time.monotonic()))
     if not ok and not s.map_warned:
         s.map_warned = True
         await s.say("Карта не успела проверить часть адресов или не ответила. Отмечу пробелы на карточках — близость нужных объектов пока не подтверждена.")
@@ -211,56 +219,78 @@ async def probe_budget(s, budget_max: int) -> dict:
 
 
 @action("show_selection", 4,
-        "Показать подборку (до 10 квартир, лучшие по цене и пожеланиям; уже отмеченные «нравится» остаются) и дождаться "
-        "клиента. Возвращает: action = proceed (звонить по отмеченным) | more (подобрать ещё) | text (клиент написал — "
-        "пойми и, если это пожелание, запиши update_request и покажи снова), отметки и номера карточек.")
-async def show_selection(s) -> dict:
+        "Выполнить универсальный запрос к текущему пулу и показать квартиры: фильтры полей, порядок, "
+        "scope all/shown/liked, limit1–30, mode rank/more, агрегаты. По умолчанию применяет проверенную "
+        "команду пользователя. Срок сдачи delivery_year, год постройки year — разные поля. "
+        "Затем ждёт ответ клиента. Новые рекомендации не вытесняются избранным.", query=Q.QUERY_SCHEMA)
+async def show_selection(s, query: dict | None = None) -> dict:
     st = s.search
     if not st:
         raise ActionError("Сначала search_listings.")
+    effective = (s.selection_query if s.selection_dirty and s.selection_query else query or s.selection_query or Q.default_query())
+    try:
+        Q.validate_query(effective)
+    except (ValueError, TypeError, KeyError) as exc:
+        raise ActionError(f'Неверный запрос к подборке: {exc}') from exc
+    s.selection_query = dict(effective)
+    s.profile['_selection_query'] = dict(effective)
     p, prefs, meta = s.profile, s.prefs, st["meta"]
-    new_poi = [k for k in prefs.poi if any(k not in (x.get("nearby") or {}) for x in st["pool"])]
-    if new_poi:
-        st["map_ok"] = await check_map(s, st["pool"], announce=True)
-    pool = [x for x in st["pool"] if passes_hard_filters(x, p)
-            and x.get("district") not in prefs.districts_minus and selectable(x, prefs)]
-    if not pool:
-        return {"shown": 0, "no_fit": wishes_text(prefs) or "текущим условиям",
-                "in_budget_without_wishes": len(st["pool"]),
-                "hint": "скажи клиенту честно; предложи снять условие (update_request) или проверь дороже (probe_budget)"}
-    unseen = [x for x in pool if x["id"] not in st["shown_ids"] and x["id"] not in prefs.disliked]
-    if len(unseen) < BATCH:  # новых мало — догружаем следующую страницу выдачи
-        before = len(st["pool"])
-        await _more_pages(s, lambda: len(st["pool"]) > before)
-        pool += [x for x in st["pool"][before:] if selectable(x, prefs) and x.get("district") not in prefs.districts_minus]
-    score_into(pool, st["comps"], p, meta)
-    order = ranked(pool, meta, prefs)
-    liked = [x for x in order if x["id"] in prefs.liked]
-    fresh = [x for x in order if x["id"] not in st["shown_ids"] and x["id"] not in prefs.disliked and x["id"] not in prefs.liked]
-    batch = liked[:BATCH] + fresh[:max(0, BATCH - len(liked))]
-    if not batch:
-        return {"shown": 0, "note": "новых вариантов нет — все подходящие уже показаны", "liked": prefs.liked}
-    st["shown_ids"] |= {x["id"] for x in batch}
-    first = not s.shown
-    s.shown = [card(x, meta, prefs) for x in batch]
-    s.push("result", step=4, kind="selection", data={
-        "cards": s.shown, "liked": prefs.liked, "disliked": prefs.disliked, "learned": prefs.learned(),
-        "remaining": max(0, len(fresh) - BATCH),
+    poi = set(prefs.poi) | {f['field'].split(':',1)[1] for f in effective['filters'] if f['field'].startswith('nearby:')}
+    if any(k not in (x.get('nearby') or {}) for x in st['pool'] for k in poi):
+        st['map_ok'] = await check_map(s,st['pool'], kinds=list(poi))
+    pool = [x for x in st['pool'] if passes_hard_filters(x,p)
+            and x.get('district') not in prefs.districts_minus and selectable(x,prefs)
+            and x['id'] not in prefs.disliked]
+    # Подгрузка нужна для следующей страницы, но не для ограничения текущих карточек.
+    if effective['scope']=='all' and (effective['mode']=='more' or not s.shown):
+        unseen=[x for x in pool if x['id'] not in st['shown_ids']]
+        if len(unseen)<effective['limit']:
+            before=len(st['pool'])
+            await _more_pages(s,lambda:len(st['pool'])>before)
+            pool += [x for x in st['pool'][before:] if passes_hard_filters(x,p)
+                     and selectable(x,prefs) and x['id'] not in prefs.disliked
+                     and x.get('district') not in prefs.districts_minus]
+    score_into(pool,st['comps'],p,meta)
+    order=ranked(pool,meta,prefs)
+    data=[{**x,'ranking':meta[x['id']]['ranking']} for x in order]
+    result=Q.execute(data,effective,liked=prefs.liked,
+                     shown=s.selection_scope_ids or [x['id'] for x in s.shown],seen=st['shown_ids'])
+    batch=result.pop('items')
+    first=not s.shown
+    s.shown=[card(x,meta,prefs) for x in batch]
+    s.selection_scope_ids=[x['id'] for x in batch]
+    s.selection_dirty=False
+    st['shown_ids'].update(x['id'] for x in batch)
+    s.call_targets=[]
+    s.push('result',step=4,kind='selection',data={
+        'cards':s.shown,'liked':prefs.liked,'disliked':prefs.disliked,'learned':prefs.learned(),
+        'query':effective,'remaining':result['remaining'],'total':result['total'],'aggregates':result['aggregates'],'groups':result['groups'],
     })
-    if first:
-        await s.say("Вот лучшие варианты. Отметьте «Нравится» или «Не то» — учту и подберу ещё. Пожелания можно написать "
-                    "или сказать. Когда будете готовы — позвоню по отмеченным.")
-    r = await s.ask("selection", "Подборка", "Отметьте квартиры на экране подбора.")
-    d = r["data"]
-    by_id = {x["id"]: x for x in st["pool"]}
-    prefs.liked = [i for i in d.get("liked", []) if i in by_id and selectable(by_id[i], prefs)]
-    prefs.disliked = [i for i in d.get("disliked", []) if i in by_id]
-    P.learn(prefs, by_id)
-    number = {x["id"]: i + 1 for i, x in enumerate(batch)}  # номера карточек на экране: «вторая нравится»
-    return {"action": d.get("action") or "text", "client_said": d.get("text"),
-            "shown": [{"n": number[x["id"]], **brief(x, meta), "match": match(x, prefs)} for x in batch],
-            "liked": [{"n": number.get(i), **brief(by_id[i], meta)} for i in prefs.liked],
-            "disliked_count": len(prefs.disliked), "learned": prefs.learned(), "remaining": max(0, len(fresh) - BATCH)}
+    if not batch:
+        await s.say('Новых подходящих вариантов по этой команде нет. Отметки сохранены; можно изменить условия или показать понравившиеся.')
+    elif first:
+        await s.say('Вот лучшие варианты. Отметьте «Нравится» или «Не то» — учту и подберу ещё. Можно менять условия, порядок и количество; звоню только по вашей просьбе.')
+    r=await s.ask('selection','Подборка','Выберите квартиры, попросите ещё или уточните условия.')
+    d=r['data']
+    by_id={x['id']:x for x in st['pool']}
+    prefs.liked=[i for i in d.get('liked',prefs.liked) if i in by_id and selectable(by_id[i],prefs)]
+    prefs.disliked=[i for i in d.get('disliked',prefs.disliked) if i in by_id]
+    P.learn(prefs,by_id)
+    if d.get('action')=='more':
+        s.selection_query={**effective,'mode':'more','scope':'all'}
+        s.selection_dirty=True
+        s.request_intent='selection'
+    elif d.get('action')=='proceed':
+        s.call_targets=list(prefs.liked)
+        if not prefs.liked and batch:
+            # Кнопка без отметок отдельно спрашивает согласие на три текущих лучших.
+            s.call_targets=[x['id'] for x in batch[:3]]
+        s.request_intent='call'
+    number={x['id']:i+1 for i,x in enumerate(batch)}
+    return {'action':d.get('action') or 'text','client_said':d.get('text'),
+            'shown':[{'n':number[x['id']],**brief(x,meta),'match':match(x,prefs)} for x in batch],
+            'liked':[{'n':number.get(i),**brief(by_id[i],meta)} for i in prefs.liked],
+            'call_targets':s.call_targets,'remaining':result['remaining'],'aggregates':result['aggregates'],'groups':result['groups'],'learned':prefs.learned()}
 
 
 @action("offer_search_alternatives", 3,

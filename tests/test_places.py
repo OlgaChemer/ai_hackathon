@@ -123,6 +123,22 @@ class PlacesTest(unittest.TestCase):
     def test_no_coordinates_are_unknown(self):
         self.assertFalse(asyncio.run(geo.nearby([{'id': 'missing'}], ['school'])))
 
+    def test_clinic_uses_places_search_and_reports_measured_distance(self):
+        def handler(request):
+            self.assertEqual(request.url.params['q'],'поликлиника')
+            self.assertEqual(request.url.params['type'],'branch')
+            return httpx.Response(200,json={'meta':{'code':200},'result':{'total':1,'items':[
+                {'name':'Городская поликлиника','point':{'lat':55.797,'lon':49.106}}]}})
+        x=self.row()
+        async def go():
+            with self.transport(handler),patch.object(geo,'settings',self.config),patch.object(places,'settings',self.config), \
+                 patch.object(geo,'_live',AsyncMock(side_effect=AssertionError('OSM not needed'))):
+                self.assertTrue(await geo.nearby([x],['clinic']))
+        asyncio.run(go())
+        self.assertGreater(x['nearby']['clinic']['dist'],50)
+        self.assertLess(x['nearby']['clinic']['dist'],200)
+        self.assertEqual(x['nearby_evidence']['clinic']['source'],'2gis')
+
     def test_changed_coordinates_invalidate_cached_poi(self):
         x = self.row()
         record = {'version': 2, 'coords': [0, 0], 'value': {'name': 'Другой город', 'dist': 10}, 'evidence': {'source': '2gis'}}

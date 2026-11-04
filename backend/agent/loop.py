@@ -57,6 +57,12 @@ def state_brief(s) -> str:
                      + (", цену подтвердил клиент" if lid in s.agreed else "") + (", квартира выбрана" if s.chosen == lid else ""))
     if s.request_intent:
         lines.append("Проверенное намерение клиента: " + s.request_intent + ".")
+    if s.call_targets:
+        lines.append('Клиент просил звонить только по ID: ' + ', '.join(s.call_targets))
+    if s.selection_query:
+        lines.append('Проверенный запрос к подборке: ' + json.dumps(s.selection_query, ensure_ascii=False))
+    if s.profile.get('seller_questions'):
+        lines.append('Дополнительные вопросы продавцу: ' + json.dumps(s.profile['seller_questions'],ensure_ascii=False))
     return "\n".join(lines)
 
 
