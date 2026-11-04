@@ -93,7 +93,19 @@ def field_value(x, field):
         else:
             found = re.search(r'\b([1-4])\s*кв', deadline)
         return int(found[1]) if found else None
-    return x.get(field)
+    value = x.get(field)
+    if value is None:
+        return None
+    kind = FIELDS[field][0]
+    if kind == 'number':
+        try:
+            value = float(value)
+            return value if math.isfinite(value) else None
+        except (ValueError,TypeError):
+            return None
+    if kind == 'boolean':
+        return value if type(value) is bool else None
+    return str(value)
 
 
 def _typed(value, field):
@@ -144,7 +156,10 @@ def check(x, f):
         return actual is not None
     if actual is None:
         return None
-    actual = _typed(str(actual).lower() if isinstance(actual,bool) else actual, f['field'])
+    try:
+        actual = _typed(str(actual).lower() if isinstance(actual,bool) else actual, f['field'])
+    except (ValueError,TypeError):
+        return None
     values = [_typed(v, f['field']) for v in f['values']]
     if op == 'in': return actual in values
     if op == 'between': return values[0] <= actual <= values[1]
@@ -177,6 +192,9 @@ def execute(items, query, *, liked=(), shown=(), seen=()):
     rows = [x for x in rows if all(check(x,f) is True for f in query['filters'] if f['priority']=='required')]
     if query['mode'] == 'more':
         rows = [x for x in rows if x['id'] not in set(seen)]
+    preferred=[f for f in query['filters'] if f['priority']=='preferred']
+    if preferred:
+        rows=sorted(rows,key=lambda x:sum(6 if check(x,f) is True else -4 if check(x,f) is False else 0 for f in preferred),reverse=True)
     for sort in reversed(query['sort']):
         known = [x for x in rows if field_value(x,sort['field']) is not None]
         missing = [x for x in rows if field_value(x,sort['field']) is None]

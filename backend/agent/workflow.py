@@ -16,6 +16,10 @@ def available(s, name: str) -> bool:
     p = s.profile
     if s.request_intent == "hold" and name not in ("update_request", "ask_client"):
         return False
+    if s.request_intent == 'call' and s.call_targets and not s.calls and name not in ('update_request','call_seller'):
+        # Выбор уже сделан клиентом: новая подборка не должна молча стирать
+        # прямую просьбу звонить по номеру текущей карточки.
+        return False
     work_intent = s.request_intent in (None, "search", "refine", "selection", "call", "seller_questions", "continue")
     ready = not missing_required(p)
     finance_ready = p.get("payment") == "cash" or (

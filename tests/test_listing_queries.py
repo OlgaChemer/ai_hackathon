@@ -78,6 +78,14 @@ class QueryEngineTest(unittest.TestCase):
         result=Q.execute(rows,{**Q.default_query(),'group_by':'district','aggregates':[{'field':'area','function':'mean'}]})
         self.assertEqual([(g['value'],g['count'],g['aggregates'][0]['value']) for g in result['groups']], [('А',2,50),('Б',1,90)])
 
+    def test_invalid_source_number_is_unknown_and_preference_does_not_exclude(self):
+        rows=[listing(id='small',area=35,kitchen='не указано'),listing(id='large',area=70,kitchen=12)]
+        q={**Q.default_query(),'filters':[condition('area','gte',60,priority='preferred')],
+           'sort':[{'field':'kitchen','direction':'asc'}]}
+        result=Q.execute(rows,q)
+        self.assertEqual([x['id'] for x in result['items']],['large','small'])
+        self.assertIsNone(Q.field_value(rows[0],'kitchen'))
+
     def test_filter_updates_replace_only_mentioned_fields_and_support_removal(self):
         p=merge_profile({'filters':[condition('delivery_year','eq',2027),condition('area','gte',40)]})
         changed=request.updated_profile(p,{'filters':[condition('delivery_year','eq',2028)]})
