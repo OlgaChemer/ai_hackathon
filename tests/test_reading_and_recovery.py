@@ -191,6 +191,15 @@ class ReadingAndRecovery(unittest.IsolatedAsyncioTestCase):
                 {'messages':[{'text':text}],'supported_cities':sources.SUPPORTED_CITIES,'ambiguous_catalog_names':{}},CHANGE_SCHEMA)
             self.assertIsNone(updated_profile(base,result['changes'])['area_min'])
 
+    def test_unknown_property_becomes_an_honest_capability_result(self):
+        from backend.agent import profile_patch
+        text='Хочу квартиру где внутри бассейн'
+        contract=profile_patch.schema(input_frame.schema(CHANGE_SCHEMA,[{'text':text}]))
+        result=profile_patch.decode({'fields':[{'key':'pool','value':True,'source':'внутри бассейн'}],
+            'criteria':[],'places':[],'unsupported':[],'selection':[]},contract,[{'text':text}])
+        self.assertEqual(result['fields'],{})
+        self.assertEqual(result['unsupported'],[{'text':'внутри бассейн','source':'внутри бассейн','action':'add'}])
+
     async def test_actual_batches_drive_progress_counts(self):
         s=self.agent()
         rows=[listing(id=f'cian-{i}',city='Казань',rooms=1,price=4_000_000) for i in range(5)]

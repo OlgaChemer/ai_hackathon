@@ -45,14 +45,24 @@ def value(text,spec):
 
 def decode(patch,contract,inputs):
     patch=deepcopy(patch)
-    for rows in (patch.get('fields') or [],patch.get('criteria') or []):
+    texts=[r['text'].casefold() for r in inputs]
+    for group in ('fields','criteria'):
+        rows=patch.get(group) or []
+        allowed=contract['properties'][group]['items']['properties']['key']['enum']
+        retained=[]
         for row in rows:
             if 'value' not in row and (row.get('action')=='remove' or row.get('priority')=='remove'):row['value']=''
             if 'value' in row and not isinstance(row['value'],str):row['value']=json.dumps(row['value'],ensure_ascii=False)
+            quote=row.get('source')
+            if row.get('key') not in allowed and isinstance(quote,str) and quote and any(quote.casefold() in text for text in texts):
+                if row.get('action')=='remove' or row.get('priority')=='remove':
+                    raise ValueError('Неподдержанное условие отменяется через unsupported с action remove и прежним названием условия')
+                patch.setdefault('unsupported',[]).append({'text':quote[:200],'source':quote,'action':'add'})
+            else:retained.append(row)
+        patch[group]=retained
     validation.validate(patch,contract)
     frame={'fields':{},'criteria':{},'places':patch['places'],'unsupported':patch['unsupported']}
     known=input_frame.basic_fields(CHANGE_SCHEMA)
-    texts=[r['text'].casefold() for r in inputs]
     for rows in (patch['fields'],patch['criteria']):
         for row in rows:
             if not row['source'] or not any(row['source'].casefold() in text for text in texts):
