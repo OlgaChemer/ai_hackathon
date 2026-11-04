@@ -53,6 +53,13 @@ async def run(cases):
     failures=[]
     for i,(kind,text,limit,field,direction,scope) in enumerate(cases):
         s=session.create_session('',llm)
+        calls=[]
+        class Trace:
+            async def chat(self,*args,**kwargs):
+                reply=await llm.chat(*args,**kwargs)
+                calls.extend({'name':c.name,'arguments':c.arguments} for c in reply.tool_calls)
+                return reply
+        s.llm=Trace()
         s.profile=merge_profile({'city':'Нижний Новгород','rooms_options':[1,2],'budget_max':6_700_000,'payment':'cash','housing':'secondary'})
         s.selection_query={**Q.default_query(),'limit':2,'sort':[{'field':'area','direction':'desc'}]}
         s.shown=[listing(id='cian-eval-1',city='Нижний Новгород',rooms=1,area=40),
@@ -84,7 +91,7 @@ async def run(cases):
             print(json.dumps({'case':i+1,'input':text,'ok':True},ensure_ascii=False),flush=True)
         except Exception as exc:
             failures.append(i+1)
-            print(json.dumps({'case':i+1,'input':text,'ok':False,'error':str(exc)[:1200]},ensure_ascii=False),flush=True)
+            print(json.dumps({'case':i+1,'input':text,'ok':False,'error':str(exc)[:1200],'calls':calls},ensure_ascii=False),flush=True)
         finally:session.SESSIONS.pop(s.id,None)
     print(json.dumps({'passed':len(cases)-len(failures),'total':len(cases),'failed_cases':failures}),flush=True)
     return bool(failures)

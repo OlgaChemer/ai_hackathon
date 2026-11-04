@@ -9,6 +9,7 @@ from backend.agent import session,selection_request as R,listing_query as Q,unde
 from backend.agent.actions import search
 from backend.agent.profile import merge_profile
 from backend.agent.request_schema import CHANGE_SCHEMA
+from backend.llm import ToolCall
 from tests.fakes import ScriptedLLM
 from tests.input_contract import slots
 from tests.test_llm_and_agent import listing
@@ -121,6 +122,35 @@ class ReadingAndRecovery(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):
             R.compile_request({**request('compare','shown',1,'price_per_m2','asc'),
                 'filters':[{'field':'price_per_m2','op':'lte','values':['2'],'priority':'required'}]})
+
+    def test_semantic_functions_limit_authority_by_operation(self):
+        inputs=[{'text':'среди этих двух какая выгоднее за кв м','seq':1}]
+        tools=U.semantic_tools(input_frame.sparse_schema(CHANGE_SCHEMA,inputs),inputs,[])
+        args=request('compare','shown',None,'price_per_m2','asc')
+        result=U.frame_from_call(ToolCall('read_selection',args),tools,inputs)
+        self.assertEqual(result,{'intent':'selection','selection':args})
+        for name,arguments in [('read_selection',{**args,'fields':{'rooms_options':[2]}}),
+                               ('read_selection',{'operation':'compare'}),
+                               ('call_seller',{'listing_id':'cian-1'})]:
+            with self.assertRaises(ValueError):
+                U.frame_from_call(ToolCall(name,arguments),tools,inputs)
+
+    def test_sparse_profile_changes_do_not_require_other_conditions(self):
+        inputs=[{'text':'Ищу 1–2 комнаты','seq':1}]
+        tools=U.semantic_tools(input_frame.sparse_schema(CHANGE_SCHEMA,inputs),inputs,[])
+        args={'fields':{'rooms_options':{'value':[1,2],'source':'1–2'}},'criteria':{},'places':[]}
+        result=U.frame_from_call(ToolCall('profile_change',args),tools,inputs)
+        result=input_frame.decode(input_frame.complete_frame(result,CHANGE_SCHEMA),{},
+            {'messages':inputs,'supported_cities':sources.SUPPORTED_CITIES,'ambiguous_catalog_names':{}},CHANGE_SCHEMA)
+        self.assertEqual(result['changes'],{'rooms_options':[1,2]})
+
+    def test_city_cannot_be_invented_from_other_words(self):
+        text='Покажи три самых выгодных'
+        frame=slots(intent='search',places=['Абакан'])
+        frame['places'][0]['words'][0]['source']='выгодных'
+        with self.assertRaises(ValueError):
+            input_frame.decode(frame,{}, {'messages':[{'text':text}],
+                'supported_cities':sources.SUPPORTED_CITIES,'ambiguous_catalog_names':{}},CHANGE_SCHEMA)
 
     def test_number_of_candidates_does_not_create_price_or_area_thresholds(self):
         for operation in ('rank','compare','analyze','more'):
