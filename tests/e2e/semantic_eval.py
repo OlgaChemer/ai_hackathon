@@ -43,6 +43,8 @@ CASES=[
  ('clarify','Двушка в Новгороде',None,None,None,None),
  ('unsupported','Хочу квартиру где внутри бассейн',None,None,None,None),
  ('unsupported','Нужна собственная сауна внутри квартиры',None,None,None,None),
+ ('full_profile','Ищу двухкомнатную квартиру в центре Москвы до 30 млн рублей, в новостройке. Покупаю за свои. Рядом нужен детский сад.',None,None,None,None),
+ ('full_profile_nizhny','Нижний Новгород, 1–2 комнаты до 6,7 млн рублей, только вторичка. Покупаю за свои средства.',None,None,None,None),
 ]
 
 
@@ -58,6 +60,9 @@ async def run(cases):
             async def chat(self,*args,**kwargs):
                 reply=await llm.chat(*args,**kwargs)
                 calls.extend({'name':c.name,'arguments':c.arguments} for c in reply.tool_calls)
+                if kwargs.get('tag')=='profile_extract':
+                    try:calls.append({'tag':'profile_extract','frame':json.loads(reply.text)})
+                    except ValueError:calls.append({'tag':'profile_extract','invalid_json':True})
                 return reply
         s.llm=Trace()
         s.profile=merge_profile({'city':'Нижний Новгород','rooms_options':[1,2],'budget_max':6_700_000,'payment':'cash','housing':'secondary'})
@@ -67,8 +72,8 @@ async def run(cases):
         s.search={'pool':list(s.shown)}
         s.prefs.sync(s.profile)
         s.last_issue={'kind':'previous_error','message':'Предыдущее сравнение завершилось ошибкой системы. Последние две карточки сохранены.'}
-        if kind in ('clarify','rooms','studio','mixed'):s.profile=merge_profile({});s.search=None;s.shown=[]
-        s.messages=[{'role':'user','content':'Покажи два самых больших варианта'}]
+        if kind in ('clarify','rooms','studio','mixed','full_profile','full_profile_nizhny'):s.profile=merge_profile({});s.search=None;s.shown=[]
+        s.messages=[{'role':'user','content':'Покажи два самых больших варианта'}] if s.shown else []
         e=s.push('message',role='user',text=text);s.accept_request(text,e['seq'])
         try:
             r=await U.prepare(s)
@@ -84,6 +89,14 @@ async def run(cases):
             elif kind=='question':assert r['intent']=='question' and not r['changes'],r
             elif kind=='clarify':assert r['decision']=='clarify' and r['question'].strip() and r['question']!='Уточните запрос',r
             elif kind=='unsupported':assert any(x['action']=='add' for x in r.get('unsupported') or []),r
+            elif kind in ('full_profile','full_profile_nizhny'):
+                p=merge_profile(r['changes'])
+                assert p['payment']=='cash',r
+                if kind=='full_profile':
+                    assert p['rooms_options']==[2] and p['city']=='Москва' and p['housing']=='new' and p['budget_max']==30_000_000,r
+                    assert p['center_required'] and 'kindergarten' in p['poi'],r
+                    assert not any(f['field']=='delivery_year' for f in p['filters']),r
+                else:assert p['rooms_options']==[1,2] and p['city']=='Нижний Новгород' and p['housing']=='secondary' and p['budget_max']==6_700_000,r
             else:
                 p=merge_profile(r['changes'])
                 expected={'rooms':[1,2],'studio':[0],'mixed':[0,1]}[kind]
