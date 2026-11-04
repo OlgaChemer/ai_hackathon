@@ -16,7 +16,7 @@ def schema(contract):
     reading['properties']['sort']['type']='array';reading['properties']['aggregates']['type']='array'
     reading['properties']['group_by']['type']='string'
     reading['properties']['group_by']['enum']=['',*input_frame.FIELDS]
-    keys=list(dict.fromkeys([*input_frame.basic_fields(CHANGE_SCHEMA),*props['criteria']['properties']]))
+    keys=list(dict.fromkeys([*input_frame.basic_fields(CHANGE_SCHEMA),*props['criteria']['properties'],'city','cities']))
     result=obj({
         'fields':{'type':'array','minItems':0,'maxItems':20,'items':obj({
             'key':{'type':'string','enum':keys},
@@ -110,9 +110,25 @@ def decode(patch,contract,inputs,aliases=None):
             if a==b:return
         elif old==item:return
         raise ValueError('Противоречащие значения свойства '+key)
+    explicit={row['key'] for row in patch['criteria']}
     for row in [*patch['fields'],*patch['criteria']]:
         key,priority=row['key'],row.get('priority','required')
         if row.get('action')=='remove' or row['value'].strip() in ('null',''):priority='remove'
+        if key in ('city','cities'):
+            from ..sources import normalize_city,SUPPORTED_CITIES
+            raw=row['value'].strip()
+            names=json.loads(raw) if raw.startswith('[') else [raw]
+            for name in names:
+                city=normalize_city(name)
+                if city not in SUPPORTED_CITIES:raise ValueError('Город нужно сопоставить с supported_cities; не подставляй похожий')
+                words=[]
+                for token in input_frame.source_words([{'text':row['source']}]):
+                    lemmas=input_frame.place_lemmas(token,input_frame.catalog_words())
+                    matches=[w for w in lemmas if w in city.split() or normalize_city(w)==city]
+                    if len(matches)==1:words.append({'source':token,'lemma':matches[0]})
+                if not words:raise ValueError('Название города требует исходных слов из новой реплики')
+                frame['places'].append({'words':words})
+            continue
         if key in known:
             if priority=='remove':
                 kind=known[key]['type']
@@ -121,6 +137,7 @@ def decode(patch,contract,inputs,aliases=None):
             else:actual=value(row['value'],known[key])
             put('fields',key,{'value':actual,'source':row['source']})
             continue
+        if 'priority' not in row and row.get('action')!='remove' and key in explicit:continue
         if key.startswith(('poi:','feature:')) or key in ('not_first_floor','not_last_floor'):
             put('criteria',key,priority)
         else:

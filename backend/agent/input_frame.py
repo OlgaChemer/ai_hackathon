@@ -259,15 +259,21 @@ def decode(frame, profile, payload, changes_schema):
     for row in frame['places']:
         seen = set()
         valid = True
+        grounded=[]
         for word in row['words']:
             raw, lemma = word['source'].strip().casefold(), word['lemma'].strip()
-            if raw not in source_tokens or raw in seen or not lemma or any(char.isspace() for char in lemma):
+            if raw in seen:continue
+            if raw not in source_tokens or not lemma or any(char.isspace() for char in lemma):
                 valid = False
             from ..sources import normalize_city
-            if lemma not in place_lemmas(word['source'],lemma_words):
+            candidates=place_lemmas(word['source'],lemma_words)
+            if lemma not in candidates:
                 if not (normalize_city(word['source']) and normalize_city(word['source'])==normalize_city(lemma)):
-                    valid=False
+                    if len(candidates)==1 and raw in source_tokens:word['lemma']=candidates[0]
+                    else:valid=False
             seen.add(raw)
+            grounded.append(word)
+        row['words']=grounded
         name = ' '.join(word['lemma'].strip() for word in row['words'])
         normalized = name.casefold()
         matched = canonical.get(normalized) or word_sets.get(tuple(sorted(normalized.split())))
