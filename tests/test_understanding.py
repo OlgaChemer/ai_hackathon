@@ -81,6 +81,7 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn('Пока не умею',message)
         self.assertIn('не означает, что таких квартир нет',message)
         self.assertIn('самые просторные',message)
+        self.assertIn('бассейн',s.ask.call_args.args[2])
 
     async def test_unsupported_initial_request_saves_known_facts_without_starting_search(self):
         from backend.agent.workflow import next_search_action

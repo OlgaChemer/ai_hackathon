@@ -41,7 +41,7 @@ async def sequence(base):
         assert outcome['outcome']=='selection' and len(d.cards)==2,outcome
         start=len(d.timeline)
         saved=deepcopy(d.cards)
-        await d.send('Теперь нужна общая площадь не меньше 10000 квадратных метров.');outcome=await d.round()
+        await d.send('Теперь нужна общая площадь не меньше 1000 квадратных метров.');outcome=await d.round()
         assert outcome['outcome']=='clarify',outcome
         assert not any(e['type']=='result' and e.get('kind')=='selection' for e in d.timeline[start:]),'empty query erased selection'
         assert 'площад' in outcome.get('text','').casefold(),outcome
