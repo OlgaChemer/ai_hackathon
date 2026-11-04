@@ -181,16 +181,11 @@ class ReadingAndRecovery(unittest.IsolatedAsyncioTestCase):
         s.profile['budget_max']=None
         self.assertTrue(workflow.available(s,'ask_client'))
 
-    def test_sparse_profile_changes_do_not_require_other_conditions(self):
+    def test_profile_route_requests_separate_extraction_without_guessing_values(self):
         inputs=[{'text':'Ищу 1–2 комнаты','seq':1}]
         tools=U.semantic_tools(input_frame.sparse_schema(CHANGE_SCHEMA,inputs),inputs,[])
-        args={'fields':{'rooms_options':{'value':[1,2],'source':'1–2'}},'criteria':{},'places':[]}
-        args=input_frame.complete_frame({'intent':'refine',**args},CHANGE_SCHEMA)
-        args={k:args[k] for k in ('fields','criteria','places')}
-        result=U.frame_from_call(ToolCall('profile_change',args),tools,inputs)
-        result=input_frame.decode(input_frame.complete_frame(result,CHANGE_SCHEMA),{},
-            {'messages':inputs,'supported_cities':sources.SUPPORTED_CITIES,'ambiguous_catalog_names':{}},CHANGE_SCHEMA)
-        self.assertEqual(result['changes'],{'rooms_options':[1,2]})
+        result=U.frame_from_call(ToolCall('profile_change',{}),tools,inputs)
+        self.assertEqual(result,{'intent':'refine','needs_extraction':True})
 
     def test_removing_named_condition_also_removes_its_generic_filter(self):
         from backend.agent.actions.request import updated_profile
