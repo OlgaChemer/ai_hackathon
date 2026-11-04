@@ -187,6 +187,10 @@ def passes_hard_filters(x: dict, p: dict) -> bool:
         if distance is None or distance > 5:
             return False
     from .listing_query import check
-    if any(check(x,f) is False for f in p.get('filters') or [] if f['priority']=='required'):
+    # Инфраструктуру проверяем после обращения к карте. До обогащения отсутствие
+    # nearby не означает отсутствие объекта: иначе exists отсечёт весь пул ещё
+    # до вызова провайдера. Итоговые обязательные фильтры проверяет selectable.
+    if any(check(x,f) is False for f in p.get('filters') or []
+           if f['priority']=='required' and not f['field'].startswith('nearby:')):
         return False
     return True

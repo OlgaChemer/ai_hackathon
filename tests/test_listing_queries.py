@@ -20,6 +20,15 @@ def condition(field, op, *values, priority='required'):
 
 
 class QueryEngineTest(unittest.TestCase):
+    def test_map_existence_is_checked_after_enrichment(self):
+        p=merge_profile({'city':'Москва','rooms':2,'budget_max':30_000_000,
+                         'filters':[condition('nearby:kindergarten','exists')]})
+        x=listing(city='Москва',rooms=2,price=10_000_000)
+        self.assertTrue(passes_hard_filters(x,p))
+        self.assertEqual(evaluate(p,x)['status'],'rejected')
+        x['nearby']={'kindergarten':{'name':'Садик','dist':350}}
+        self.assertEqual(evaluate(p,x)['status'],'confirmed')
+
     def test_composed_year_range_order_limit_and_aggregate_use_real_data(self):
         rows=[listing(id=f'cian-{i}',deadline=f'4 кв. {2026+i}',year=None,area=50+i*10) for i in range(4)]
         query={**Q.default_query(),'limit':1,'filters':[condition('delivery_year','between',2027,2028)],
