@@ -63,7 +63,7 @@ def schema(changes, messages=None):
     if messages is not None:
         field_source['enum'] = list(dict.fromkeys([*source_words(messages), *(row['text'] for row in messages)]))
     return object_schema({
-        'places':{'type':'array','maxItems':3,'description':'Только явно названные города/области. При неизменном городе пусто. Центр, школа, новостройка, срок сдачи НЕ территории.',
+        'places':{'type':'array','maxItems':3,'description':'Все явно названные допустимые города/области, включая варианты через «или». Москва и Подмосковье — два элемента. При неизменном городе пусто. Центр, школа, новостройка, срок сдачи НЕ территории.',
             'items':object_schema({'words':{'type':'array','minItems':1,'maxItems':8,'items':object_schema({
                 'source':source,
                 'lemma':{'type':'string','enum':place_words,'description':'Слово названия города в начальной форме. Не добавляй отсутствующие слова. Неподдержанный город — предметный question и places=[]; не подставляй похожий.'}})}})},

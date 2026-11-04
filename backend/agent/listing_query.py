@@ -111,7 +111,10 @@ def field_value(x, field):
 def _typed(value, field):
     kind = FIELDS[field][0]
     if kind == 'number':
-        result = float(value)
+        try:
+            result = float(value)
+        except (ValueError, TypeError) as exc:
+            raise ValueError(f'Числовое поле {field}: values допускает только числа строкой, без имён полей и слов. Используй подходящий базовый criteria вместо неподдержанного сравнения') from exc
         if not math.isfinite(result):
             raise ValueError('Нечисловое значение фильтра')
         return result
