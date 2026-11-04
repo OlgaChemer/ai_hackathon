@@ -242,6 +242,9 @@ def decode(frame, profile, payload, changes_schema):
     choices = [item for item in payload['messages'][-1].get('options', []) if item in payload['supported_cities']]
     source_tokens = {word.casefold() for word in source_words(payload['messages'])}
     places = []
+    latest_places=[]
+    latest_tokens={word.casefold() for word in source_words(payload['messages'][-1:])}
+    old_ambiguity=False
     lemma_words=catalog_words()
     question, options = frame['question'], frame['options']
     for row in frame['places']:
@@ -270,9 +273,13 @@ def decode(frame, profile, payload, changes_schema):
             raise ValueError('Каждому исходному слову названия нужна одна начальная форма, без добавления слов')
         if matched:
             places.append(matched)
+            if all(w['source'].casefold() in latest_tokens for w in row['words']):latest_places.append(matched)
         elif normalized in ambiguous:
-            options = ambiguous[normalized]
-            question = 'Какой город вы имеете в виду: ' + ' или '.join(options) + '?'
+            if profile.get('city') in ambiguous[normalized]:places.append(profile['city'])
+            else:
+                options = ambiguous[normalized]
+                question = 'Какой город вы имеете в виду: ' + ' или '.join(options) + '?'
+                old_ambiguity=not all(w['source'].casefold() in latest_tokens for w in row['words'])
         else:
             # Справочник синонимов выделенного моделью топонима, не разбор запроса.
             from ..sources import normalize_city
@@ -285,6 +292,8 @@ def decode(frame, profile, payload, changes_schema):
                 question=('Вы имеете в виду '+candidates[0]+'?' if len(candidates)==1 else
                           'Какой город вы имеете в виду: '+ ' или '.join(options)+'?' if options else
                           'Не смог сопоставить название «'+name+'» с городом. Напишите полное название города.')
+    if old_ambiguity and len(set(latest_places))==1 and latest_places[0] in options:
+        question='';options=[]
     if places:
         places = list(dict.fromkeys(places))
         changes.update(city=places[0], cities=places[1:])

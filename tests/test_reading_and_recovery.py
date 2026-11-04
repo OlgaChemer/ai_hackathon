@@ -167,6 +167,30 @@ class ReadingAndRecovery(unittest.IsolatedAsyncioTestCase):
         self.assertIn('Нижний Новгород',result['question'])
         self.assertIn('Нижний Тагил',result['question'])
 
+    def test_later_full_city_resolves_an_earlier_ambiguous_fragment(self):
+        frame=slots(places=['Новгород','Великий Новгород'],fields={'rooms_options':[2]})
+        frame['places'][0]['words'][0]['source']='Новгороде'
+        frame['fields']['rooms_options']['source']='двушку'
+        payload={'messages':[{'text':'Хочу двушку в Новгороде'},{'text':'Великий Новгород, не Нижний'}],
+                 'supported_cities':['Великий Новгород','Нижний Новгород'],
+                 'ambiguous_catalog_names':{'Новгород':['Великий Новгород','Нижний Новгород']}}
+        result=input_frame.decode(frame,{},payload,CHANGE_SCHEMA)
+        self.assertEqual(result['decision'],'apply')
+        self.assertEqual(result['changes']['city'],'Великий Новгород')
+
+    def test_null_and_explicit_remove_both_clear_a_named_constraint(self):
+        from backend.agent import profile_patch
+        from backend.agent.actions.request import updated_profile
+        text='Отмени ограничение площади'
+        contract=profile_patch.schema(input_frame.schema(CHANGE_SCHEMA,[{'text':text}]))
+        for row in ({'key':'area_min','value':None,'source':text},
+                    {'key':'area_min','action':'remove','source':text}):
+            frame=profile_patch.decode({'fields':[row],'criteria':[],'places':[],'unsupported':[],'selection':[]},contract,[{'text':text}])
+            base=merge_profile({'area_min':1000})
+            result=input_frame.decode(input_frame.complete_frame({'intent':'refine',**frame},CHANGE_SCHEMA),base,
+                {'messages':[{'text':text}],'supported_cities':sources.SUPPORTED_CITIES,'ambiguous_catalog_names':{}},CHANGE_SCHEMA)
+            self.assertIsNone(updated_profile(base,result['changes'])['area_min'])
+
     async def test_actual_batches_drive_progress_counts(self):
         s=self.agent()
         rows=[listing(id=f'cian-{i}',city='Казань',rooms=1,price=4_000_000) for i in range(5)]

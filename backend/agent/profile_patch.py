@@ -33,6 +33,7 @@ def schema(contract):
                      'description':'[] если команды отбора нет. Иначе один запрос; limit0 — сохранить количество; group_by пусто — не группировать.'},
     })
     for key in ('places','unsupported'):result['properties'][key]['minItems']=0
+    result['properties']['unsupported']['items']['properties']['source'].pop('enum',None)
     result['properties']['fields']['items']['properties']['action']={'type':'string','enum':['set','remove']}
     return result
 

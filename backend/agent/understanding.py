@@ -143,7 +143,7 @@ def semantic_tools(contract,inputs,unsupported,has_results=True):
         'description':'true если реплика ДОБАВЛЯЕТ/СНИМАЕТ условие квартиры вместе с отбором (сдача2027, площадь>=80, отмена площади). false для одного количества/сортировки, «по моим параметрам» и «4 а не3».'}
     read_schema['required'].append('update_conditions')
     read_schema['properties']['count_source']={'type':['string','null'],
-        'enum':[None,*quotes],
+        'maxLength':1000,
         'description':'Буквальная цитата НОВОЙ реплики, откуда взято количество limit. При limit=null — null. «4 а не 3» -> limit4, count_source:4. Не цитируй прежнюю выдачу.'}
     read_schema['required'].append('count_source')
     tools=[
