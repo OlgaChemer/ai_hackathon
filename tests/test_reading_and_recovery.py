@@ -200,6 +200,13 @@ class ReadingAndRecovery(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['fields'],{})
         self.assertEqual(result['unsupported'],[{'text':'внутри бассейн','source':'внутри бассейн','action':'add'}])
 
+    def test_malformed_model_patch_is_a_recoverable_validation_error(self):
+        from backend.agent import profile_patch
+        inputs=[{'text':'Хочу бассейн'}]
+        contract=profile_patch.schema(input_frame.schema(CHANGE_SCHEMA,inputs))
+        for bad in ([],{'fields':['pool'],'criteria':[],'places':[],'unsupported':[],'selection':[]}):
+            with self.assertRaises(ValueError):profile_patch.decode(bad,contract,inputs)
+
     async def test_actual_batches_drive_progress_counts(self):
         s=self.agent()
         rows=[listing(id=f'cian-{i}',city='Казань',rooms=1,price=4_000_000) for i in range(5)]
