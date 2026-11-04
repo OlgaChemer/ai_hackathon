@@ -224,7 +224,7 @@ async def prepare(s):
                 if len(response.tool_calls)!=1:raise ValueError('Ожидался один смысловой результат')
                 result=frame_from_call(response.tool_calls[0],tools,inputs)
                 extract=result.pop('needs_extraction',False)
-                rank=result.get('intent')=='selection' and result.get('selection',{}).get('operation')=='rank'
+                rank=(result.get('selection') or {}).get('operation')=='rank'
                 if extract:
                     data={k:payload[k] for k in ('messages','profile','supported_cities','ambiguous_catalog_names','listing_fields')}
                     data['unsupported_conditions']=s.profile.get('_unsupported_conditions') or []
