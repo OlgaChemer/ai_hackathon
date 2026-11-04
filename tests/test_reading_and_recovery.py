@@ -21,11 +21,11 @@ def request(operation='rank',scope='all',limit=2,field='area',direction='desc'):
             'aggregates':None,'group_by':None}
 
 
-def read_args(*args,count_source=None,keep_order=False,**kwargs):
+def read_args(*args,count_source=None,keep_order=False,update_conditions=False,**kwargs):
     value=request(*args,**kwargs)
     order=value.pop('sort')[0]
     return {**value,'order_by':order['field'],'direction':order['direction'],
-            'count_source':count_source,'keep_order':keep_order}
+            'count_source':count_source,'keep_order':keep_order,'update_conditions':update_conditions}
 
 
 def facts(frame,*,reading=False):
@@ -146,7 +146,7 @@ class ReadingAndRecovery(unittest.IsolatedAsyncioTestCase):
         class SplitModel:
             async def chat(self,messages,**kwargs):
                 if kwargs['tag']=='request_review':
-                    return LLMResponse('',[ToolCall('read_selection',read_args(limit=3,count_source='три'))])
+                    return LLMResponse('',[ToolCall('read_selection',read_args(limit=3,count_source='три',update_conditions=True))])
                 return LLMResponse(json.dumps(values,ensure_ascii=False))
         s.llm=SplitModel()
         event=s.push('message',role='user',text=text);s.accept_request(text,event['seq'])

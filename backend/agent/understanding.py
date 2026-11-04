@@ -53,10 +53,12 @@ profile_change — любые НОВЫЕ/отменённые условия к�
 Включая составную просьбу: «отмени площадь и покажи две большие», «сдача в2027 и три просторных».
 Отмена неподдержанного условия вместе с отбором тоже profile_change.
 Параметры profile_change извлечёт следующий шаг. Не пытайся передавать их этой функции.
-read_selection — ТОЛЬКО чтение/отбор по УЖЕ найденным данным, без добавления/снятия условий.
+read_selection — чтение/отбор по УЖЕ найденным данным. update_conditions=false для обычного отбора/сортировки/сравнения.
+Если вместе с отбором ДОБАВЛЯЮТ/СНИМАЮТ условие, update_conditions=true: «сдача2027 и три просторных», «отмени площадь, покажи две большие».
+«По моим параметрам», «учитывая прежние условия» означают СОХРАНИТЬ профиль: update_conditions=false.
 «Ищу1–2 комнаты» — параметры квартиры, не количество карточек: profile_change.
 «В центре Москвы» — параметры; «школы рядом» — параметры; школа/центр/новостройка НЕ города.
-Если в реплике новое условие И отбор, выбери profile_change, а не read_selection.
+Если есть только новые условия без команды выдачи, выбери profile_change.
 informational_question — вопрос об устройстве, предложении, предыдущей ошибке: «что сломалось/что надо уточнить».
 call_intent — только ЯВНО позвонить; listing_ids из показанных ID; [] — по понравившимся.
 Вопросы продавцу/условия не разрешают звонок. pause_request — явная пауза/пока не звони, даже с новыми вопросами.
@@ -136,6 +138,9 @@ def semantic_tools(contract,inputs,unsupported,has_results=True):
     read_schema['required']+=['order_by','direction']
     read_schema['properties']['keep_order']={'type':'boolean','description':'true только если клиент меняет ОДНО количество без новой метрики («4 а не 3») или явно сохраняет порядок. При словах выгоднее/дешевле/больше/новом показателе false.'}
     read_schema['required'].append('keep_order')
+    read_schema['properties']['update_conditions']={'type':'boolean',
+        'description':'true если реплика ДОБАВЛЯЕТ/СНИМАЕТ условие квартиры вместе с отбором (сдача2027, площадь>=80, отмена площади). false для одного количества/сортировки, «по моим параметрам» и «4 а не3».'}
+    read_schema['required'].append('update_conditions')
     read_schema['properties']['count_source']={'type':['string','null'],
         'enum':[None,*quotes],
         'description':'Буквальная цитата НОВОЙ реплики, откуда взято количество limit. При limit=null — null. «4 а не 3» -> limit4, count_source:4. Не цитируй прежнюю выдачу.'}
@@ -161,6 +166,7 @@ def frame_from_call(call,tools,inputs):
     if call.name=='read_selection':
         quote=a.pop('count_source')
         keep=a.pop('keep_order')
+        update=a.pop('update_conditions')
         field,direction=a.pop('order_by'),a.pop('direction')
         a['sort']=None if keep else [{'field':field,'direction':direction}]
         if a['limit'] is not None:
@@ -169,7 +175,7 @@ def frame_from_call(call,tools,inputs):
             numbers=[int(word) for word in input_frame.source_words([{'text':quote}]) if word.isdecimal()]
             if numbers and a['limit'] not in numbers:
                 raise ValueError('Количество limit не соответствует числу в count_source. Возьми запрошенное новое количество, не прежний размер выдачи.')
-        return {'intent':'selection','selection':a}
+        return {'intent':'refine' if update else 'selection','selection':a,**({'needs_extraction':True} if update else {})}
     if call.name=='profile_change':return {'intent':'refine','needs_extraction':True}
     if call.name=='pause_request':return {'intent':'hold','needs_extraction':True}
     if call.name=='informational_question':return {'intent':'question'}
@@ -219,14 +225,13 @@ async def prepare(s):
                 result=frame_from_call(response.tool_calls[0],tools,inputs)
                 extract=result.pop('needs_extraction',False)
                 rank=result.get('intent')=='selection' and result.get('selection',{}).get('operation')=='rank'
-                if extract or rank:
+                if extract:
                     data={k:payload[k] for k in ('messages','profile','supported_cities','ambiguous_catalog_names','listing_fields')}
                     data['unsupported_conditions']=s.profile.get('_unsupported_conditions') or []
                     data['allowed_fields']=input_frame.basic_fields(CHANGE_SCHEMA)
                     contract_for_changes=deepcopy(extraction)
                     if rank:
                         data['reading_command']=result['selection']
-                        contract_for_changes['properties']['unsupported']['maxItems']=0
                         contract_for_changes['properties'].pop('selection')
                         contract_for_changes['required'].remove('selection')
                     prompt=PROFILE_SYSTEM+'\n'+guard.POLICY
