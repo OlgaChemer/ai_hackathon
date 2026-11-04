@@ -170,6 +170,13 @@ class DialogueStateTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(s.call_targets)
         self.assertFalse(workflow.available(s,'call_seller'))
 
+    async def test_direct_request_to_call_is_not_replaced_by_a_new_selection(self):
+        s=self.agent();s.shown=s.search['pool'][:3]
+        s.request_intent='call';s.call_targets=[s.shown[1]['id']]
+        self.assertTrue(workflow.available(s,'call_seller'))
+        self.assertFalse(workflow.available(s,'show_selection'))
+        self.assertFalse(workflow.available(s,'search_listings'))
+
     async def test_hold_with_explicit_budget_change_saves_it_but_requires_new_consent(self):
         s=self.agent();s.call_targets=['cian-1']
         request.apply_request(s,{'budget_max':12_000_000})

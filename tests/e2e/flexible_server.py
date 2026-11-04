@@ -20,17 +20,22 @@ def patch(live_llm=False):
 
     async def collect(profile):
         rows=[]
+        reports=[]
         cities=[profile['city'],*(profile.get('cities') or [])]
         for city in cities:
             lat,lng=(55.7539,37.6208) if city=='Москва' else (55.7986,49.1053)
             for rooms in profile.get('rooms_options') or [profile['rooms']]:
-                for i in range(40):
-                    rows.append(listing(id=f'cian-{city}-{rooms}-{i}',city=city,rooms=rooms,
-                        address=f'Тестовая улица, {i+1}',price=7_000_000+i*10000,area=40+i,
-                        lat=lat+(i%4)*.003,lng=lng+(i%4)*.003,is_new=profile.get('housing')!='secondary',
-                        year=None,deadline=f'4 кв. {2026+i%4}',delivery_year=2026+i%4,delivery_quarter=4,
-                        photo=None,description='Синтетическое объявление из тестового стенда'))
-        return rows,[{'source':'Изолированный тестовый пул','status':'live','count':len(rows)}]
+                for new in sources.markets(profile):
+                    for i in range(40):
+                        rows.append(listing(id=f'cian-{city}-{rooms}-{int(new)}-{i}',city=city,rooms=rooms,
+                            address=f'Тестовая улица, {i+1}',price=int(min(7_000_000,profile['budget_max']*.7))+i*10000,area=40+i,
+                            lat=lat+(i%4)*.003,lng=lng+(i%4)*.003,is_new=new,
+                            year=None if new else 2015,deadline=f'4 кв. {2026+i%4}' if new else None,
+                            delivery_year=2026+i%4 if new else None,delivery_quarter=4 if new else None,
+                            photo=None,description='Синтетическое объявление из тестового стенда'))
+                    reports.append({'source':'Изолированный тестовый пул','status':'live','count':40,
+                                    'city':city,'rooms':rooms,'new':new})
+        return rows,reports
 
     async def nearby(rows,kinds,**kwargs):
         for x in rows:
