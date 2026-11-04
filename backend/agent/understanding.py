@@ -124,7 +124,6 @@ def dialogue_context(s):
 
 def semantic_tools(contract,inputs,unsupported,has_results=True):
     from .selection_request import SCHEMA
-    properties=contract['properties']
     def obj(props,required=()):return {'type':'object','additionalProperties':False,'properties':props,'required':list(required)}
     quotes=list(dict.fromkeys([*input_frame.source_words(inputs),*(row['text'] for row in inputs),*unsupported]))
     read_schema=deepcopy(SCHEMA)
@@ -173,7 +172,6 @@ def frame_from_call(call,tools,inputs):
         return {'intent':'selection','selection':a}
     if call.name=='profile_change':return {'intent':'refine','needs_extraction':True}
     if call.name=='pause_request':return {'intent':'hold','needs_extraction':True}
-    if call.name=='clarify_input':return {'intent':'refine',**a}
     if call.name=='informational_question':return {'intent':'question'}
     if call.name=='call_intent':return {'intent':'call','call_ids':a['listing_ids']}
     return {'intent':'continue' if call.name=='continue_input' else 'other'}
@@ -194,7 +192,6 @@ async def prepare(s):
     omitted=('intent','call_ids','question','options')
     for key in omitted:extraction['properties'].pop(key)
     extraction['required']=[k for k in extraction['required'] if k not in omitted]
-    quotes=list(dict.fromkeys([*input_frame.source_words(inputs),*(x['text'] for x in inputs),*(s.profile.get('_unsupported_conditions') or [])]))
     if extraction['properties']['places']['maxItems']==0:
         extraction['properties']['places']['items']['properties']['words']['items']['properties']['source'].pop('enum',None)
     from . import profile_patch
@@ -259,7 +256,11 @@ async def prepare(s):
         if s.request_inputs[-1]['seq']!=version or s.client_revision!=revision or s.profile!=base_profile:
             raise UnderstandingError('Поступило новое сообщение во время разбора')
         s.request_review={'seq':version,'base_profile':base_profile,**result}
-        record('request_review',session=s.id,decision=result['decision'],intent=result['intent'],fields=len(result['changes']),repaired=bool(attempt))
+        query=result.get('selection') or {}
+        record('request_review',session=s.id,decision=result['decision'],intent=result['intent'],
+               fields=len(result['changes']),changed_keys=list(result['changes']),
+               operation=result.get('selection_operation'),scope=query.get('scope'),
+               ordering=query.get('sort'),count=query.get('limit'),repaired=bool(attempt))
         return s.request_review
     raise UnderstandingError('Не удалось получить корректный структурированный ввод: '+str(error))
 

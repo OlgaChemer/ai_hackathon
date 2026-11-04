@@ -9,6 +9,7 @@ from .request_schema import CHANGE_SCHEMA
 def schema(contract):
     props=contract['properties']
     source=deepcopy(props['fields']['properties']['filters']['properties']['source'])
+    source.pop('enum',None)  # любая буквальная подстрока; её проверяет decode
     def obj(fields):return {'type':'object','additionalProperties':False,'required':list(fields),'properties':fields}
     reading=deepcopy(selection_request.SCHEMA)
     reading['properties']['limit']['type']='integer';reading['properties']['limit']['minimum']=0

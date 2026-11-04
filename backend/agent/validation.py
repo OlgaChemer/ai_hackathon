@@ -30,14 +30,16 @@ def validate(value, schema: dict, depth: int = 0) -> None:
             raise ValueError("Слишком мало элементов")
         if len(value) > schema.get("maxItems", 100):
             raise ValueError("Слишком много элементов")
-        for item in value:
-            validate(item, schema["items"], depth + 1)
+        for index,item in enumerate(value):
+            try:validate(item, schema["items"], depth + 1)
+            except ValueError as exc:raise ValueError(f'[{index}]: {exc}') from exc
     elif kind == "object":
         props = schema.get("properties", {})
         if len(value) > 64 or value.keys() - props.keys() or set(schema.get("required", [])) - value.keys():
             raise ValueError("Неизвестные или отсутствующие параметры")
         for key, item in value.items():
-            validate(item, props[key], depth + 1)
+            try:validate(item, props[key], depth + 1)
+            except ValueError as exc:raise ValueError(f'{key}: {exc}') from exc
 
 
 TEXT = {"type": "string", "maxLength": 1000}
