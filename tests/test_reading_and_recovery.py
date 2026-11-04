@@ -248,6 +248,16 @@ class ReadingAndRecovery(unittest.IsolatedAsyncioTestCase):
         result=updated_profile(profile,{'clear_criteria':['area_min']})
         self.assertEqual([f['field'] for f in result['filters']],['delivery_year'])
 
+    def test_generic_condition_replaces_legacy_bound_instead_of_accumulating(self):
+        from backend.agent.actions.request import updated_profile
+        profile=merge_profile({'area_min':1000})
+        result=updated_profile(profile,{'filters':[{'field':'area','op':'gte','values':['40'],'priority':'required'}]})
+        self.assertIsNone(result['area_min'])
+        self.assertEqual(result['filters'][0]['values'],['40'])
+        result=updated_profile(result,{'area_min':30})
+        self.assertEqual(result['area_min'],30)
+        self.assertEqual(result['filters'],[])
+
     def test_city_cannot_be_invented_from_other_words(self):
         text='Покажи три самых выгодных'
         frame=slots(intent='search',places=['Абакан'])

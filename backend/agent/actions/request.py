@@ -9,6 +9,9 @@ from . import ActionError, action
 
 LIST_KEYS = ("districts", "avoid_districts", "features", "poi", "wishes", "material", "soft_criteria", "rooms_options", "cities")
 CORE_KEYS = ("city", "rooms", "budget_max", "okrug", "housing", "rooms_options", "cities", "districts", "prefer_center", "center_required")
+PROPERTY_FIELDS={'area_min':'area','kitchen_min':'kitchen','year_min':'year',
+                 'metro_max_minutes':'metro_minutes','prefer_center':'center_km',
+                 'condition':'condition','material':'material'}
 
 
 def profile_brief(p: dict) -> dict:
@@ -51,19 +54,24 @@ async def update_request(s) -> dict:
 def updated_profile(profile, changes):
     """Чистое преобразование: одинаково для проверки кандидата и его применения."""
     p = merge_profile(changes, profile or None)
+    replaced={field for key,field in PROPERTY_FIELDS.items() if key in changes}
+    p['filters']=[f for f in p.get('filters') or [] if f['field'] not in replaced]
     if 'filters' in changes:
         from ..listing_query import validate_filters
         validate_filters(changes['filters'])
-        filters = {f['field']:f for f in profile.get('filters') or []}
+        filters = {f['field']:f for f in profile.get('filters') or [] if f['field'] not in replaced}
         for f in changes['filters']:
+            for key,field in PROPERTY_FIELDS.items():
+                if field==f['field'] and key not in changes:
+                    p[key]=[] if key=='material' else False if key=='prefer_center' else None
+                    p['soft_criteria']=[k for k in p.get('soft_criteria') or [] if k!=key]
             if f['priority']=='remove': filters.pop(f['field'],None)
             else: filters[f['field']]=f
         p['filters']=list(filters.values())
     for key in changes.get("clear_criteria", []):
         # Старые именованные условия и универсальный фильтр представляют
         # одно свойство. Его явная отмена снимает оба представления.
-        field={'area_min':'area','kitchen_min':'kitchen','year_min':'year',
-               'metro_max_minutes':'metro_minutes','prefer_center':'center_km'}.get(key,key)
+        field=PROPERTY_FIELDS.get(key,key)
         if field.startswith('poi:'):field='nearby:'+field[4:]
         p['filters']=[f for f in p.get('filters') or [] if f['field']!=field]
         if key.startswith("poi:"):

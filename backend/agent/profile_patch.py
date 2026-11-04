@@ -15,21 +15,23 @@ def schema(contract):
     reading['properties']['sort']['type']='array';reading['properties']['aggregates']['type']='array'
     reading['properties']['group_by']['type']='string'
     reading['properties']['group_by']['enum']=['',*input_frame.FIELDS]
-    return obj({
-        'fields':{'type':'array','maxItems':20,'items':obj({
+    result=obj({
+        'fields':{'type':'array','minItems':0,'maxItems':20,'items':obj({
             'key':{'type':'string','enum':list(input_frame.basic_fields(CHANGE_SCHEMA))},
             'value':{'type':'string','maxLength':3000,'description':'Строковое поле — обычная строка; число/boolean/массив — JSON-значение, например [1,2], 30000000, true.'},
             'source':source})},
-        'criteria':{'type':'array','maxItems':30,'items':obj({
+        'criteria':{'type':'array','minItems':0,'maxItems':30,'items':obj({
             'key':{'type':'string','enum':list(props['criteria']['properties'])},
             'priority':{'type':'string','enum':['required','preferred','remove']},
             'value':{'type':'string','maxLength':1000,'description':'Значение в формате поля; для poi/feature и запрета этажей true; для remove пустая строка.'},
             'source':source})},
         'places':deepcopy(props['places']),
         'unsupported':deepcopy(props['unsupported']),
-        'selection':{'type':'array','maxItems':1,'items':reading,
+        'selection':{'type':'array','minItems':0,'maxItems':1,'items':reading,
                      'description':'[] если команды отбора нет. Иначе один запрос; limit0 — сохранить количество; group_by пусто — не группировать.'},
     })
+    for key in ('places','unsupported'):result['properties'][key]['minItems']=0
+    return result
 
 
 def value(text,spec):
