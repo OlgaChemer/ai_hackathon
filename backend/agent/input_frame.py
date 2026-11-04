@@ -179,6 +179,7 @@ def decode(frame, profile, payload, changes_schema):
         rooms=sorted(set([*rooms,0] if studio else [n for n in rooms if n!=0]))
         if rooms!=profile.get('rooms_options',[]):changes['rooms_options']=rooms
         else:changes.pop('rooms_options',None)
+    if changes.get('center_required') is True:changes['prefer_center']=True
     if intent == 'selection' and set(changes)=={'filters'}:
         # Составной запрос «сдача в 2027, покажи три больших» содержит и
         # условие, и команду выдачи. Тег нормализуется по типу данных, без

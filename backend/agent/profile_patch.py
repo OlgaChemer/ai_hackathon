@@ -16,13 +16,14 @@ def schema(contract):
     reading['properties']['sort']['type']='array';reading['properties']['aggregates']['type']='array'
     reading['properties']['group_by']['type']='string'
     reading['properties']['group_by']['enum']=['',*input_frame.FIELDS]
+    keys=list(dict.fromkeys([*input_frame.basic_fields(CHANGE_SCHEMA),*props['criteria']['properties']]))
     result=obj({
         'fields':{'type':'array','minItems':0,'maxItems':20,'items':obj({
-            'key':{'type':'string','enum':list(input_frame.basic_fields(CHANGE_SCHEMA))},
+            'key':{'type':'string','enum':keys},
             'value':{'type':'string','maxLength':3000,'description':'Строковое поле — обычная строка; число/boolean/массив — JSON-значение, например [1,2], 30000000, true.'},
             'source':source})},
         'criteria':{'type':'array','minItems':0,'maxItems':30,'items':obj({
-            'key':{'type':'string','enum':list(props['criteria']['properties'])},
+            'key':{'type':'string','enum':keys},
             'priority':{'type':'string','enum':['required','preferred','remove']},
             'value':{'type':'string','maxLength':1000,'description':'Значение в формате поля; для poi/feature и запрета этажей true; для remove пустая строка.'},
             'source':source})},
@@ -45,17 +46,18 @@ def decode(patch,contract,inputs):
     frame={'fields':{},'criteria':{},'places':patch['places'],'unsupported':patch['unsupported']}
     known=input_frame.basic_fields(CHANGE_SCHEMA)
     texts=[r['text'].casefold() for r in inputs]
+    seen=set()
     for rows in (patch['fields'],patch['criteria']):
-        seen=set()
         for row in rows:
             if row['key'] in seen:raise ValueError('Повтор одного свойства в списке изменений')
             seen.add(row['key'])
             if not row['source'] or not any(row['source'].casefold() in text for text in texts):
                 raise ValueError('Каждое изменение требует буквальной цитаты нового ввода')
-    for row in patch['fields']:
-        frame['fields'][row['key']]={'value':value(row['value'],known[row['key']]),'source':row['source']}
-    for row in patch['criteria']:
-        key,priority=row['key'],row['priority']
+    for row in [*patch['fields'],*patch['criteria']]:
+        key,priority=row['key'],row.get('priority','required')
+        if key in known:
+            frame['fields'][key]={'value':value(row['value'],known[key]),'source':row['source']}
+            continue
         if key.startswith(('poi:','feature:')) or key in ('not_first_floor','not_last_floor'):
             frame['criteria'][key]=priority
         else:

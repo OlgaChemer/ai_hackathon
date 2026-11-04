@@ -226,6 +226,7 @@ async def prepare(s):
                     contract_for_changes=deepcopy(extraction)
                     if rank:
                         data['reading_command']=result['selection']
+                        contract_for_changes['properties']['unsupported']['maxItems']=0
                         contract_for_changes['properties'].pop('selection')
                         contract_for_changes['required'].remove('selection')
                     prompt=PROFILE_SYSTEM+'\n'+guard.POLICY
