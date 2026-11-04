@@ -12,6 +12,7 @@ def patch(live_llm=False):
     from backend import main, sources, geo
     from backend.sources import places
     from tests.test_llm_and_agent import listing
+    from backend.agent.pricing import CITY_CENTERS
     from tests.e2e.policy_llm import PolicyLLM
     from unittest.mock import AsyncMock
 
@@ -23,7 +24,7 @@ def patch(live_llm=False):
         reports=[]
         cities=[profile['city'],*(profile.get('cities') or [])]
         for city in cities:
-            lat,lng=(55.7539,37.6208) if city=='Москва' else (55.7986,49.1053)
+            lat,lng=CITY_CENTERS.get(city,(55.7986,49.1053))
             for rooms in profile.get('rooms_options') or [profile['rooms']]:
                 for new in sources.markets(profile):
                     for i in range(40):
