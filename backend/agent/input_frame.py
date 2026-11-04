@@ -71,6 +71,9 @@ def schema(changes, messages=None):
                                for key,value in basic_fields(changes).items()}),
         'criteria':object_schema(criteria),
         'selection':nullable(QUERY_SCHEMA),
+        'unsupported':{'type':'array','maxItems':5,'description':'Явно запрошенные условия, которых нет среди проверяемых полей/критериев. Не объявляй такие квартиры несуществующими.',
+            'items':object_schema({'text':{'type':'string','maxLength':200},'source':field_source,
+                                  'action':{'type':'string','enum':['add','remove']}})},
         'call_ids':nullable({'type':'array','maxItems':10,'items':{'type':'string','maxLength':80},
                             'description':'Только при явной просьбе ЗВОНИТЬ: ID из показанных карточек; [] — по понравившимся. Иначе null. Вопросы продавцу не разрешают звонок.'}),
         'question':{'type':'string','maxLength':500,'description':'Один вопрос только при неясности, иначе пустая строка.'},
@@ -83,16 +86,21 @@ def decode(frame, profile, payload, changes_schema):
     """Единственный внешний формат — nullable fields/criteria по схеме модели."""
     validation.validate(frame, schema(changes_schema))
     intent = frame['intent']
-    commands = {'selection': frame['selection'], 'call_ids': frame['call_ids']}
+    commands = {'selection': frame['selection'], 'call_ids': frame['call_ids'], 'unsupported':frame['unsupported']}
+    input_texts = [row['text'].casefold() for row in payload['messages']]
+    for condition in frame['unsupported']:
+        if not condition['source'].strip() or not any(condition['source'].casefold() in text for text in input_texts):
+            raise ValueError('Неподдержанное пожелание требует цитаты нового ввода')
     if frame['selection'] is not None:
         validate_query(frame['selection'])
+    if frame['unsupported'] and intent not in ('search','refine','hold'):
+        raise ValueError('Неподдержанное новое условие — refine/search/hold, не обычный вопрос и не выполненная команда')
     if intent not in ('search', 'refine', 'selection', 'call', 'seller_questions', 'hold'):
         if frame['selection'] is not None or frame['call_ids'] is not None:
             raise ValueError('Информационный вопрос/остановка не могут исполнять команды')
         return {'intent': intent, 'decision': 'unchanged', 'changes': {}, 'question': '', 'options': []}
     if intent == 'hold' and (frame['selection'] is not None or frame['call_ids'] is not None):
         raise ValueError('Остановка не разрешает поиск или звонок')
-    input_texts = [row['text'].casefold() for row in payload['messages']]
     changes = {}
     for key,slot in frame['fields'].items():
         if slot is None:
@@ -106,6 +114,8 @@ def decode(frame, profile, payload, changes_schema):
                 continue
             raise ValueError(f'Изменение {key} требует точной цитаты нового ввода; неназванное поле должно быть null')
         changes[key] = value
+    if intent == 'selection' and any(key in changes for key in ('rooms','rooms_options','budget_max','housing','payment')):
+        raise ValueError('selection меняет выдачу, не профиль квартиры. Количество предложений — selection.limit, не rooms. Для явно изменённых условий используй refine')
     if 'filters' in changes:
         validate_filters(changes['filters'])
     if frame['call_ids'] is not None and intent != 'call':
@@ -183,7 +193,7 @@ def decode(frame, profile, payload, changes_schema):
         changes.update(city=places[0], cities=places[1:])
     if question.strip():
         return {'intent': intent, 'decision': 'clarify', 'changes': {}, 'question': question, 'options': options,
-                'selection':None,'call_ids':None}
+                'selection':None,'call_ids':None,'unsupported':[]}
     if options:
         raise ValueError('Варианты ответа требуют уточняющего вопроса')
     return {'intent': intent, 'decision': 'apply' if changes else 'unchanged', 'changes': changes,

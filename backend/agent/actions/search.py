@@ -11,7 +11,7 @@ from ..criteria import match, selectable
 from .. import mortgage as M
 from .. import preferences as P
 from ..features import FEATURE_WITH, FEATURES, feature_evidence, missing_info
-from ..numbers import fmt
+from ..numbers import fmt, plural
 from ..pricing import fair_price, score_listing, value_rank
 from ..profile import in_districts, passes_hard_filters, rooms_text
 from . import ActionError, action
@@ -268,8 +268,21 @@ async def show_selection(s, query: dict | None = None) -> dict:
     })
     if not batch:
         await s.say('Новых подходящих вариантов по этой команде нет. Отметки сохранены; можно изменить условия или показать понравившиеся.')
-    elif first:
+    elif first and effective == Q.default_query():
         await s.say('Вот лучшие варианты. Отметьте «Нравится» или «Не то» — учту и подберу ещё. Можно менять условия, порядок и количество; звоню только по вашей просьбе.')
+    else:
+        sort = effective['sort']
+        label = ('с наибольшей площадью' if sort and sort[0] == {'field':'area','direction':'desc'} else
+                 'с наилучшим соотношением оценки и цены' if not sort or sort[0] == {'field':'value_score','direction':'desc'} else
+                 'по вашему запросу')
+        text = f"Отобрал для вас {len(batch)} {plural(len(batch),'предложение','предложения','предложений')} {label}."
+        if len(batch) < effective['limit']:
+            text += f" Запрошено {effective['limit']}; в выбранной области нашлось только {len(batch)}."
+        if sort:
+            text += ' Порядок: ' + ', '.join(Q.FIELDS[x['field']][1] + (' по убыванию' if x['direction']=='desc' else ' по возрастанию') for x in sort) + '.'
+        await s.say(text)
+    if batch and p.get('_unsupported_conditions'):
+        await s.say('В этой подборке не проверено: ' + '; '.join(p['_unsupported_conditions']) + '.')
     r=await s.ask('selection','Подборка','Выберите квартиры, попросите ещё или уточните условия.')
     d=r['data']
     by_id={x['id']:x for x in st['pool']}

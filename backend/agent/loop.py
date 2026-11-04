@@ -63,6 +63,8 @@ def state_brief(s) -> str:
         lines.append('Проверенный запрос к подборке: ' + json.dumps(s.selection_query, ensure_ascii=False))
     if s.profile.get('seller_questions'):
         lines.append('Дополнительные вопросы продавцу: ' + json.dumps(s.profile['seller_questions'],ensure_ascii=False))
+    if s.profile.get('_unsupported_conditions'):
+        lines.append('Система НЕ проверяет эти пожелания: ' + json.dumps(s.profile['_unsupported_conditions'],ensure_ascii=False))
     return "\n".join(lines)
 
 

@@ -49,6 +49,36 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
         s.accept_request(text, event['seq'])
         return s
 
+    async def test_short_correction_gets_previous_query_and_dialogue(self):
+        from backend.agent.listing_query import default_query
+        query={**default_query(),'limit':4,'sort':[{'field':'area','direction':'desc'}]}
+        s=self.agent('4 а не 3',slots(intent='selection',selection=query),profile={'city':'Москва','rooms':2})
+        s.selection_query={**query,'limit':3}
+        s.history.insert(0,{'type':'message','role':'user','text':'Дай три самых больших'})
+        await U.ensure(s)
+        payload=json.loads(s.llm.seen[0][-1]['content'])['data']
+        self.assertEqual(payload['workflow']['selection_query']['limit'],3)
+        self.assertEqual(payload['recent_dialogue'][0]['text'],'Дай три самых больших')
+        self.assertEqual(s.selection_query['limit'],4)
+        self.assertEqual(s.profile['rooms'],2)
+
+    async def test_unsupported_condition_pauses_and_explains_without_claiming_absence(self):
+        text='Хочу квартиру где внутри бассейн'
+        frame=slots(intent='refine',unsupported=[{'text':'бассейн внутри квартиры','source':text,'action':'add'}])
+        s=self.agent(text,frame,profile={'city':'Москва','rooms':2,'budget_max':20_000_000})
+        s.call_targets=['old']
+        s.ask=AsyncMock(return_value={'approved':None,'data':{'text':'Самые просторные'}})
+        result=await U.ensure(s)
+        self.assertTrue(result['needs_clarification'])
+        self.assertEqual(s.profile['rooms'],2)
+        self.assertEqual(s.request_intent,'hold')
+        self.assertFalse(s.call_targets)
+        self.assertIn('бассейн внутри квартиры',s.profile['_unsupported_conditions'])
+        message=next(e['text'] for e in s.history if e.get('role')=='agent')
+        self.assertIn('Пока не умею',message)
+        self.assertIn('не означает, что таких квартир нет',message)
+        self.assertIn('самые просторные',message)
+
     async def test_criterion_and_priority_are_applied_together_in_one_call(self):
         s=self.agent('Парк желателен, первый и последний этаж запрещены.', slots(criteria={'poi:park':'preferred','not_first_floor':'required','not_last_floor':'required'}))
         await U.ensure(s)

@@ -135,6 +135,16 @@ class QueryEngineTest(unittest.TestCase):
         self.assertEqual(result['changes']['seller_questions'],['Как со звукоизоляцией?'])
         self.assertIsNone(result['call_ids'])
 
+    def test_selection_command_cannot_change_room_count(self):
+        text='4 а не 3'
+        frame=slots(fields={'rooms':4,'rooms_options':[4]},intent='selection',
+                    selection={**Q.default_query(),'limit':4})
+        for slot in frame['fields'].values():
+            if slot is not None: slot['source']=text
+        with self.assertRaisesRegex(ValueError,'selection меняет выдачу'):
+            input_frame.decode(frame,{'rooms':2,'rooms_options':[2]},
+                {'messages':[{'text':text,'options':[]}]},CHANGE_SCHEMA)
+
 
 class DialogueStateTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
@@ -170,6 +180,25 @@ class DialogueStateTest(unittest.IsolatedAsyncioTestCase):
         await search.show_selection(s)
         self.assertEqual(len(s.shown),3)
         self.assertFalse(workflow.available(s,'call_seller'))
+        messages=[e['text'] for e in s.history if e['type']=='message' and e.get('role')=='agent']
+        self.assertTrue(any('Отобрал для вас 3' in text for text in messages))
+        self.assertTrue(any('по убыванию' in text for text in messages))
+
+    async def test_four_largest_can_expand_previous_three_without_changing_rooms(self):
+        s=self.agent();s.shown=s.search['pool'][:3]
+        s.selection_query={**Q.default_query(),'limit':4,'sort':[{'field':'area','direction':'desc'}]}
+        s.ask=AsyncMock(return_value={'approved':True,'data':{'action':'text'}})
+        await search.show_selection(s)
+        self.assertEqual(len(s.shown),4)
+        self.assertEqual(s.profile['rooms'],2)
+
+    async def test_narrow_scope_reports_shortfall_honestly(self):
+        s=self.agent();s.shown=s.search['pool'][:3]
+        s.selection_query={**Q.default_query(),'scope':'shown','limit':4}
+        s.ask=AsyncMock(return_value={'approved':True,'data':{'action':'text'}})
+        await search.show_selection(s)
+        self.assertEqual(len(s.shown),3)
+        self.assertTrue(any('Запрошено 4' in e.get('text','') for e in s.history))
 
     async def test_refinement_revokes_old_call_permission_and_preserves_budget(self):
         s=self.agent();s.shown=s.search['pool'][:10];s.call_targets=['cian-1']

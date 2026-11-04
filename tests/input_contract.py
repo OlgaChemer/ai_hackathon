@@ -6,7 +6,7 @@ from backend.agent import input_frame
 from backend.agent.request_schema import CHANGE_SCHEMA
 
 
-def slots(*, fields=None, criteria=None, places=None, intent="refine", selection=None, call_ids=None):
+def slots(*, fields=None, criteria=None, places=None, intent="refine", selection=None, call_ids=None, unsupported=None):
     schema = input_frame.schema(CHANGE_SCHEMA)
     return {
         "places": [
@@ -25,6 +25,7 @@ def slots(*, fields=None, criteria=None, places=None, intent="refine", selection
         "options": [],
         "intent": intent,
         "selection": selection,
+        "unsupported": unsupported or [],
         "call_ids": call_ids,
     }
 

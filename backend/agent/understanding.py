@@ -35,6 +35,12 @@ fields — объект изменений: каждое поле null (не н�
 Не возвращай snapshot profile. Source выбирай из нового ввода, не из вопроса агента/профиля.
 Пример: «Оставь три лучших» -> fields все null, places=[], criteria все null,
 intent=selection, selection={scope:all,mode:rank,limit:3,filters:[],sort:[],aggregates:[],group_by:null}.
+Число предложений — selection.limit, НЕ rooms/rooms_options. «4 самые большие» — четыре квартиры,
+комнатность прежняя. «4, а не 3» после отбора трёх меняет limit=4, сохраняя предыдущую сортировку.
+workflow.selection_query и recent_dialogue содержат контекст таких коротких исправлений.
+«Эти не понравились, дай четыре самых больших по убыванию площади» — scope=all, limit=4, area desc.
+Новый отбор/порядок по умолчанию работает по ВСЕМ найденным, не только по прежним трём.
+scope=shown используй лишь при явной просьбе ограничиться именно показанными объектами.
 Пример: «Школа рядом» -> fields все null, places=[], criteria.poi:school=required.
 Пример: «Новостройка со сдачей в2027» -> fields.housing={value:new,source:Новостройка},
 fields.filters={value:[delivery_year eq ['2027'] required],source:в2027}; остальные поля null.
@@ -58,9 +64,11 @@ fields.filters — универсальные сравнения полей из
 fields.seller_questions — только новые/сохранённые явно запрошенные вопросы продавцу, не разрешение звонка.
 selection — запрос к найденным объявлениям: scope all/shown/liked, mode rank/more, limit, filters, sort, aggregates, group_by(null если нет).
 Производные поля value_score/discount_pct используй только в selection.filters, не в fields.filters.
-«Оставь три лучших» -> intent=selection, selection.limit=3, mode=rank, scope=shown.
+«Оставь три лучших» -> intent=selection, selection.limit=3, mode=rank, scope=all.
 «Ещё» -> mode=more, scope=all. «Самые просторные» -> sort area desc; «дешевле» -> price asc.
 Неограниченное количество/порядок не выдумывай: обычная порция limit=10, sort=[], filters=[], aggregates=[].
+При коротком исправлении количества сохраняй остальную workflow.selection_query; новый полный отбор её заменяет.
+«Выгодные» — сортировка value_score desc. Не добавляй неназванный фильтр value_score>0 или area>=0.
 Можно одновременно изменить поля и задать selection. Новые постоянные условия — fields/criteria,
 временные операции над выдачей — selection. Запрос подсчёта/сравнения квартир — selection, не FAQ.
 call_ids — только явная просьба звонить (intent=call). Возьми ID из workflow.selection; [] означает по понравившимся.
@@ -85,6 +93,13 @@ continue — просит продолжать прежнее; hold — явно
 «Спроси про шумоизоляцию, пока не звони» -> intent=hold и fields.seller_questions={value:[вопросы],source:слово из ввода}.
 Ответ с новым значением на уточнение (даже из одного слова) — refine, а не continue.
 Обычный информационный вопрос не является ни подтверждением карточки, ни просьбой начать поиск.
+unsupported — явно запрошенные условия ВНЕ каталога listing_fields и поддержанных criteria.
+Например бассейн ВНУТРИ квартиры нельзя заменить nearby:fitness, парком или пожеланием в wishes:
+unsupported=[{text:'бассейн внутри квартиры',source:точная цитата,action:add}], intent=refine.
+Не утверждай, что таких квартир нет: система пока не умеет это проверять.
+Неподдержанный срок/географию/операцию также обозначай явно. Поддержанные поля извлеки как обычно,
+но не притворяйся, что неподдержанное условие было выполнено. Без таких условий unsupported=[].
+Явную отмену прежнего неподдержанного условия передай с action=remove и прежним text из workflow.
 Верни JSON строго по схеме. Не пиши процент уверенности и не выдавай разрешений на деньги или сделки.
 """
 
@@ -114,7 +129,11 @@ async def prepare(s):
     payload={'supported_cities':sources.SUPPORTED_CITIES,'ambiguous_catalog_names':catalog_ambiguities(sources.SUPPORTED_CITIES),
              'messages':inputs,'profile':{k:v for k,v in base_profile.items() if not k.startswith('_')},'input_schema':contract,
              'listing_fields':{key: {'type':v[0],'label':v[1]} for key,v in FIELDS.items()},
+             'recent_dialogue':[{'role':e['role'],'text':e['text']} for e in s.history
+                                if e.get('type')=='message' and e.get('role') in ('user','agent')][-8:],
              'workflow':{'has_search':s.search is not None,'has_selection':bool(s.shown),'has_calls':bool(s.calls),'chosen':bool(s.chosen),
+                         'selection_query':s.selection_query or s.profile.get('_selection_query'),
+                         'unsupported_conditions':s.profile.get('_unsupported_conditions') or [],
                          'selection':[{'id':x['id'],'number':i+1,'address':x.get('address')} for i,x in enumerate(s.shown)],
                          'liked':s.prefs.liked}}
     revision=s.client_revision
@@ -162,6 +181,32 @@ async def ensure(s):
         result = None
     s.request_review_seq = review['seq']
     s.request_intent = review['intent']
+    unsupported = list(s.profile.get('_unsupported_conditions') or [])
+    additions = []
+    for item in review.get('unsupported') or []:
+        if item['action'] == 'remove':
+            unsupported = [text for text in unsupported if text != item['text']]
+        elif item['text'] not in unsupported:
+            unsupported.append(item['text'])
+            additions.append(item['text'])
+    if review.get('unsupported'):
+        s.profile['_unsupported_conditions'] = unsupported
+    if additions:
+        # Сохраняем явно названные поддержанные условия, но не выполняем
+        # частичный поиск без решения клиента о неподдержанном пожелании.
+        s.request_intent = 'hold'
+        s.call_targets = []
+        s.remember()
+        explanation = ('Пока не умею надёжно проверять условие «' + '», «'.join(additions)
+                       + '» по данным объявлений. Это не означает, что таких квартир нет. '
+                       'Могу отобрать самые выгодные предложения по оценке и цене или самые просторные квартиры; '
+                       'это условие останется непроверенным.')
+        await s.say(explanation)
+        answer = await s.ask('clarify','Как продолжить?',
+                             'Какой вариант вам показать? Остальные условия сохранены.',
+                             chips=['Самые выгодные','Самые просторные','Оставить подборку'])
+        return {'needs_clarification':True,'question':explanation,
+                'client_said':answer['data'].get('text','')}
     if review['intent'] not in ('seller_questions','question'):
         s.call_targets = []
     if review.get('selection') is not None:
