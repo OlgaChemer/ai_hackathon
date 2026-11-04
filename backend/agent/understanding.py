@@ -17,8 +17,9 @@ profile — прежние условия для сохранения неназ
 reading_command — уже принятая команда отбора, если есть. Её количество и показатель НЕ условия квартиры.
 «Три самых выгодных», «две большие», «4 а не3» не задают пороги площади/цены, комнатность или пожелания: все условия null.
 Если рядом есть ЯВНОЕ новое условие («сдача2027, покажи три просторных»), извлеки delivery_year; число3 — только команда отбора.
-fields — именованные поля {value,source: буквальная цитата НОВОГО ввода}; неназванный слот null.
-criteria — обязательность условий: required/preferred/remove; неназванное null.
+fields — СПИСОК только изменённых фактов [{key,value,source: буквальная цитата НОВОГО ввода}]; неназванных полей в списке нет.
+value строкового поля — строка без дополнительных кавычек: cash/new. Для массива/числа/boolean — JSON в строке: [1,2], 30000000, true.
+criteria — СПИСОК [{key,priority:required/preferred/remove,value,source}]; пустой при отсутствии новых условий. Для poi/feature value=true; для remove пусто.
 places — только явно названные допустимые города, source — исходное слово, lemma — его начальная форма. Не достраивай имя: Нижнего -> Нижний. Центр/школа/новостройка не города.
 Москва или Подмосковье — обе территории. При отмене Москвы и области не сохраняй их как альтернативы.
 rooms_options — все допустимые числа комнат 1–5: однушка или двушка -> [1,2]; 1 или3 -> [1,3].
@@ -34,14 +35,15 @@ rooms_options — все допустимые числа комнат 1–5: о�
 Готовые критерии инфраструктуры: poi:school/clinic/kindergarten/...; не дублируй их в filters.
 Школа до1км пешком — poi:school required, учитываем близость; не обещай маршруты. Радиус по прямой проверяет код.
 Вопросы продавцу — fields.seller_questions, не разрешение звонка. Сохрани прежние вопросы, добавь новые.
-selection только если та же реплика просит отбор/порядок: rank, all по умолчанию, limit N, sort [{field,direction}].
+selection — [] если команды нет, либо массив с одним запросом: rank, all по умолчанию, limit N (0 сохранить), sort [{field,direction}], aggregates [], group_by пустая строка.
 Цена метра: price_per_m2 asc; самые большие: area desc; выгодные: value_score desc. selection не содержит порогов.
 При одном изменении условия selection=null. При отмене площади и «покажи две большие» передай И отмену, И selection rank2 area desc.
 Несколько разрешённых комнатностей не требуют выбора ОДНОЙ: сохрани все варианты.
 Название улицы без указания, какой именно, не считается центром города: сохрани буквальное неподдержанное условие в unsupported. Частичное имя города не достраивай, код уточнит его по каталогу.
 unsupported — только НОВОЕ условие вне доступных свойств, с буквальной цитатой; бассейн внутри квартиры не равен фитнесу рядом.
 При явной отмене неподдержанного условия: unsupported action=remove, text дословно из unsupported_conditions, source — цитата нового ввода. Совмести отмену с selection, если просят отбор.
-Верни JSON, неназванное null/пусто. Не заполняй семью, маткапитал, срок и другие параметры предположениями.
+Пример: 1–2 комнаты, вторичка, за свои -> fields [{key:rooms_options,value:"[1,2]",source:"1–2"},{key:housing,value:"secondary",source:"вторичка"},{key:payment,value:"cash",source:"за свои"}].
+Верни JSON со списками фактов. Неназванное не добавляй. Не заполняй семью, маткапитал, срок и другие параметры предположениями.
 '''
 
 ROUTER_SYSTEM='''Определи смысл ТОЛЬКО новых messages одним вызовом смысловой функции. Ничего не выполняй.
@@ -202,6 +204,8 @@ async def prepare(s):
     extraction['properties']['unsupported']['items']['properties']['text']['enum']=quotes
     if extraction['properties']['places']['maxItems']==0:
         extraction['properties']['places']['items']['properties']['words']['items']['properties']['source'].pop('enum',None)
+    from . import profile_patch
+    extraction=profile_patch.schema(extraction)
     payload={'supported_cities':sources.SUPPORTED_CITIES,'ambiguous_catalog_names':catalog_ambiguities(sources.SUPPORTED_CITIES),
              'messages':inputs,'profile':{k:v for k,v in base_profile.items() if not k.startswith('_')},
              'listing_fields':{key: {'type':v[0],'label':v[1]} for key,v in FIELDS.items()},
@@ -228,6 +232,7 @@ async def prepare(s):
                 if extract or rank:
                     data={k:payload[k] for k in ('messages','profile','supported_cities','ambiguous_catalog_names','listing_fields')}
                     data['unsupported_conditions']=s.profile.get('_unsupported_conditions') or []
+                    data['allowed_fields']=input_frame.basic_fields(CHANGE_SCHEMA)
                     contract_for_changes=deepcopy(extraction)
                     if rank:
                         data['reading_command']=result['selection']
@@ -238,7 +243,7 @@ async def prepare(s):
                     parsed=await s.llm.chat([{'role':'system','content':prompt},guard.data_message('profile_changes',data)],
                         json_schema=contract_for_changes,tag='profile_extract',temperature=.01,max_tokens=3000)
                     changes=parse_json_loose(parsed.text)
-                    validation.validate(changes,contract_for_changes)
+                    changes=profile_patch.decode(changes,contract_for_changes,inputs)
                     if rank and (any(v is not None for v in (changes.get('fields') or {}).values()) or
                                  any(v is not None for v in (changes.get('criteria') or {}).values()) or
                                  changes.get('places') or changes.get('unsupported')):

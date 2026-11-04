@@ -28,6 +28,13 @@ def read_args(*args,count_source=None,keep_order=False,**kwargs):
             'count_source':count_source,'keep_order':keep_order}
 
 
+def facts(frame,*,reading=False):
+    return {'fields':[{'key':k,'value':v['value'] if isinstance(v['value'],str) else json.dumps(v['value']),
+                      'source':v['source']} for k,v in frame['fields'].items() if v is not None],
+            'criteria':[],'places':frame['places'],'unsupported':frame['unsupported'],
+            **({'selection':[]} if not reading else {})}
+
+
 class ReadingAndRecovery(unittest.IsolatedAsyncioTestCase):
     def setUp(self):db.configure('sqlite://')
 
@@ -109,7 +116,7 @@ class ReadingAndRecovery(unittest.IsolatedAsyncioTestCase):
         frame=slots(fields={'rooms_options':[1,2],'housing':'secondary','payment':'cash'})
         for slot in frame['fields'].values():
             if isinstance(slot,dict):slot['source']=text
-        values={k:v for k,v in frame.items() if k not in ('intent','call_ids','question','options')}
+        values=facts(frame)
         class SplitModel:
             async def chat(self,messages,**kwargs):
                 seen.append((messages,kwargs))
@@ -134,7 +141,7 @@ class ReadingAndRecovery(unittest.IsolatedAsyncioTestCase):
         filters=[{'field':'delivery_year','op':'eq','values':['2027'],'priority':'required'}]
         frame=slots(fields={'filters':filters})
         frame['fields']['filters']['source']=text
-        values={k:v for k,v in frame.items() if k not in ('intent','call_ids','question','options','selection')}
+        values=facts(frame,reading=True)
         class SplitModel:
             async def chat(self,messages,**kwargs):
                 if kwargs['tag']=='request_review':
