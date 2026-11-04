@@ -15,9 +15,8 @@ def slots(*, fields=None, criteria=None, places=None, intent="refine", selection
         ],
         "fields": {
             **{key: None for key in schema["properties"]["fields"]["properties"]},
-            **(fields or {}),
+            **{k: {'value':v,'source':''} if v is not None else None for k,v in (fields or {}).items()},
         },
-        "field_sources": [],
         "criteria": {
             **{key: None for key in schema["properties"]["criteria"]["properties"]},
             **(criteria or {}),
@@ -36,8 +35,7 @@ def input_reply(text, changes=None, *, intent="refine", profile=None):
     result = slots(intent=intent)
     for key in result["fields"]:
         if key in changes:
-            result["fields"][key] = changes[key]
-            result['field_sources'].append({'field':key,'text':text})
+            result["fields"][key] = {"value":changes[key],"source":text} if changes[key] is not None else None
     preferred = set(changes.get("soft_criteria", profile.get("soft_criteria") or []))
     for key in result["criteria"]:
         if key in changes:

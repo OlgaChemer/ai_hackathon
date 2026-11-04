@@ -26,12 +26,12 @@ class ReviewModel(LLMClient):
             raise answer
         if callable(answer):
             answer = await answer()
-        # Краткие unit-фикстуры slots не знают текст: снабжаем их цитатами.
-        # Отсутствующие/ложные evidence отдельно проверяются напрямую через decode.
-        if isinstance(answer,dict) and answer.get('field_sources') == []:
+        # Краткие unit-фикстуры slots не знают текст: снабжаем их источником.
+        if isinstance(answer,dict) and isinstance(answer.get('fields'),dict):
             text=json.loads(messages[-1]['content'])['data']['messages'][-1]['text']
             answer=deepcopy(answer)
-            answer['field_sources']=[{'field':k,'text':text} for k,v in answer.get('fields',{}).items() if v is not None]
+            for slot in answer['fields'].values():
+                if isinstance(slot,dict) and slot.get('source')=='':slot['source']=text
         return LLMResponse(json.dumps(answer, ensure_ascii=False))
 
 
@@ -81,7 +81,7 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
         words=contract['properties']['places']['items']['properties']['words']['items']['properties']['source']['enum']
         self.assertIn('Москве',words)
         self.assertNotIn('Москва',words)
-        validation_schema=contract['properties']['fields']['properties']['rooms']
+        validation_schema=contract['properties']['fields']['properties']['rooms']['properties']['value']
         self.assertEqual(validation_schema['minimum'],0)
 
     async def test_qualitative_wish_without_a_numeric_limit_does_not_reject_other_fields(self):
@@ -166,8 +166,8 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(s.profile,before)
         self.assertEqual(s.request_intent,'question')
 
-    async def test_continuation_and_hold_cannot_broaden_existing_profile(self):
-        for intent in ('continue', 'hold', 'other'):
+    async def test_continuation_and_other_cannot_broaden_existing_profile(self):
+        for intent in ('continue', 'other'):
             with self.subTest(intent=intent):
                 value=slots(fields={'rooms_options':[0,1,2,3,4,5], 'budget_max':100_000_000},intent=intent)
                 s=self.agent('Продолжайте прежнее.',value,profile={'city':'Казань','rooms':2,'budget_max':9_000_000})

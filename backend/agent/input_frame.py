@@ -59,15 +59,16 @@ def schema(changes, messages=None):
     source={'type':'string','maxLength':80,'description':'Выбери одно исходное слово из enum, сохранив его форму и регистр.'}
     if messages is not None:
         source['enum']=source_words(messages)
+    field_source = {'type':'string','maxLength':1000,'description':'Буквальное слово нового ввода, подтверждающее значение; либо всё исходное сообщение. Не цитата из профиля.'}
+    if messages is not None:
+        field_source['enum'] = list(dict.fromkeys([*source_words(messages), *(row['text'] for row in messages)]))
     return object_schema({
         'places':{'type':'array','maxItems':3,'description':'Только явно названные города/области. При неизменном городе пусто. Центр, школа, новостройка, срок сдачи НЕ территории.',
             'items':object_schema({'words':{'type':'array','minItems':1,'maxItems':8,'items':object_schema({
                 'source':source,
                 'lemma':{'type':'string','enum':place_words,'description':'Слово названия города в начальной форме. Не добавляй отсутствующие слова. Неподдержанный город — предметный question и places=[]; не подставляй похожий.'}})}})},
-        'fields':object_schema({key:nullable(value) for key,value in basic_fields(changes).items()}),
-        'field_sources':{'type':'array','maxItems':30,'description':'Для каждого НЕ-null изменённого fields укажи точную цитату нового ввода. Не цитируй profile/вопрос агента; неизвестное не заполняй.',
-                         'items':object_schema({'field':{'type':'string','enum':list(basic_fields(changes))},
-                                                'text':{'type':'string','minLength':1,'maxLength':1000}})},
+        'fields':object_schema({key:nullable(object_schema({'value':value,'source':field_source}))
+                               for key,value in basic_fields(changes).items()}),
         'criteria':object_schema(criteria),
         'selection':nullable(QUERY_SCHEMA),
         'call_ids':nullable({'type':'array','maxItems':10,'items':{'type':'string','maxLength':80},
@@ -91,13 +92,14 @@ def decode(frame, profile, payload, changes_schema):
         return {'intent': intent, 'decision': 'unchanged', 'changes': {}, 'question': '', 'options': []}
     if intent == 'hold' and (frame['selection'] is not None or frame['call_ids'] is not None):
         raise ValueError('Остановка не разрешает поиск или звонок')
-    sources = {row['field']:row['text'].strip() for row in frame['field_sources']}
     input_texts = [row['text'].casefold() for row in payload['messages']]
     changes = {}
-    for key,value in frame['fields'].items():
-        if value is None or value == profile.get(key):
+    for key,slot in frame['fields'].items():
+        if slot is None:
             continue
-        quote = sources.get(key,'')
+        value,quote = slot['value'],slot['source'].strip()
+        if value == profile.get(key):
+            continue
         if not quote or not any(quote.casefold() in text for text in input_texts):
             # Пустые неназванные значения от модели не стирают прежние условия.
             if value in (False, [], ''):

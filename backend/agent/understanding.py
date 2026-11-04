@@ -28,15 +28,13 @@ places — итоговые территории, где клиент ХОЧЕТ
 Одному исходному слову соответствует одно нормализованное слово. НЕ добавляй отсутствующие части имени.
 ambiguous_catalog_names перечисляет общие части разных названий. Передай такую часть без достраивания:
 код сам предложит уточнить, какой из соответствующих городов нужен. Полное позднейшее имя разрешает вопрос.
-fields — объект обычных параметров. Не названное клиентом поле = null, а не прежнее значение.
-field_sources содержит точные цитаты нового ввода для НЕ-null полей fields. Без прямых слов клиента
-не заполняй поле из profile, включая false/[]/0. Не повторяй snapshot профиля.
-Пример: profile={city:Москва,rooms:2,budget_max:30000000,center_required:true};
-«Оставь три лучших» -> fields ВСЕ null, field_sources=[], places=[], criteria все null,
-intent=selection, selection={scope:shown,mode:rank,limit:3,filters:[],sort:[],aggregates:[]}.
-Пример: «Школа рядом» -> fields все null, field_sources=[], places=[], criteria.poi:school=required.
-Пример: «Новостройка со сдачей в2027» -> fields.housing=new, fields.filters=[delivery_year eq ['2027'] required],
-field_sources=[{field:housing,text:Новостройка},{field:filters,text:со сдачей в2027}], остальные поля null.
+fields — объект изменений: каждое поле null (не названо) либо {value: типизированное значение, source: исходное слово/полное сообщение из enum}.
+Не возвращай snapshot profile. Source выбирай из нового ввода, не из вопроса агента/профиля.
+Пример: «Оставь три лучших» -> fields все null, places=[], criteria все null,
+intent=selection, selection={scope:all,mode:rank,limit:3,filters:[],sort:[],aggregates:[],group_by:null}.
+Пример: «Школа рядом» -> fields все null, places=[], criteria.poi:school=required.
+Пример: «Новостройка со сдачей в2027» -> fields.housing={value:new,source:Новостройка},
+fields.filters={value:[delivery_year eq ['2027'] required],source:в2027}; остальные поля null.
 Не дублируй обычные poi/бюджет/комнаты универсальными filters, когда для них есть точное базовое поле.
 Альтернативы комнат сохраняй полностью в rooms_options; перечисление не превращай в диапазон.
 Неизвестное значение — null. Не добавляй параметров без слов клиента.
@@ -72,7 +70,7 @@ seller_questions — дополнить вопросы продавцу; search 
 continue — просит продолжать прежнее; hold — явно просит пока не искать или остановиться; other — остальное.
 При continue/other профиль не меняется: fields и criteria = null, places пуст.
 При hold можно сохранить явно названные условия/вопросы, но selection=null и call_ids=null:
-«Спроси про шумоизоляцию, пока не звони» -> intent=hold и fields.seller_questions с цитатой.
+«Спроси про шумоизоляцию, пока не звони» -> intent=hold и fields.seller_questions={value:[вопросы],source:слово из ввода}.
 Ответ с новым значением на уточнение (даже из одного слова) — refine, а не continue.
 Обычный информационный вопрос не является ни подтверждением карточки, ни просьбой начать поиск.
 Верни JSON строго по схеме. Не пиши процент уверенности и не выдавай разрешений на деньги или сделки.

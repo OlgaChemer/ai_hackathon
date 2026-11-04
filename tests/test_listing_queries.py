@@ -111,7 +111,7 @@ class QueryEngineTest(unittest.TestCase):
     def test_hold_can_save_seller_questions_without_permitting_any_action(self):
         text='Уточни шумоизоляцию, пока не звони'
         frame=slots(fields={'seller_questions':['Как со звукоизоляцией?']},intent='hold')
-        frame['field_sources']=[{'field':'seller_questions','text':'Уточни шумоизоляцию'}]
+        frame['fields']['seller_questions']['source']='Уточни шумоизоляцию'
         result=input_frame.decode(frame,{'city':'Казань'},{'messages':[{'text':text,'options':[]}],
             'supported_cities':['Казань'],'ambiguous_catalog_names':{}},CHANGE_SCHEMA)
         self.assertEqual(result['intent'],'hold')
@@ -160,6 +160,15 @@ class DialogueStateTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(s.red_lines_ok)
         self.assertFalse(s.shown)
         self.assertFalse(s.call_targets)
+        self.assertFalse(workflow.available(s,'call_seller'))
+
+    async def test_hold_with_explicit_budget_change_saves_it_but_requires_new_consent(self):
+        s=self.agent();s.call_targets=['cian-1']
+        request.apply_request(s,{'budget_max':12_000_000})
+        s.request_intent='hold'
+        self.assertEqual(s.profile['budget_max'],12_000_000)
+        self.assertFalse(s.red_lines_ok)
+        self.assertFalse(workflow.available(s,'search_listings'))
         self.assertFalse(workflow.available(s,'call_seller'))
 
     async def test_question_switches_typing_off_and_old_decision_id_cannot_resolve_new(self):

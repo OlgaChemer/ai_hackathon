@@ -54,9 +54,9 @@ async def check_map(s, listings: list[dict], announce: bool = False, kinds=None)
     deadline = (s.search or {}).get("map_deadline", time.monotonic() + settings.places_budget_s)
     # Сначала проверяем кандидатов первой выдачи; массовая проверка всего города
     # съедала бюджет до появления полезной карточки.
-    score_into(listings, (s.search or {}).get('comps') or listings, s.profile, (s.search or {}).get('meta', {}))
-    meta = (s.search or {}).get('meta', {})
-    candidates = sorted(listings,key=lambda x:meta.get(x['id'],{}).get('score',0),reverse=True)
+    meta = s.search.setdefault('meta',{}) if s.search is not None else {}
+    score_into(listings, (s.search or {}).get('comps') or listings, s.profile, meta)
+    candidates = ranked(listings,meta,s.prefs)
     ok = await geo.nearby(candidates[:30], kinds, budget_s=max(0, deadline - time.monotonic()))
     if not ok and not s.map_warned:
         s.map_warned = True
