@@ -11,99 +11,12 @@ from . import guard, validation, input_frame
 from .request_schema import CHANGE_SCHEMA
 from .listing_query import FIELDS
 
-SYSTEM = """Определи смысл новой реплики одним вызовом подходящей смысловой функции. Ничего не выполняй.
-read_selection — отбор/сортировка/сравнение/статистика/новые варианты по найденным данным.
-profile_change — новые условия квартиры, бюджет, город или вопросы продавцу.
-clarify_input — один конкретный вопрос, если смысл действительно неоднозначен.
-informational_question — информационный вопрос, в том числе «что непонятно/что сломалось».
-call_intent — явная просьба звонить; pause_request — явная пауза/«пока не звони».
-unsupported_condition — условие вне проверяемых параметров; continue_input/other_input — продолжить/остальное.
-Для read_selection передай operation, scope, limit, count_source, order_by, direction, keep_order, aggregates, group_by. Там НЕТ полей профиля и фильтров.
-count_source — буквальная цитата нового сообщения с ЗАПРОШЕННЫМ количеством. При limit=null count_source=null.
-Количество из контекста нельзя выдавать за новое: «4 а не 3» -> limit=4, count_source="4", keep_order=true.
-keep_order=true ТОЛЬКО при изменении одного количества/просьбе сохранить порядок. Новая метрика -> false.
-order_by и direction задают показатель и направление: больше площадь -> area/desc;
-дешевле -> price/asc; дешевле за метр -> price_per_m2/asc; выгоднее без уточнения -> value_score/desc.
-Для profile_change передай только названные fields/criteria/places; не дублируй профиль из контекста.
-В profile_change fields и criteria — объекты; неназванные слоты null. Проверь ВСЕ явно названные условия, ничего не пропускай.
-Комнатность/студия/город в новом запросе — profile_change; число комнат не количество карточек.
-read_selection работает с уже найденными квартирами. При новом запросе с условиями и отбором используй profile_change.selection.
-messages — только ещё не обработанные реплики; recent_dialogue — контекст, не источник новых условий.
-Более позднее уточнение дополняет/отменяет прежнее. Неназванное сохраняется. Не возвращай snapshot profile.
-
-УСЛОВИЯ
-fields содержит только изменённые именованные поля: {имя: {value: значение, source: буквальная цитата нового сообщения}}.
-Если условия не меняются (сортировка, количество, сравнение, статистика, новые варианты),
-ВЕСЬ объект fields=null и ВЕСЬ criteria=null. Не заполняй их неназванными нулями/пустыми списками.
-Суммы в рублях. rooms_options — ВСЕ допустимые комнатности 1–5, диапазон 1–2 = [1,2].
-Студия не входит в 1–2 комнаты. Только явную просьбу студии передай studio_requested=true;
-явный запрет — false; иначе null. Не заполняй семью, маткапитал и timeline по предположению.
-criteria связывает каждое условие с required/preferred/remove; null — не названо.
-Неназванные базовые поля и criteria не повторяй из profile.
-Готовые критерии (не первый/последний этаж, инфраструктура) не дублируй filters.
-fields.filters — только ЯВНЫЙ числовой порог/диапазон/значение свойства из listing_fields.
-Сравнение и превосходная степень — не порог! «Из двух какая дешевле за м²» не означает цену <=2.
-Не добавляй неназванные area>=0, value_score>0. В filters числа строками, не имена других полей.
-Сдача в 2027: delivery_year eq ['2027']; не позднее 2027: lte; 2027–2028: between.
-Год постройки year/year_min — другой параметр. Не заменяй им срок сдачи.
-«В центре» обязательно: prefer_center=true, center_required=true; «желательно ближе» — true/false.
-Название улицы и центр города — разные условия. «Ближе к центральной улице» без названия:
-задай конкретный question, какую улицу клиент имеет в виду или можно ориентироваться на центр города.
-Не обещай расстояние до улицы, которого система не вычисляет.
-
-ТЕРРИТОРИИ
-places — только явно названные допустимые города/области, все альтернативы через «или».
-Москва или Подмосковье = два places. Отрицания не включай. Известный город не меняется без новой территории.
-В words.source выбери исходное слово из enum с его регистром/формой; lemma — его начальная форма.
-Одному исходному слову соответствует одно нормализованное. Не достраивай полное имя за клиента:
-«Нижнего» -> source:Нижнего, lemma:Нижний; код уточнит полный город. «Новгород» неоднозначен.
-Школа, центр, новостройка и год не города. Неподдержанное название — конкретный question, places=[].
-
-ОПЕРАЦИИ НАД ДАННЫМИ
-selection описывает цель чтения; фильтров и mode в этом объекте НЕТ — исполняемый запрос собирает код.
-operation=rank: отобрать N/сортировать; scope=all по умолчанию, shown лишь при явном «из показанных».
-operation=compare: «среди этих двух какая выгоднее/больше»; scope=shown, sort по нужному показателю.
-Карточки при compare остаются на месте, ответ вычисляется кодом. Число «двух» задаёт группу, не цену.
-operation=more: просит ЕЩЁ/НОВЫЕ варианты; только это действие исключает уже показанные.
-«Подбери новые предложения с учётом отметок» -> more, scope=all, fields=null, criteria=null.
-operation=analyze: посчитать среднее/медиану/статистику; карточки не меняются.
-Выгоднее за квадратный метр: price_per_m2 asc. Просторнее/больше: area desc.
-Выгоднее без уточнения метрики: value_score desc. Дешевле: price asc.
-limit — число карточек, не комнатность и не порог цены. «4 а не 3» меняет limit, sort=null (сохранить).
-sort=null сохраняет прежний порядок, [] — обычный рейтинг. При новом полном отборе задай нужный sort.
-«Эти не понравились, дай 4 больших» -> rank, all, limit4, area desc, никаких условий профиля.
-В compare/analyze/more fields, criteria и places пусты: это чтение, не изменение параметров квартиры.
-Новый фильтр + отбор: intent=refine, fields/criteria с новым условием и selection=rank.
-
-НАМЕРЕНИЕ И ВОПРОСЫ
-search — новый подбор; refine — новые/снятые условия; selection — операции с выдачей;
-call — ЯВНО позвонить; seller_questions — добавить вопросы; question — информационный вопрос;
-continue — продолжать; hold — остановиться/пока не искать; other — остальное.
-«Что непонятно/что сломалось» — question: не пытайся заново менять город из прежней неудачной реплики.
-question/continue/other не меняют профиль. Обычный вопрос не подтверждает ожидающую карточку.
-Вопрос «а можно вместо Москвы Казань?» меняет город: refine, не FAQ.
-call_ids — ID из workflow.selection только при явном call; [] — по понравившимся; иначе null.
-Вопросы продавцу и новые условия не разрешают звонок. seller_questions — явно запрошенный список вопросов.
-hold может сохранить явно названные поля/вопросы, но selection=null, call_ids=null.
-question/options — один КОНКРЕТНЫЙ вопрос при настоящей неясности, иначе пустая строка/массив.
-Вопрос должен называть, что уточнить: полный город, название улицы, сумма или объект; не «уточните запрос».
-Если новая реплика исправляет неоднозначность прежней, применяй их вместе. Не добавляй условие без слов клиента.
-
-НЕПОДДЕРЖАННОЕ
-unsupported — явно запрошенное условие вне каталога свойств/criteria.
-Бассейн ВНУТРИ квартиры не равен фитнесу/воде рядом. Не подменяй одно другим и не пиши это только в wishes.
-При add text — буквальная цитата НОВОЙ реплики (например «внутри бассейн»), source — точная ссылка из enum.
-Нельзя считать такие квартиры несуществующими: система пока не умеет проверять это условие.
-При выборе предложенной альтернативы unsupported=[]: код сохраняет отметку о непроверенном условии.
-При явной отмене action=remove, text — прежнее условие из workflow.unsupported_conditions.
-При новом неподдержанном условии intent=refine/search/hold. Если неподдержанного нет, unsupported=[].
-Примеры формы: profile_change(fields={rooms_options:{value:[1,2],source:'1–2'}});
-read_selection(operation:compare,scope:shown,limit:null,count_source:null,order_by:price_per_m2,direction:asc,keep_order:false,aggregates:null,group_by:null).
-Верни один вызов смысловой функции по её схеме. Не выдавай разрешений на деньги/звонки/сделки и проценты уверенности.
-"""
 
 PROFILE_SYSTEM='''Извлеки ВСЕ изменения условий квартиры из новых messages. Верни JSON по схеме, никаких действий не выполняй.
 profile — прежние условия для сохранения неназванного; не копируй их в результат.
+reading_command — уже принятая команда отбора, если есть. Её количество и показатель НЕ условия квартиры.
+«Три самых выгодных», «две большие», «4 а не3» не задают пороги площади/цены, комнатность или пожелания: все условия null.
+Если рядом есть ЯВНОЕ новое условие («сдача2027, покажи три просторных»), извлеки delivery_year; число3 — только команда отбора.
 fields — именованные поля {value,source: буквальная цитата НОВОГО ввода}; неназванный слот null.
 criteria — обязательность условий: required/preferred/remove; неназванное null.
 places — только явно названные допустимые города, source — исходное слово, lemma — его начальная форма. Не достраивай имя: Нижнего -> Нижний. Центр/школа/новостройка не города.
@@ -210,10 +123,6 @@ def semantic_tools(contract,inputs,unsupported,has_results=True):
     from .selection_request import SCHEMA
     properties=contract['properties']
     def obj(props,required=()):return {'type':'object','additionalProperties':False,'properties':props,'required':list(required)}
-    edits={k:deepcopy(properties[k]) for k in ('fields','criteria','places','selection','unsupported')}
-    for key in ('fields','criteria'):
-        edits[key]['type']='object'
-        edits[key]['required']=list(edits[key]['properties'])
     quotes=list(dict.fromkeys([*input_frame.source_words(inputs),*(row['text'] for row in inputs),*unsupported]))
     read_schema=deepcopy(SCHEMA)
     read_schema['properties'].pop('sort')
@@ -288,8 +197,9 @@ async def prepare(s):
     contract=input_frame.sparse_schema(CHANGE_SCHEMA, inputs)
     tools=semantic_tools(contract,inputs,s.profile.get('_unsupported_conditions') or [],bool(s.shown or s.search))
     extraction=input_frame.schema(CHANGE_SCHEMA,inputs)
-    extraction['properties'].pop('intent');extraction['properties'].pop('call_ids')
-    extraction['required']=[k for k in extraction['required'] if k not in ('intent','call_ids')]
+    omitted=('intent','call_ids','question','options')
+    for key in omitted:extraction['properties'].pop(key)
+    extraction['required']=[k for k in extraction['required'] if k not in omitted]
     quotes=list(dict.fromkeys([*input_frame.source_words(inputs),*(x['text'] for x in inputs),*(s.profile.get('_unsupported_conditions') or [])]))
     extraction['properties']['unsupported']['items']['properties']['text']['enum']=quotes
     if extraction['properties']['places']['maxItems']==0:
@@ -315,15 +225,26 @@ async def prepare(s):
             if response.tool_calls:
                 if len(response.tool_calls)!=1:raise ValueError('Ожидался один смысловой результат')
                 result=frame_from_call(response.tool_calls[0],tools,inputs)
-                if result.pop('needs_extraction',False):
+                extract=result.pop('needs_extraction',False)
+                rank=result.get('intent')=='selection' and result.get('selection',{}).get('operation')=='rank'
+                if extract or rank:
                     data={k:payload[k] for k in ('messages','profile','supported_cities','ambiguous_catalog_names','listing_fields')}
                     data['unsupported_conditions']=s.profile.get('_unsupported_conditions') or []
+                    contract_for_changes=deepcopy(extraction)
+                    if rank:
+                        data['reading_command']=result['selection']
+                        contract_for_changes['properties'].pop('selection')
+                        contract_for_changes['required'].remove('selection')
                     prompt=PROFILE_SYSTEM+'\n'+guard.POLICY
                     if error:prompt+='\nОшибка прежнего разбора: '+error
                     parsed=await s.llm.chat([{'role':'system','content':prompt},guard.data_message('profile_changes',data)],
-                        json_schema=extraction,tag='profile_extract',temperature=.01,max_tokens=3000)
+                        json_schema=contract_for_changes,tag='profile_extract',temperature=.01,max_tokens=3000)
                     changes=parse_json_loose(parsed.text)
-                    validation.validate(changes,extraction)
+                    validation.validate(changes,contract_for_changes)
+                    if rank and (any(v is not None for v in (changes.get('fields') or {}).values()) or
+                                 any(v is not None for v in (changes.get('criteria') or {}).values()) or
+                                 changes.get('places') or changes.get('unsupported')):
+                        result['intent']='refine'
                     result={**changes,**result}
             else:result=parse_json_loose(response.text)
             result=input_frame.complete_frame(result,CHANGE_SCHEMA)

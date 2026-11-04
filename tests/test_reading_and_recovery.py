@@ -9,7 +9,7 @@ from backend.agent import session,selection_request as R,listing_query as Q,unde
 from backend.agent.actions import search
 from backend.agent.profile import merge_profile
 from backend.agent.request_schema import CHANGE_SCHEMA
-from backend.llm import ToolCall
+from backend.llm import ToolCall,LLMResponse
 from tests.fakes import ScriptedLLM
 from tests.input_contract import slots
 from tests.test_llm_and_agent import listing
@@ -101,6 +101,32 @@ class ReadingAndRecovery(unittest.IsolatedAsyncioTestCase):
         payload=json.loads(s.llm.seen[0][-1]['content'])['data']
         self.assertEqual([r['text'] for r in payload['messages']],['А что надо уточнить?'])
         self.assertIn('на моей стороне',s.last_issue['message'])
+
+    async def test_profile_extraction_has_no_interface_history_and_is_cached(self):
+        s=self.agent();text='Нужны 1–2 комнаты, только вторичка, за свои средства.'
+        s.profile['rooms_options']=[1];s.profile['rooms']=1
+        seen=[]
+        frame=slots(fields={'rooms_options':[1,2],'housing':'secondary','payment':'cash'})
+        for slot in frame['fields'].values():
+            if isinstance(slot,dict):slot['source']=text
+        values={k:v for k,v in frame.items() if k not in ('intent','call_ids','question','options')}
+        class SplitModel:
+            async def chat(self,messages,**kwargs):
+                seen.append((messages,kwargs))
+                if kwargs['tag']=='request_review':return LLMResponse('',[ToolCall('profile_change',{})])
+                return LLMResponse(json.dumps(values,ensure_ascii=False))
+        s.llm=SplitModel()
+        s.messages=[{'role':'assistant','content':'Выберите квартиры, попросите ещё или уточните условия.'}]
+        event=s.push('message',role='user',text=text);s.accept_request(text,event['seq'])
+        review=await U.prepare(s)
+        self.assertEqual(review['changes']['housing'],'secondary')
+        self.assertEqual(review['changes']['rooms_options'],[1,2])
+        self.assertEqual(await U.prepare(s),review)
+        self.assertEqual(len(seen),2)
+        payload=json.loads(seen[1][0][-1]['content'])['data']
+        self.assertNotIn('workflow',payload)
+        self.assertNotIn('recent_dialogue',payload)
+        self.assertEqual([r['text'] for r in payload['messages']],[text])
 
     async def test_partial_city_is_a_specific_question_not_an_internal_error(self):
         text='1-2 комнаты ближе к центральной улице нижнего'
