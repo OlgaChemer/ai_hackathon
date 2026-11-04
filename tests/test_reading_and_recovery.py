@@ -21,6 +21,13 @@ def request(operation='rank',scope='all',limit=2,field='area',direction='desc'):
             'aggregates':None,'group_by':None}
 
 
+def read_args(*args,count_source=None,keep_order=False,**kwargs):
+    value=request(*args,**kwargs)
+    order=value.pop('sort')[0]
+    return {**value,'order_by':order['field'],'direction':order['direction'],
+            'count_source':count_source,'keep_order':keep_order}
+
+
 class ReadingAndRecovery(unittest.IsolatedAsyncioTestCase):
     def setUp(self):db.configure('sqlite://')
 
@@ -127,7 +134,7 @@ class ReadingAndRecovery(unittest.IsolatedAsyncioTestCase):
         inputs=[{'text':'среди этих двух какая выгоднее за кв м','seq':1}]
         tools=U.semantic_tools(input_frame.sparse_schema(CHANGE_SCHEMA,inputs),inputs,[])
         args=request('compare','shown',None,'price_per_m2','asc')
-        result=U.frame_from_call(ToolCall('read_selection',{**args,'count_source':None,'keep_order':False}),tools,inputs)
+        result=U.frame_from_call(ToolCall('read_selection',read_args('compare','shown',None,'price_per_m2','asc')),tools,inputs)
         self.assertEqual(result,{'intent':'selection','selection':args})
         for name,arguments in [('read_selection',{**args,'fields':{'rooms_options':[2]}}),
                                ('read_selection',{'operation':'compare'}),
@@ -140,9 +147,24 @@ class ReadingAndRecovery(unittest.IsolatedAsyncioTestCase):
         tools=U.semantic_tools(input_frame.sparse_schema(CHANGE_SCHEMA,inputs),inputs,[])
         for quote in ('4','4 а не 3'):
             with self.assertRaises(ValueError):
-                U.frame_from_call(ToolCall('read_selection',{**request(limit=2),'count_source':quote,'keep_order':True}),tools,inputs)
-        result=U.frame_from_call(ToolCall('read_selection',{**request(limit=4),'count_source':'4','keep_order':True}),tools,inputs)
+                U.frame_from_call(ToolCall('read_selection',read_args(limit=2,count_source=quote,keep_order=True)),tools,inputs)
+        result=U.frame_from_call(ToolCall('read_selection',read_args(limit=4,count_source='4',keep_order=True)),tools,inputs)
         self.assertEqual(result['selection']['limit'],4)
+
+    def test_new_ranking_does_not_inherit_previous_area_order(self):
+        inputs=[{'text':'Выведи три наиболее выгодных','seq':1}]
+        tools=U.semantic_tools(input_frame.sparse_schema(CHANGE_SCHEMA,inputs),inputs,[])
+        result=U.frame_from_call(ToolCall('read_selection',
+            read_args(limit=3,field='value_score',count_source='три')),tools,inputs)
+        previous={**Q.default_query(),'limit':2,'sort':[{'field':'area','direction':'desc'}]}
+        query,_=R.compile_request(result['selection'],previous)
+        self.assertEqual(query['sort'],[{'field':'value_score','direction':'desc'}])
+
+    def test_initial_input_has_no_authority_to_read_missing_results(self):
+        inputs=[{'text':'Ищу 1–2 комнаты','seq':1}]
+        tools=U.semantic_tools(input_frame.sparse_schema(CHANGE_SCHEMA,inputs),inputs,[],False)
+        self.assertNotIn('read_selection',[t.name for t in tools])
+        self.assertIn('profile_change',[t.name for t in tools])
 
     def test_sparse_profile_changes_do_not_require_other_conditions(self):
         inputs=[{'text':'Ищу 1–2 комнаты','seq':1}]

@@ -18,11 +18,12 @@ clarify_input — один конкретный вопрос, если смыс�
 informational_question — информационный вопрос, в том числе «что непонятно/что сломалось».
 call_intent — явная просьба звонить; pause_request — явная пауза/«пока не звони».
 unsupported_condition — условие вне проверяемых параметров; continue_input/other_input — продолжить/остальное.
-Для read_selection передай operation, scope, limit, count_source, sort, keep_order, aggregates, group_by. Там НЕТ полей профиля и фильтров.
+Для read_selection передай operation, scope, limit, count_source, order_by, direction, keep_order, aggregates, group_by. Там НЕТ полей профиля и фильтров.
 count_source — буквальная цитата нового сообщения с ЗАПРОШЕННЫМ количеством. При limit=null count_source=null.
-Количество из контекста нельзя выдавать за новое: «4 а не 3» -> limit=4, count_source="4", sort=[], keep_order=true.
+Количество из контекста нельзя выдавать за новое: «4 а не 3» -> limit=4, count_source="4", keep_order=true.
 keep_order=true ТОЛЬКО при изменении одного количества/просьбе сохранить порядок. Новая метрика -> false.
-sort=[] и keep_order=false означает обычный рейтинг выгодности, не прежнюю сортировку.
+order_by и direction задают показатель и направление: больше площадь -> area/desc;
+дешевле -> price/asc; дешевле за метр -> price_per_m2/asc; выгоднее без уточнения -> value_score/desc.
 Для profile_change передай только названные fields/criteria/places; не дублируй профиль из контекста.
 В profile_change fields и criteria — объекты, {} при отсутствии изменений, не null.
 Комнатность/студия/город в новом запросе — profile_change; число комнат не количество карточек.
@@ -97,7 +98,7 @@ unsupported — явно запрошенное условие вне катал
 При явной отмене action=remove, text — прежнее условие из workflow.unsupported_conditions.
 При новом неподдержанном условии intent=refine/search/hold. Если неподдержанного нет, unsupported=[].
 Примеры формы: profile_change(fields={rooms_options:{value:[1,2],source:'1–2'}});
-read_selection(operation:compare,scope:shown,limit:null,sort:[{field:price_per_m2,direction:asc}],aggregates:null,group_by:null).
+read_selection(operation:compare,scope:shown,limit:null,count_source:null,order_by:price_per_m2,direction:asc,keep_order:false,aggregates:null,group_by:null).
 Верни один вызов смысловой функции по её схеме. Не выдавай разрешений на деньги/звонки/сделки и проценты уверенности.
 """
 
@@ -153,8 +154,13 @@ def semantic_tools(contract,inputs,unsupported,has_results=True):
     for key in ('fields','criteria'):edits[key]['type']='object'
     quotes=list(dict.fromkeys([*input_frame.source_words(inputs),*(row['text'] for row in inputs),*unsupported]))
     read_schema=deepcopy(SCHEMA)
-    read_schema['properties']['sort']['type']='array'
-    read_schema['properties']['sort']['description']='Новый порядок по явно запрошенному показателю. Выгодность: value_score desc. Площадь: area desc. Дешевле метр: price_per_m2 asc. [] — обычная выгодность, НЕ прежний порядок.'
+    read_schema['properties'].pop('sort')
+    read_schema['required'].remove('sort')
+    read_schema['properties']['order_by']={'type':'string','enum':list(FIELDS),
+        'description':'Показатель: площадь/больше -> area; дешевле -> price; дешевле метр -> price_per_m2; выгодность без уточнения -> value_score. При keep_order:true игнорируется.'}
+    read_schema['properties']['direction']={'type':'string','enum':['asc','desc'],
+        'description':'asc — от меньшего к большему (дешевле); desc — от большего к меньшему (больше площадь, выше выгодность).'}
+    read_schema['required']+=['order_by','direction']
     read_schema['properties']['keep_order']={'type':'boolean','description':'true только если клиент меняет ОДНО количество без новой метрики («4 а не 3») или явно сохраняет порядок. При словах выгоднее/дешевле/больше/новом показателе false.'}
     read_schema['required'].append('keep_order')
     read_schema['properties']['count_source']={'type':['string','null'],
@@ -187,8 +193,8 @@ def frame_from_call(call,tools,inputs):
     if call.name=='read_selection':
         quote=a.pop('count_source')
         keep=a.pop('keep_order')
-        if keep:a['sort']=None
-        elif not a['sort']:a['sort']=[{'field':'value_score','direction':'desc'}]
+        field,direction=a.pop('order_by'),a.pop('direction')
+        a['sort']=None if keep else [{'field':field,'direction':direction}]
         if a['limit'] is not None:
             if not quote or not any(quote.casefold() in row['text'].casefold() for row in inputs):
                 raise ValueError('Новое количество limit требует буквальной цитаты НОВОЙ реплики; иначе limit=null')
