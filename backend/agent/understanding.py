@@ -20,6 +20,7 @@ reading_command — уже принятая команда отбора, есл�
 Если рядом есть ЯВНОЕ новое условие («сдача2027, покажи три просторных»), извлеки delivery_year; число3 — только команда отбора.
 fields — СПИСОК только изменённых фактов [{key,value,source: буквальная цитата НОВОГО ввода}]; неназванных полей в списке нет.
 value строкового поля — строка без дополнительных кавычек: cash/new. Для массива/числа/boolean — JSON в строке: [1,2], 30000000, true.
+allowed_fields и allowed_criteria задают типы и коды значений. Если есть enum, верни код из enum, а не его перевод или описание.
 criteria — СПИСОК [{key,priority:required/preferred/remove,value,source}]; пустой при отсутствии новых условий. Для poi/feature value=true; для remove пусто.
 places — только явно названные допустимые города, source — исходное слово, lemma — его начальная форма. Не достраивай имя: Нижнего -> Нижний. Центр/школа/новостройка не города.
 Москва или Подмосковье — обе территории. При отмене Москвы и области не сохраняй их как альтернативы.
@@ -234,6 +235,8 @@ async def prepare(s):
                     data['unsupported_conditions']=s.profile.get('_unsupported_conditions') or []
                     data['unsupported_properties']=s.profile.get('_unsupported_keys') or {}
                     data['allowed_fields']=input_frame.basic_fields(CHANGE_SCHEMA)
+                    from .criteria import CRITERIA_KEYS
+                    data['allowed_criteria']={key:input_frame.criterion_value(key,CHANGE_SCHEMA) for key in CRITERIA_KEYS}
                     contract_for_changes=deepcopy(extraction)
                     if rank:
                         data['reading_command']=result['selection']
