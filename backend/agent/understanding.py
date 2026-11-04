@@ -60,7 +60,7 @@ read_selection — ТОЛЬКО чтение/отбор по УЖЕ найден
 informational_question — вопрос об устройстве, предложении, предыдущей ошибке: «что сломалось/что надо уточнить».
 call_intent — только ЯВНО позвонить; listing_ids из показанных ID; [] — по понравившимся.
 Вопросы продавцу/условия не разрешают звонок. pause_request — явная пауза/пока не звони, даже с новыми вопросами.
-unsupported_condition — НОВОЕ условие вне доступных свойств, например бассейн/сауна ВНУТРИ квартиры. Не подменяй фитнесом рядом.
+Новое неизвестное свойство («внутри бассейн/сауна») тоже profile_change. Проверяемость определит извлечение свойств; не подменяй фитнесом рядом.
 Неоднозначный город/улица — profile_change: условия извлечёт отдельный шаг, уточнение сформирует код. Диапазон комнат 1–2 — обе комнатности, не вопрос выбора одной.
 continue_input — продолжить без изменений; other_input — остальное.
 Чтение: operation rank — выбрать N/сортировать, compare — ответить какая из показанных лучше по показателю, analyze — статистика, more — ЕЩЁ/НОВЫЕ.
@@ -148,9 +148,6 @@ def semantic_tools(contract,inputs,unsupported,has_results=True):
         Tool('call_intent','Клиент явно просит звонить. Сам ничего не исполняет. Без явной просьбы запрещён; для вопросов продавцу используй profile_change.',obj({
             'listing_ids':{'type':'array','maxItems':10,'items':{'type':'string'},'description':'ID показанных объектов; пусто — по понравившимся'}},['listing_ids'])),
         Tool('pause_request','Клиент просит остановиться/пока не искать/пока не звонить. Можно сохранить явно добавленные вопросы и условия без действий.',obj({})),
-        Tool('unsupported_condition','Клиент требует условие, которое система не умеет проверять (например, бассейн ВНУТРИ квартиры). Не подменяй похожим удобством. Для отмены — remove.',obj({
-            'text':{'type':'string','maxLength':200,'description':'Буквальная цитата именно непроверяемого свойства. Количество, сортировка, выгодность и известные параметры НЕ непроверяемые свойства.'},'action':{'type':'string','enum':['add','remove']},
-            'fields':properties['fields'],'selection':properties['selection']},['text','action'])),
         Tool('continue_input','Клиент просит продолжить без изменения условий.',obj({})),
         Tool('other_input','Прочая реплика без изменения параметров и без команды выдачи.',obj({})),
     ]
@@ -179,10 +176,6 @@ def frame_from_call(call,tools,inputs):
     if call.name=='clarify_input':return {'intent':'refine',**a}
     if call.name=='informational_question':return {'intent':'question'}
     if call.name=='call_intent':return {'intent':'call','call_ids':a['listing_ids']}
-    if call.name=='unsupported_condition':
-        return {'intent':'refine','unsupported':[{'text':a['text'],'action':a['action'],
-                 'source':a['text'] if a['action']=='add' else inputs[-1]['text']}],
-                **{k:a[k] for k in ('fields','selection') if k in a}}
     return {'intent':'continue' if call.name=='continue_input' else 'other'}
 
 
@@ -202,7 +195,6 @@ async def prepare(s):
     for key in omitted:extraction['properties'].pop(key)
     extraction['required']=[k for k in extraction['required'] if k not in omitted]
     quotes=list(dict.fromkeys([*input_frame.source_words(inputs),*(x['text'] for x in inputs),*(s.profile.get('_unsupported_conditions') or [])]))
-    extraction['properties']['unsupported']['items']['properties']['text']['enum']=quotes
     if extraction['properties']['places']['maxItems']==0:
         extraction['properties']['places']['items']['properties']['words']['items']['properties']['source'].pop('enum',None)
     from . import profile_patch
@@ -237,7 +229,6 @@ async def prepare(s):
                     contract_for_changes=deepcopy(extraction)
                     if rank:
                         data['reading_command']=result['selection']
-                        contract_for_changes['properties']['unsupported']['maxItems']=0
                         contract_for_changes['properties'].pop('selection')
                         contract_for_changes['required'].remove('selection')
                     prompt=PROFILE_SYSTEM+'\n'+guard.POLICY
