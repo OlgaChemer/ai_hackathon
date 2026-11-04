@@ -100,7 +100,8 @@ def decode(patch,contract,inputs,aliases=None):
             if 'value' not in row and (row.get('action')=='remove' or row.get('priority')=='remove'):row['value']=''
             if 'value' in row and not isinstance(row['value'],str):row['value']=json.dumps(row['value'],ensure_ascii=False)
             quote=row.get('source')
-            removing=row.get('action')=='remove' or row.get('priority')=='remove'
+            removing=(row.get('action')=='remove' or row.get('priority')=='remove'
+                      or (row.get('value','').strip()=='false' and alias_for(row.get('key')) is not None))
             alias=alias_for(row.get('key')) if removing else None
             if alias and isinstance(quote,str):unsupported(alias,quote,True)
             if isinstance(row.get('key'),str) and row['key'] not in allowed and isinstance(quote,str) and quote and any(quote.casefold() in text for text in texts):
@@ -115,8 +116,13 @@ def decode(patch,contract,inputs,aliases=None):
         if not isinstance(filters,list):continue
         retained=[]
         for f in filters:
+            if (isinstance(f,dict) and alias_for(f.get('field')) and f.get('op')=='eq'
+                    and f.get('values')==['false']):
+                unsupported(alias_for(f['field']),row.get('source',''),True)
+                continue
             alias=alias_for(f.get('field')) if isinstance(f,dict) and f.get('priority')=='remove' else None
             if alias:unsupported(alias,row.get('source',''),True)
+            if isinstance(f,dict) and f.get('priority')=='remove':f['values']=[]
             if isinstance(f,dict) and isinstance(f.get('field'),str) and f['field'] not in input_frame.FIELDS:
                 if not alias:unsupported(f['field'],row.get('source',''),f.get('priority')=='remove')
             elif requires_colocation(f):
