@@ -60,6 +60,8 @@ def decode(patch,contract,inputs):
             if 'value' in row and not isinstance(row['value'],str):row['value']=json.dumps(row['value'],ensure_ascii=False)
             quote=row.get('source')
             if isinstance(row.get('key'),str) and row['key'] not in allowed and isinstance(quote,str) and quote and any(quote.casefold() in text for text in texts):
+                if row['key'] in input_frame.FIELDS:
+                    raise ValueError('Свойство '+row['key']+' поддерживается: запиши его через fields с key filters, оператором op и values, а не как неподдержанное условие')
                 if row.get('action')=='remove' or row.get('priority')=='remove':
                     raise ValueError('Неподдержанное условие отменяется через unsupported с action remove и прежним названием условия')
                 patch.setdefault('unsupported',[]).append({'text':quote[:200],'source':quote,'action':'add'})
