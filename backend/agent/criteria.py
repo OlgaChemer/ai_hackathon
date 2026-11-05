@@ -78,7 +78,9 @@ def is_constraining(profile: dict, key: str) -> bool:
     if key == "house":
         return bool(p.get("material") or p.get("year_min")) and not p.get("house_any")
     if key == "features":
-        return bool(p.get("features") or p.get("features_any"))
+        return bool(p.get("features"))
+    if key == "infra":
+        return bool(p.get("infra"))
     return is_set(p, key)
 
 
@@ -114,7 +116,7 @@ QUESTIONS = {
     "area": "Есть рамки по площади: общая от скольких м² и кухня от скольких?",
     "house": "Есть предпочтения по дому — кирпич, монолит, панель? И насколько старый дом допустим?",
     "features": "Что в квартире обязательно должно быть — лоджия, балкон, парковка?",
-    "infra": "Что должно быть рядом — школа, садик, парк?",
+    "infra": "Насколько важна инфраструктура: школа или садик в пределах километра от дома?",
     "timeline": "К какому сроку нужна квартира — в течение месяца, 2–3 месяца или пока присматриваетесь?",
 }
 
@@ -128,7 +130,7 @@ CHIPS = {
     "area": ["Общая от 45 м²", "Общая от 55 м²", "Кухня от 10 м²", "Площадь не важна"],
     "house": ["Кирпич или монолит", "Не старше 1980 года", "Дом не важен"],
     "features": ["Лоджия или балкон", "Парковка", "Кладовка", "Ничего особенного"],
-    "infra": ["Школа", "Садик", "Парк", "Ничего критично"],
+    "infra": ["Школа и садик", "Только школа", "Только садик", "Не важно"],
     "timeline": ["В течение месяца", "2–3 месяца", "Пока присматриваюсь"],
 }
 
@@ -140,6 +142,34 @@ def questions_text(profile: dict, keys: list[str]) -> str:
         return asks[0]
     lines = " ".join(f"{i}) {q}" for i, q in enumerate(asks, 1))
     return f"Уточню {len(asks)} момента — можно ответить одной строкой: {lines}"
+
+
+AFFIRMATIVE = re.compile(
+    r"^\s*(да|ага|угу|конечно|верно|нужно|нужн|важно|обязательно|обязательн|и то и другое|оба|обе)\b", re.I)
+NEGATIVE = re.compile(r"^\s*(нет|не\s*нужно|не\s*важно|не\s*обязательн|не\s*критичн|никак|ничего)", re.I)
+
+
+def apply_short_answer(profile: dict, keys: list[str], text: str) -> list[str]:
+    """Понимает «Да» и «Нет» как ответ на вопрос о критериях.
+
+    Клиент ответил «Да» на «важна ли школа в пределах километра» — значит, важна:
+    ставим её критерием, а не оставляем вопрос без ответа.
+    """
+    notes: list[str] = []
+    t = (text or "").strip().lower().replace("ё", "е")
+    if not t:
+        return notes
+    if "infra" in keys and not profile.get("infra"):
+        if NEGATIVE.match(t):
+            profile["infra_any"] = True
+            notes.append("инфраструктура не обязательна")
+        elif AFFIRMATIVE.match(t):
+            profile["infra"] = ["школа", "садик"]
+            notes.append("школа и садик в пределах километра — проверю по карте")
+    if "features" in keys and not profile.get("features"):
+        if NEGATIVE.match(t):
+            profile["features_any"] = True
+    return notes
 
 
 def progress(profile: dict) -> dict:

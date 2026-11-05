@@ -169,6 +169,7 @@ def parse_request_rules(query: str) -> dict:
         p["features"].append("парковка")
     if re.search(r"кладов", q):
         p["features"].append("кладовка")
+    p["infra_any"] = bool(re.search(r"ничего критич|инфраструктур\w* не важ|садик\w* не важ|школ\w* не важ", q))
     p["material"] = material_from_text(q)
     p["year_min"] = year_min_from_text(q)
     kitchen = re.search(r"кухн\w*\s*(?:от|не меньше)?\s*(\d{1,2})", q)

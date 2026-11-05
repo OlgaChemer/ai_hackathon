@@ -124,6 +124,35 @@ class FeaturesTest(unittest.TestCase):
         self.assertEqual(C.status(self.p, x), "rejected")
 
 
+class ShortAnswerTest(unittest.TestCase):
+    """«Да» на вопрос про школу и садик — это ответ, а не молчание."""
+
+    def setUp(self):
+        self.p = profile(city="Казань", rooms=2, budget_max=9_000_000,
+                         condition="any", metro_any=True, floor_any=True)
+
+    def test_yes_sets_infrastructure(self):
+        notes = C.apply_short_answer(self.p, ["infra"], "Да")
+        self.assertEqual(self.p["infra"], ["школа", "садик"])
+        self.assertTrue(notes)
+        self.assertTrue(C.is_constraining(self.p, "infra"))
+
+    def test_no_marks_optional_and_is_not_counted(self):
+        notes = C.apply_short_answer(self.p, ["infra"], "Нет, не обязательно")
+        self.assertTrue(self.p["infra_any"])
+        self.assertTrue(notes)
+        self.assertFalse(C.is_constraining(self.p, "infra"))
+
+    def test_yes_does_not_invent_other_criteria(self):
+        C.apply_short_answer(self.p, ["infra"], "Да")
+        self.assertEqual(self.p["features"], [])
+        self.assertIsNone(self.p["timeline"])
+
+    def test_chip_text_sets_infrastructure(self):
+        parsed = T.parse_request_rules("Школа и садик")
+        self.assertEqual(parsed["infra"], ["школа", "садик"])
+
+
 class SelectTest(unittest.TestCase):
     def test_rejected_never_shown(self):
         p = profile(city="Казань", rooms=2, budget_max=9_000_000,

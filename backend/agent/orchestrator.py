@@ -320,7 +320,11 @@ async def pipeline(s: Session) -> None:
         chips = [c for k in keys for c in (C.CHIPS.get(k) or [])][:6]
         r = await s.ask("clarify", "Дополнительные критерии", C.questions_text(profile, keys),
                         chips=chips, progress=C.progress(profile))
-        profile = await parse_request(s, r["data"].get("text", ""), base=profile)
+        answer = r["data"].get("text", "")
+        profile = await parse_request(s, answer, base=profile)
+        notes = C.apply_short_answer(profile, keys, answer)
+        if notes:
+            await s.say("Понял: " + "; ".join(notes) + ".")
     for key in C.missing_extra(profile)[:C.EXTRA_MAX]:  # «не важно» засчитываем как ответ
         profile[f"{key}_any"] = True
     profile["summary"] = T.profile_summary(profile)
