@@ -364,6 +364,12 @@ class ReadingAndRecovery(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ValueError,'положительное расстояние'):
             profile_patch.decode({'fields':[{'key':'filters','value':json.dumps([f]),'source':text}],
                                   'criteria':[],'places':[],'unsupported':[],'selection':[]},contract,inputs)
+        for op in ('gt','gte','ne'):
+            f['op']=op
+            with self.assertRaisesRegex(ValueError,'положительное расстояние'):
+                profile_patch.decode({'fields':[{'key':'filters','value':json.dumps([f]),'source':text}],
+                                      'criteria':[],'places':[],'unsupported':[],'selection':[]},contract,inputs)
+        f['op']='eq'
         cancel='Бассейн больше не нужен'
         inputs=[{'text':cancel}]
         contract=profile_patch.schema(input_frame.schema(CHANGE_SCHEMA,inputs))
@@ -399,6 +405,15 @@ class ReadingAndRecovery(unittest.IsolatedAsyncioTestCase):
         tools=U.semantic_tools(input_frame.sparse_schema(CHANGE_SCHEMA,inputs),inputs,[])
         result=U.frame_from_call(ToolCall('profile_change',{}),tools,inputs)
         self.assertEqual(result,{'intent':'refine','needs_extraction':True})
+
+    def test_unsupported_intent_requires_a_current_literal_quote_and_no_distance_filter(self):
+        text='Хочу квартиру где внутри бассейн';inputs=[{'text':text,'seq':1}]
+        tools=U.semantic_tools(input_frame.sparse_schema(CHANGE_SCHEMA,inputs),inputs,[])
+        result=U.frame_from_call(ToolCall('unsupported_request',{'quote':text}),tools,inputs)
+        self.assertEqual(result['unsupported'],[{'text':text,'source':text,'action':'add'}])
+        self.assertNotIn('needs_extraction',result)
+        with self.assertRaises(ValueError):
+            U.frame_from_call(ToolCall('unsupported_request',{'quote':'Прежнее пожелание'}),tools,inputs)
 
     def test_unsupported_label_is_displayed_as_the_verified_original_quote(self):
         from backend.agent import profile_patch

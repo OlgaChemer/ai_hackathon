@@ -59,7 +59,7 @@ def value(text,spec):
 def unverifiable_distance(f):
     if not isinstance(f,dict) or not isinstance(f.get('field'),str):return False
     if not f['field'].startswith('nearby:') or f.get('priority')=='remove':return False
-    if f.get('op') not in ('eq','lt','lte') or not f.get('values'):return False
+    if not f.get('values'):return False
     if f['values'] in (['true'],['false']):return True
     try:return all(float(v)==0 for v in f['values'])
     except (ValueError,TypeError):return False

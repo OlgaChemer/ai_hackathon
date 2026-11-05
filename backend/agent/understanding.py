@@ -54,6 +54,7 @@ requested_card — только ПРЯМАЯ просьба показать а�
 
 ROUTER_SYSTEM='''Определи смысл ТОЛЬКО новых messages одним вызовом смысловой функции. Ничего не выполняй.
 profile и recent_dialogue — контекст; не источник новых условий.
+unsupported_request — новое пожелание, для которого нет точного свойства в listing_fields/критериях: например удобство внутри квартиры, а не объект рядом. Передай исходную реплику quote дословно. Не подменяй такое пожелание nearby и не выдумывай радиус. Для составного ввода с новыми городом/комнатами/бюджетом используй profile_change и unsupported в разборе.
 profile_change — любые НОВЫЕ/отменённые условия квартиры, город, комнаты, рынок, оплата, вопросы продавцу.
 Включая составную просьбу: «отмени площадь и покажи две большие», «сдача в2027 и три просторных».
 Отмена неподдержанного условия вместе с отбором тоже profile_change.
@@ -153,6 +154,9 @@ def semantic_tools(contract,inputs,unsupported,has_results=True):
     tools=[
         Tool('read_selection','Прочитать найденные данные: отобрать N, отсортировать, сравнить показанные, посчитать статистику или получить ещё варианты. Условия профиля не меняет. Новое количество только из новой реплики, при отсутствии limit=null.',read_schema),
         Tool('profile_change','Клиент меняет условия квартиры/города/бюджета, снимает ограничение либо добавляет вопросы продавцу. Включая составную просьбу изменить условия и отобрать N. Параметры извлечёт отдельный структурированный разбор. Для одного лишь отбора без изменения условий — read_selection.',obj({})),
+        Tool('unsupported_request','Новое пожелание вне проверяемых свойств: удобство внутри квартиры не заменяется внешней инфраструктурой. Это явный запрос клиента, а не ошибка формата и не неизвестные данные объявления. Только распознать ограничение возможности, ничего не исполнять.',obj({
+            'quote':{'type':'string','enum':list(dict.fromkeys(row['text'] for row in inputs)),
+                     'description':'Дословная новая реплика, содержащая неподдерживаемое пожелание.'}},['quote'])),
         Tool('informational_question','Клиент задаёт информационный вопрос и не меняет условия/не выбирает действие. Включая вопрос о предыдущем сбое.',obj({})),
         Tool('call_intent','Клиент явно просит звонить. Сам ничего не исполняет. Без явной просьбы запрещён; для вопросов продавцу используй profile_change.',obj({
             'listing_ids':{'type':'array','maxItems':10,'items':{'type':'string'},'description':'ID показанных объектов; пусто — по понравившимся'}},['listing_ids'])),
@@ -184,6 +188,8 @@ def frame_from_call(call,tools,inputs):
                 raise ValueError('Количество limit не соответствует числу в count_source. Возьми запрошенное новое количество, не прежний размер выдачи.')
         return {'intent':'refine' if update else 'selection','selection':a,**({'needs_extraction':True} if update else {})}
     if call.name=='profile_change':return {'intent':'refine','needs_extraction':True}
+    if call.name=='unsupported_request':
+        return {'intent':'refine','unsupported':[{'text':a['quote'][:200],'source':a['quote'],'action':'add'}]}
     if call.name=='pause_request':return {'intent':'hold','needs_extraction':True}
     if call.name=='informational_question':return {'intent':'question'}
     if call.name=='call_intent':return {'intent':'call','call_ids':a['listing_ids']}
