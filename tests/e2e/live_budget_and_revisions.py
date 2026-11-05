@@ -93,12 +93,34 @@ async def revision(base,phase):
     finally:await d.close()
 
 
+async def agreements():
+    from backend import db
+    from backend.agent import session,understanding
+    from backend.agent.profile import merge_profile
+    from backend.llm import get_llm
+    db.configure('sqlite://');llm=get_llm()
+    for text,action in [('Да','market_prices'),('Давай','market_prices'),('Покажи','market_prices'),
+                        ('Какую сумму обычно просят за такие квартиры?','market_prices'),
+                        ('Рассчитай доступный бюджет для ипотеки по моим доходам.','affordable_budget')]:
+        s=session.create_session('',llm)
+        s.profile=merge_profile({'city':'Москва','rooms':3,'housing':'both','payment':'cash','center_required':True})
+        s.push('message',role='user',text='Не знаю, какой средний бюджет.')
+        s.push('message',role='agent',text='Могу показать рыночные цены на трёхкомнатные квартиры в центре Москвы. Хотите?')
+        restored=session.restore_session(s.id,'',llm)
+        await restored.receive_text(text,command_id='fresh-input')
+        result=restored.request_review
+        assert result and result.get('requested_action')==action,(text,result)
+        assert not result['changes'] and restored.profile['budget_max'] is None,(text,result)
+        print(json.dumps({'case':'agreement_after_restart','input':text,'action':action,'ok':True},ensure_ascii=False),flush=True)
+
+
 async def main(args):
     if args.case in ('all','budget'):await budget(args.base)
     if args.case in ('all','revisions'):
         for phase in ('price','chosen','completed'):await revision(args.base,phase)
+    if args.case in ('all','agreements'):await agreements()
 
 
 if __name__=='__main__':
-    p=argparse.ArgumentParser();p.add_argument('--base',required=True);p.add_argument('--case',choices=['all','budget','revisions'],default='all')
+    p=argparse.ArgumentParser();p.add_argument('--base',required=True);p.add_argument('--case',choices=['all','budget','revisions','agreements'],default='all')
     asyncio.run(main(p.parse_args()))
