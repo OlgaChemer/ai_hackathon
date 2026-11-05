@@ -19,7 +19,7 @@ async def next_step(d,auto=True):
                 if kind=='selection':d.cards=e['data']['cards']
             if e['type']=='message' and e.get('role')=='agent':
                 d.messages.append(e['text'])
-                if e.get('await_reply'):return e
+                if e.get('await_reply') or e.get('in_reply_to'):return e
             if e['type']=='done':return e
             if e['type']!='confirm':continue
             if auto and kind in ('red_lines','payment','housing'):

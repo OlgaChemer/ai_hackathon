@@ -83,6 +83,26 @@ class BudgetDialogue(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any('Хотите, покажу' in row['text'] for row in restored.llm.reviews[-1]['recent_dialogue']))
         self.assertIsNone(restored.profile['budget_max']);self.assertEqual(restored.call_targets,[])
 
+    async def test_data_request_applies_its_new_conditions_before_choosing_the_tool(self):
+        class CompositeModel(ScriptedLLM):
+            async def chat(self,messages,**kw):
+                if kw.get('tag')=='request_review':
+                    return LLMResponse('',[ToolCall('request_information',{'action':'market_prices','update_conditions':True})])
+                if kw.get('tag')=='profile_extract':
+                    return say(json.dumps({'fields':[
+                        {'key':'city','value':'Казань','source':'Казани'},
+                        {'key':'rooms_options','value':'[2]','source':'двушку'},
+                        {'key':'housing','value':'both','source':'оба рынка'},
+                        {'key':'payment','value':'cash','source':'наличными'}],
+                        'criteria':[],'places':[],'unsupported':[],'selection':[]},ensure_ascii=False))
+                return await super().chat(messages,**kw)
+        s=self.agent(CompositeModel())
+        await s.receive_text('Хочу двушку в Казани, оба рынка, наличными. Сколько такие обычно стоят?')
+        await understanding.ensure(s)
+        self.assertEqual(s.profile['city'],'Казань');self.assertEqual(s.profile['rooms_options'],[2])
+        self.assertEqual(s.profile['housing'],'both');self.assertEqual(s.profile['payment'],'cash')
+        self.assertEqual(s.requested_action,'market_prices');self.assertIsNone(s.profile['budget_max'])
+
     async def test_failed_requested_market_has_explicit_outcome_and_no_automatic_retry(self):
         s=self.agent();s.requested_action='market_prices';s.request_intent='question'
         with patch.object(sources,'market',AsyncMock(return_value={'error_kind':'insufficient_market_sample','count':2,'received':30})):

@@ -224,7 +224,7 @@ def frame_from_call(call,tools,inputs):
     if call.name=='pause_request':return {'intent':'hold','needs_extraction':True}
     if call.name=='informational_question':return {'intent':'question'}
     if call.name=='request_information':
-        return {'intent':'question',**({'requested_action':a['action']} if a.get('action') else {}),
+        return {'intent':'refine' if a.get('update_conditions') else 'question',**({'requested_action':a['action']} if a.get('action') else {}),
                 **({'needs_extraction':True} if a.get('update_conditions') else {})}
     if call.name=='call_intent':return {'intent':'call','call_ids':a['listing_ids']}
     return {'intent':'continue' if call.name=='continue_input' else 'question'}
