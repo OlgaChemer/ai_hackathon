@@ -1,6 +1,8 @@
 import asyncio
 from copy import deepcopy
 import unittest
+import tempfile
+import sqlite3
 from unittest.mock import AsyncMock, patch
 
 from backend import db, sources
@@ -171,8 +173,13 @@ class DurableStateTest(unittest.IsolatedAsyncioTestCase):
             done=await actions.execute(restored,call)
         dial.assert_not_called();self.assertTrue(done['called'])
         self.assertEqual(restored.calls[x['id']]['price'],7_000_000)
+        self.assertEqual(restored.call_targets,[])
         again=await actions.execute(restored,call)
         self.assertEqual(again,done)
+        restored.profile_revision+=1
+        with patch.object(sources,'verify',AsyncMock()) as verify:
+            repeated=await actions.execute(restored,ToolCall('call_seller',call.arguments,'different-id'))
+        self.assertIn('error',repeated);verify.assert_not_awaited()
 
     async def test_delayed_model_answer_is_discarded_after_new_message(self):
         s=self.agent();s.started=True;entered=asyncio.Event();release=asyncio.Event();calls=0
@@ -235,6 +242,38 @@ class DurableStateTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(s.seq,seq);self.assertTrue(queue.empty())
         self.assertEqual(s.profile,before)
         self.assertEqual(db.required(repo.get_chat,s.id).profile,before)
+
+    def test_failure_after_sql_flush_rolls_back_snapshot_receipt_and_events(self):
+        s=self.agent();s.remember();before=deepcopy(s.profile);seq=s.seq;version=s.state_version
+        queue=asyncio.Queue();s.subscribers.add(queue)
+        original=repo.commit_dialogue
+        def fail_after_flush(connection,*args,**kwargs):
+            original(connection,*args,**kwargs)
+            raise RuntimeError('interrupted before commit')
+        with patch.object(repo,'commit_dialogue',fail_after_flush):
+            with self.assertRaises(db.PersistenceError):
+                with persistence.atomic(s):
+                    s.profile['budget_max']=42_000_000
+                    s.push('message',role='agent',text='Не должен быть доставлен')
+        row=db.required(repo.get_chat,s.id)
+        self.assertEqual(row.profile,before);self.assertEqual(row.state_version,version)
+        self.assertEqual(db.required(repo.chat_events,s.id,seq),[]);self.assertTrue(queue.empty())
+
+    def test_old_sqlite_schema_is_upgraded_without_replacing_dialogues(self):
+        with tempfile.TemporaryDirectory() as path:
+            database=path+'/old.db';db.configure('sqlite:///'+database)
+            s=self.agent();s.remember();chat_id=s.id;profile=deepcopy(s.profile)
+            with sqlite3.connect(database) as connection:
+                connection.execute('ALTER TABLE chats DROP COLUMN state')
+                connection.execute('ALTER TABLE chats DROP COLUMN state_version')
+                connection.execute('DROP TABLE chat_commands')
+            db.configure('sqlite:///'+database)
+            restored=session.restore_session(chat_id,'',s.llm)
+            self.assertEqual(restored.profile,profile)
+            restored.remember()
+            self.assertEqual(db.required(repo.get_chat,chat_id).state['format'],1)
+            self.assertEqual(db.required(repo.queued_commands,chat_id),[])
+            db.configure('sqlite://')
 
     def test_stale_owner_is_rejected_without_delivery(self):
         first=self.agent();first.remember()

@@ -177,6 +177,9 @@ async def _finish_call(s,x,slots,end,note,mode):
     authorization=((s.active_operation or {}).get('call_context') or {}).get('authorization')
     s.calls[x['id']].update(authorization=authorization,tool_result=result)
     if x['id'] in s.profile.get('_call_authorizations',{}):s.profile['_call_authorizations'][x['id']]['status']='completed'
+    # Разрешение относится к одному звонку. Последующие вопросы/изменение
+    # версии профиля не превращают его в согласие на повторный набор.
+    s.call_targets=[i for i in s.call_targets if i!=x['id']]
     return result
 
 

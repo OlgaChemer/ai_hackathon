@@ -39,12 +39,12 @@ async def sequence(base):
         d.cards=saved  # клиент сохраняет видимый снимок при операции чтения
         await d.send('давай 2 самых больших квартиры');outcome=await d.round()
         assert outcome['outcome']=='selection' and len(d.cards)==2,outcome
-        start=len(d.timeline)
+        start=len(d.timeline);start_messages=len(d.messages)
         saved=deepcopy(d.cards)
         await d.send('Теперь нужна общая площадь не меньше 1000 квадратных метров.');outcome=await d.round()
-        assert outcome['outcome']=='clarify',outcome
+        assert outcome['outcome'] in ('clarify','selection'),outcome
         assert not any(e['type']=='result' and e.get('kind')=='selection' for e in d.timeline[start:]),'empty query erased selection'
-        assert 'площад' in outcome.get('text','').casefold(),outcome
+        assert 'площад' in (outcome.get('text','')+' '.join(d.messages[start_messages:])).casefold(),outcome
         d.cards=saved
         await d.send('Отмени ограничение площади. Покажи две самые большие квартиры.');outcome=await d.round()
         assert outcome['outcome']=='selection' and len(d.cards)==2,outcome

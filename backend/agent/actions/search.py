@@ -293,7 +293,12 @@ async def show_selection(s, query: dict | None = None) -> dict:
                      shown=s.selection_scope_ids or [x['id'] for x in s.shown],seen=st['shown_ids'])
     batch=result.pop('items')
     if not batch:
+        failed=Counter(label for x in st.get('listings',[]) for label in match(x,prefs)['failed'])
+        reason=(' Проверенные объявления не проходят условия: '+', '.join(label for label,_ in failed.most_common(3))+'.'
+                if failed else ' Условия отбора: '+', '.join(Q.describe(f) for f in effective['filters'])+'.'
+                if effective['filters'] else '')
         text=('По этой команде подходящих вариантов нет. '
+              + reason + ' '
               + (f'Сохранил предыдущие {len(s.shown)} предложения; их можно сравнить или изменить отбор.' if s.shown else
                  'Можно изменить условия; новых данных для карточек пока нет.'))
         s.last_issue={'kind':'selection_empty','message':text}
