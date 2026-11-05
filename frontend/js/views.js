@@ -272,17 +272,20 @@ function mapBlock(cards) {
 
 export function selection(d, marks) {
   const vote = (id) => (marks.liked.has(id) ? "up" : marks.disliked.has(id) ? "down" : null);
+  const unverified = d.cards.filter(c => c.match?.status === "unverified").length;
+  const confirmed = d.cards.filter(c => c.match?.status === "confirmed").length;
   return html`
   <section class="panel">
     <div class="sel-head">
       <div>
         <div class="eyebrow">Подборка${d.round > 1 ? ` · раунд ${d.round}` : " · первые результаты"}</div>
-        <h2 class="panel-title">Квартиры под ваши пожелания</h2>
+        <h2 class="panel-title">${unverified ? "Найденные квартиры" : "Квартиры под ваши пожелания"}</h2>
         <details class="ranking-explanation"><summary>Как упорядочены квартиры</summary>
           <p>Сначала подтверждённые обязательные условия; внутри группы — совпадение пожеланий на миллион рублей с поправкой на цену аналогов. ${d.cards.some(c => c.ranking?.center_requested) ? "По пожеланию центра выше идут квартиры в пределах 5 км от опорной точки центра; остальные остаются ниже." : ""}</p>
         </details>
       </div>
     </div>
+    ${html.raw(unverified ? html`<p class="hint" data-verification-summary>Обязательные условия подтверждены у ${confirmed}. Требуют проверки: ${unverified}. Непроверенные варианты помечены на карточках и не считаются подтверждёнными совпадениями.</p>` : "")}
     ${html.raw(d.learned?.length ? html`<div class="learned"><span>Учёл:</span>${html.raw(d.learned.map((l) => html`<span class="chip">${l}</span>`).join(""))}</div>` : "")}
     ${html.raw(d.cards.some((c) => c.lat && c.lng) ? mapBlock(d.cards) : "")}
     ${html.raw(d.aggregates?.length ? html`<p class="hint">Расчёт по ${d.total} вариантам: ${d.aggregates.map(a => `${a.function}(${a.field}) = ${a.value == null ? 'нет данных' : Number(a.value).toLocaleString('ru-RU', {maximumFractionDigits:2})}${a.unknown ? `; нет данных у ${a.unknown}` : ''}`).join(' · ')}</p>` : '')}

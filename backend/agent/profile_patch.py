@@ -65,7 +65,7 @@ def unverifiable_distance(f):
     except (ValueError,TypeError):return False
 
 
-def decode(patch,contract,inputs,aliases=None):
+def decode(patch,contract,inputs,aliases=None,*,provenance=None):
     if not isinstance(patch,dict):raise ValueError('Изменения должны быть JSON-объектом')
     patch=deepcopy(patch)
     requested=patch.setdefault('requested_card',[])
@@ -127,9 +127,7 @@ def decode(patch,contract,inputs,aliases=None):
             if isinstance(f,dict) and isinstance(f.get('field'),str) and f['field'] not in input_frame.FIELDS:
                 if not alias:unsupported(f['field'],row.get('source',''),f.get('priority')=='remove')
             elif unverifiable_distance(f):
-                # Карта измеряет близость внешних объектов. Нулевой радиус
-                # и boolean вместо расстояния не подтверждают внутреннее удобство.
-                unsupported(f['field'],row.get('source',''))
+                raise ValueError('Для '+f['field']+' требуется положительное расстояние в метрах; boolean и ноль не задают расстояние. Если речь об удобстве внутри квартиры, сохрани исходное пожелание как unsupported, не заменяй его объектом рядом.')
             else:retained.append(f)
         row['value']=json.dumps(retained,ensure_ascii=False)
     for condition in patch['unsupported']:
@@ -201,4 +199,12 @@ def decode(patch,contract,inputs,aliases=None):
         q=deepcopy(patch['selection'][0]);q['limit']=q['limit'] or None;q['group_by']=q['group_by'] or None
         frame['selection']=q
     if patch['requested_card']:frame['_requested_action']=patch['requested_card'][0]
+    from .conditions import property_id
+    quotes={property_id(row['key']):{'kind':'user','quote':row['source']}
+            for group in ('fields','criteria') for row in patch[group]}
+    for row in patch['fields']:
+        if row['key']=='filters':
+            for f in (frame['fields'].get('filters') or {}).get('value',[]):
+                quotes[f['field']]={'kind':'user','quote':row['source']}
+    if provenance is not None:provenance.update(quotes)
     return frame

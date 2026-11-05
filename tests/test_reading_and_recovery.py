@@ -101,9 +101,9 @@ class ReadingAndRecovery(unittest.IsolatedAsyncioTestCase):
         s.accept_request(e['text'],e['seq'])
         U.failed_input(s,U.UnderstandingError('invalid model object'))
         s.llm=ReviewModel(slots(intent='question'))
-        with patch.object(qa,'answer',AsyncMock()) as answer:
+        with patch.object(qa,'reply',AsyncMock(return_value='Ответ на вопрос')) as answer:
             self.assertEqual(await s.receive_text('А что надо уточнить?'),'question')
-            await asyncio.sleep(0)
+            await s.qa_task
             answer.assert_awaited_once()
         payload=json.loads(s.llm.seen[0][-1]['content'])['data']
         self.assertEqual([r['text'] for r in payload['messages']],['А что надо уточнить?'])
@@ -361,10 +361,9 @@ class ReadingAndRecovery(unittest.IsolatedAsyncioTestCase):
         inputs=[{'text':text}]
         contract=profile_patch.schema(input_frame.schema(CHANGE_SCHEMA,inputs))
         f={'field':'nearby:fitness','op':'eq','values':['0'],'priority':'required'}
-        result=profile_patch.decode({'fields':[{'key':'filters','value':json.dumps([f]),'source':text}],
-                                    'criteria':[],'places':[],'unsupported':[],'selection':[]},contract,inputs)
-        self.assertEqual(result['fields']['filters']['value'],[])
-        self.assertEqual(result['unsupported'][0]['text'],text)
+        with self.assertRaisesRegex(ValueError,'положительное расстояние'):
+            profile_patch.decode({'fields':[{'key':'filters','value':json.dumps([f]),'source':text}],
+                                  'criteria':[],'places':[],'unsupported':[],'selection':[]},contract,inputs)
         cancel='Бассейн больше не нужен'
         inputs=[{'text':cancel}]
         contract=profile_patch.schema(input_frame.schema(CHANGE_SCHEMA,inputs))
@@ -374,12 +373,12 @@ class ReadingAndRecovery(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(removed['unsupported'][0]['action'],'remove')
         inputs=[{'text':text}]
         contract=profile_patch.schema(input_frame.schema(CHANGE_SCHEMA,inputs))
-        duplicate=profile_patch.decode({'fields':[{'key':'filters','value':json.dumps([f]),'source':text}],
+        duplicate=profile_patch.decode({'fields':[],
                                         'criteria':[],'places':[],
                                         'unsupported':[{'text':'внутри бассейн','source':text,'action':'add','key':'pool'}],
                                         'selection':[]},contract,inputs)
         self.assertEqual({c['text'] for c in duplicate['unsupported']},{'внутри бассейн'})
-        self.assertEqual({c['key'] for c in duplicate['unsupported']},{'pool','nearby:fitness'})
+        self.assertEqual({c['key'] for c in duplicate['unsupported']},{'pool'})
         inputs=[{'text':cancel}]
         contract=profile_patch.schema(input_frame.schema(CHANGE_SCHEMA,inputs))
         f['values']=['false']
@@ -390,10 +389,10 @@ class ReadingAndRecovery(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(removed['unsupported'][0]['text'],text)
         self.assertEqual(removed['fields']['filters']['value'],[])
         f['values']=['true']
-        unknown=profile_patch.decode({'fields':[{'key':'filters','value':json.dumps([f]),'source':text}],
-                                      'criteria':[],'places':[],'unsupported':[],'selection':[]},
-                                     profile_patch.schema(input_frame.schema(CHANGE_SCHEMA,[{'text':text}])),[{'text':text}])
-        self.assertEqual(unknown['unsupported'][0]['text'],text)
+        with self.assertRaisesRegex(ValueError,'положительное расстояние'):
+            profile_patch.decode({'fields':[{'key':'filters','value':json.dumps([f]),'source':text}],
+                                  'criteria':[],'places':[],'unsupported':[],'selection':[]},
+                                 profile_patch.schema(input_frame.schema(CHANGE_SCHEMA,[{'text':text}])),[{'text':text}])
 
     def test_profile_route_requests_separate_extraction_without_guessing_values(self):
         inputs=[{'text':'Ищу 1–2 комнаты','seq':1}]

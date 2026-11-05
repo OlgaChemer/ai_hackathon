@@ -127,7 +127,7 @@ class ChatsAndAuthTest(unittest.TestCase):
     def test_agent_restarts_with_memory(self):
         """Сервер перезапустился, пока агент ждал решения: сообщение поднимает агента с памятью диалога."""
         with self.client() as a:
-            sid, _ = self.start_chat(a)
+            sid, original = self.start_chat(a)
             for s in list(O.SESSIONS.values()):  # «перезапуск»: задачи и память процесса пропали
                 s.task.cancel()
             O.SESSIONS.clear()
@@ -136,16 +136,22 @@ class ChatsAndAuthTest(unittest.TestCase):
             def answer(messages):
                 seen.extend(messages)
                 return say("Безопасные расчёты — деньги уходят продавцу только после регистрации права.")
-            self.models.append(ScriptedLLM(answer))
+            class FAQModel(ScriptedLLM):
+                async def chat(self,messages,**kw):
+                    if kw.get('tag')=='answer':return answer(messages)
+                    return await super().chat(messages,**kw)
+            self.models.append(FAQModel())
             r = a.post(f"/api/chat/{sid}/message", json={"text": "Что такое безопасные расчёты?"}).json()
             self.assertTrue(r["continued"])
             tail = read_until(a, f"/api/chat/{sid}/stream?after={r['after']}",
                               lambda e: e["type"] == "message" and e["role"] == "agent")
             self.assertIn("после регистрации", tail[-1]["text"])
             self.assertFalse(any(e["type"] == "confirm" for e in tail))  # ни рамок заново, ни поиска
-            self.assertEqual(seen[2]["content"], QUERY)  # модель видит прежний разговор
-            interrupted = last_result([m for m in seen if m["role"] != "user" or m["content"] == QUERY])
-            self.assertIn("прервано", interrupted["error"])  # незавершённое действие — честный результат
+            self.assertEqual(seen[2]['content'],'Что такое безопасные расчёты?')
+            restored=O.SESSIONS[sid]
+            self.assertEqual(restored.profile['city'],'Казань')
+            self.assertEqual(restored.profile['budget_max'],9_000_000)
+            self.assertEqual(restored.pending_decisions['red_lines']['decision_id'],original[-1]['decision_id'])
 
     def test_login_moves_browser_chats_to_account(self):
         with self.client() as phone, self.client() as laptop:

@@ -68,6 +68,15 @@ async def apply_corrections(s, listing: dict, corrections: dict, persist: bool) 
         "не выше лимита клиента (код не даст) и договаривается о просмотре. Возвращает итог: цена, что узнал, просмотр.",
         **ID)
 async def call_seller(s, listing_id: str) -> dict:
+    context=(s.active_operation or {}).get('call_context')
+    if s._replaying_operation and context:return await _continue_call(s,context)
+    authorization=f'{s.profile_revision}:{s.request_review_seq}:{s.selection_revision}'
+    previous=s.calls.get(listing_id) or {}
+    if previous.get('authorization')==authorization and previous.get('tool_result'):
+        return {**previous['tool_result'],'already_completed':True}
+    spent=(s.profile.get('_call_authorizations') or {}).get(listing_id) or {}
+    if spent.get('authorization')==authorization:
+        raise ActionError('Это разрешение на звонок уже использовано. Сначала проверьте итог или получите новую явную просьбу клиента.')
     if not s.profile.get("payment"):
         raise ActionError("Сначала выясни способ покупки — ask_payment, затем звонок продавцу.")
     if not s.red_lines_ok:
@@ -104,6 +113,19 @@ async def call_seller(s, listing_id: str) -> dict:
     questions = missing_info(x, 3, s.prefs.features)
     questions += [{'key':f'client_{i}','label':q,'question':q} for i,q in enumerate(s.profile.get('seller_questions') or [])]
     slots = client_slots()
+    context={'listing':x,'fair':fp,'authority':authority,'seller':seller,'questions':questions,
+             'slots':slots,'page':page,'note':note,'legal':check,'authorization':authorization}
+    s.checkpoint_operation('running',call_context=context)
+    return await _continue_call(s,context)
+
+
+async def _continue_call(s,context):
+    x=next((x for x in (s.search or {}).get('listings',[]) if x['id']==context['listing']['id']),context['listing'])
+    fp,authority,seller,questions,slots,page,note=(context[k] for k in ('fair','authority','seller','questions','slots','page','note'))
+    check=context['legal']
+    operation=s.active_operation or {}
+    if operation.get('external_result'):
+        return await _finish_call(s,x,slots,operation['external_result'],note,operation.get('call_mode','auto'))
     r = await s.ask(
         "call", "Звонок продавцу",
         f"Звоню по объекту {x['address']}: уточню {', '.join(q['label'] for q in questions)}, поторгуюсь до "
@@ -113,6 +135,7 @@ async def call_seller(s, listing_id: str) -> dict:
         questions=questions, seller_name=seller["name"], seller_role=seller["role"], simulated=True, page=page,
     )
     if not r["approved"]:
+        s.call_targets=[i for i in s.call_targets if i!=x['id']]
         return {"called": False, "client_said": r["data"].get("text") or "клиент пропустил эту квартиру"}
     if 'questions' in r['data']:
         questions = [{'key':f'client_{i}','label':q,'question':q} for i,q in enumerate(r['data']['questions'])]
@@ -122,6 +145,8 @@ async def call_seller(s, listing_id: str) -> dict:
     neg = N.Negotiation(listing=x, seller=seller, fair=fp, authority=authority, questions=questions, slots=slots, mode=mode)
     s.journal = {"listing_id": x["id"], "base_price": x["price"], "fixed_at": date.today().isoformat(), "url": x.get("url")}
     s.current = {"listing": x, "fair": fp}
+    s.profile.setdefault('_call_authorizations',{})[x['id']]={'authorization':context['authorization'],'status':'started'}
+    s.checkpoint_operation('external_started',call_mode=mode)
     while not s.seller_queue.empty():  # реплики от прошлого звонка не нужны
         s.seller_queue.get_nowait()
     human = (lambda: N.queue_input(s.seller_queue)) if neg.live else None
@@ -134,16 +159,25 @@ async def call_seller(s, listing_id: str) -> dict:
     except N.CallError as exc:
         s.push("call_end", status="failed", price=neg.asking, learned={}, viewing=None, corrections={})
         raise ActionError(f"Звонок прервался: {exc}. Скажи клиенту и предложи повторить.") from exc
+    return await _finish_call(s,x,slots,end,note,mode)
+
+
+async def _finish_call(s,x,slots,end,note,mode):
+    neg_live=mode in N.LIVE_MODES
     if end["learned"]:
         await s.say("Узнал у продавца: " + "; ".join(f"{k} — {v}" for k, v in end["learned"].items()) + ".")
-    corrected = await apply_corrections(s, x, end["corrections"], persist=neg.live) if end.get("corrections") else []
+    corrected = await apply_corrections(s, x, end["corrections"], persist=neg_live) if end.get("corrections") else []
     s.calls[x["id"]] = {"status": end["status"], "price": end["price"], "viewing": end.get("viewing"),
                         "learned": end["learned"], "slots": slots}
-    return {"called": True, "status": "договорились" if end["status"] == "agreed" else "не договорились",
+    result={"called": True, "status": "договорились" if end["status"] == "agreed" else "не договорились",
             "price": end["price"], "listing_price": x["price"], "savings": x["price"] - end["price"],
-            "within_client_limit": end["within_authority"], "over_budget": end["price"] > s.profile["budget_max"],
+            "within_client_limit": end.get("within_authority",False), "over_budget": end["price"] > s.profile["budget_max"],
             "learned": end["learned"], "viewing": end.get("viewing"), "seller_corrected": corrected,
             "seller_was": "ИИ (симуляция)" if mode == "auto" else "живой человек", **({"note": note} if note else {})}
+    authorization=((s.active_operation or {}).get('call_context') or {}).get('authorization')
+    s.calls[x['id']].update(authorization=authorization,tool_result=result)
+    if x['id'] in s.profile.get('_call_authorizations',{}):s.profile['_call_authorizations'][x['id']]['status']='completed'
+    return result
 
 
 @action("confirm_price", 6,

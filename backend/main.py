@@ -34,6 +34,12 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 app = FastAPI(title="Агент жизненных событий — Домклик")
 app.middleware("http")(auth.visitor_middleware)
 
+
+@app.exception_handler(db.PersistenceError)
+async def persistence_failure(request: Request, exc: db.PersistenceError):
+    return JSONResponse({'detail':str(exc),'error_kind':'revision_conflict' if isinstance(exc,db.StateConflict) else 'persistence'},
+                        status_code=409 if isinstance(exc,db.StateConflict) else 503)
+
 SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY",
     "Referrer-Policy": "strict-origin-when-cross-origin",
@@ -88,6 +94,7 @@ class StartRequest(BaseModel):
 
 
 class ConfirmRequest(BaseModel):
+    command_id: str | None = Field(default=None,min_length=1,max_length=64)
     voice_mode: StrictBool = False
     kind: str = Field(max_length=40)
     approved: StrictBool = False
@@ -100,6 +107,7 @@ class SellerReply(BaseModel):
 
 
 class ClientMessage(BaseModel):
+    command_id: str | None = Field(default=None,min_length=1,max_length=64)
     voice_mode: StrictBool = False
     text: str = Field(min_length=1, max_length=1000)
     liked: list[str] = []
@@ -264,6 +272,7 @@ def _owns(s: O.Session, request: Request) -> bool:
 def _session(sid: str, request: Request) -> O.Session:
     """Живая сессия агента — только своему браузеру или пользователю; чужой id — как несуществующий."""
     s = O.SESSIONS.get(sid)
+    if s is None and _can_open(sid,request):s=O.restore_session(sid,'',_llm())
     if s is None or not _owns(s, request):
         raise HTTPException(404, "Диалог не найден")
     return s
@@ -298,6 +307,9 @@ async def chat_stream(sid: str, request: Request, after: int = 0):
     if not _can_open(sid, request):
         raise HTTPException(404, "Диалог не найден")
     live = O.SESSIONS.get(sid)
+    if live is None:
+        info=db.required(repo.get_chat,sid)
+        if info and info.state:live=O.restore_session(sid,'',_llm())
 
     async def gen():
         q: asyncio.Queue = asyncio.Queue()
@@ -352,11 +364,13 @@ async def chat_message(sid: str, req: ClientMessage, request: Request):
     _cooldown(live)
     if live is not None and (live.task is None or O.running(live)):  # агент ещё не запущен или работает
         live.voice_mode = req.voice_mode
-        kind = await live.receive_text(req.text.strip(), {"liked": req.liked, "disliked": req.disliked})
+        kind = await live.receive_text(req.text.strip(), {"liked": req.liked, "disliked": req.disliked},req.command_id)
         return {"ok": True, "handled_as": kind, "continued": False}
-    s = O.restore_session(sid, req.text, _llm())
+    s = O.restore_session(sid, '', _llm())
     s.voice_mode = req.voice_mode
-    return {"ok": True, "handled_as": "continue", "continued": True, "after": s.seq}
+    after=s.seq
+    kind=await s.receive_text(req.text.strip(),{'liked':req.liked,'disliked':req.disliked},req.command_id)
+    return {"ok": True, "handled_as": kind, "continued": True, "after": after}
 
 
 @app.post("/api/session/{sid}/confirm")
@@ -365,7 +379,7 @@ async def confirm(sid: str, req: ConfirmRequest, request: Request):
     _cooldown(s)
     try:
         s.voice_mode = req.voice_mode
-        resolved = s.resolve(req.kind, req.approved, req.data, req.decision_id)
+        resolved = await s.receive_decision(req.kind, req.approved, req.data, req.decision_id,req.command_id)
     except guard.InputRejected as exc:
         raise HTTPException(422, str(exc)) from exc
     if not resolved:

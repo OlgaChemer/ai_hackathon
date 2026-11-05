@@ -13,6 +13,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
+from copy import copy, deepcopy
 
 from .. import db
 from ..runtime import TurnStopped, human_wait
@@ -22,6 +23,11 @@ from . import finance as F
 from . import preferences as P
 from . import guard, qa, validation
 from .numbers import fmt
+from . import state as durable_state, persistence
+
+
+class Superseded(TurnStopped):
+    def __init__(self):super().__init__('superseded')
 
 STEPS = ["Запрос", "Финансы", "Поиск", "Подбор", "Проверка", "Звонок", "Просмотр", "Сделка", "Итог"]
 MEMORY_LIMIT = 80  # сообщений разговора с моделью; старое отрезаем по границе сообщения клиента
@@ -89,6 +95,73 @@ class Session:
 
     blocked: list[float] = field(default_factory=list)
     qa_task: asyncio.Task | None = None
+    durable: bool = False
+    state_version: int = 0
+    profile_revision: int = 0
+    selection_revision: int = 0
+    pending_decisions: dict = field(default_factory=dict)
+    operations: dict = field(default_factory=dict)
+    active_operation: dict | None = None
+    qa_pending: list = field(default_factory=list)
+    started: bool = False
+    _durable_snapshot: dict | None = None
+    _owner: Any = None
+    _event_buffer: list = field(default_factory=list)
+    _batch_depth: int = 0
+    _command: dict | None = None
+    _fork_revision: int = 0
+    _fork_base: dict | None = None
+    command_queue: asyncio.Queue = field(default_factory=asyncio.Queue)
+    command_futures: dict = field(default_factory=dict)
+    command_task: asyncio.Task | None = None
+    review_task: asyncio.Task | None = None
+    review_task_seq: int = 0
+    _replaying_operation: bool = False
+
+    def fork(self):
+        """Инструмент работает на собственном снимке, а не меняет живой контекст."""
+        child=copy(self)
+        durable_state.restore(child,durable_state.snapshot(self))
+        child._owner=self
+        child._fork_revision=self.client_revision
+        child._fork_base=durable_state.snapshot(child)['data']
+        child._event_buffer=[]
+        child._batch_depth=0
+        return child
+
+    def flush(self, result=None):
+        if self._owner is None:
+            if not self._batch_depth:persistence.commit(self,command=self._command)
+            return
+        owner=self._owner
+        if owner.client_revision!=self._fork_revision:
+            op=owner.active_operation or {}
+            if op.get('name')=='call_seller' and op.get('status') in ('external_started','external_completed'):
+                # Итог уже начатого звонка — факт конкретной операции, не новая выдача.
+                self._fork_revision=owner.client_revision
+            else:raise Superseded()
+        data=durable_state.snapshot(self)['data']
+        # Служебные данные входа и журнал команд принадлежат владельцу.
+        protected={'request_inputs','request_review','request_review_seq','client_revision',
+                   'pending_decisions','operations','active_operation','qa_pending','started','messages'}
+        with persistence.atomic(owner):
+            merged=durable_state.snapshot(owner)
+            for key,value in data.items():
+                if key not in protected and value!=self._fork_base.get(key):merged['data'][key]=value
+            before={k:v for k,v in owner.profile.items() if not k.startswith('_') and k not in ('summary','market')}
+            after={k:v for k,v in merged['data']['profile'].items() if not k.startswith('_') and k not in ('summary','market')}
+            if before!=after:
+                merged['data']['profile_revision']=max(merged['data']['profile_revision'],owner.profile_revision+1)
+            durable_state.restore(owner,merged)
+            if result is not None and owner.active_operation:
+                operation=owner.active_operation
+                owner.operations[operation['id']]={**operation,'status':'completed','result':deepcopy(result)}
+                owner.active_operation=None
+                owner.pending_decisions={k:t for k,t in owner.pending_decisions.items() if t.get('status')!='consumed'}
+            for ev in self._event_buffer:
+                owner.push(ev['type'],**{k:v for k,v in ev.items() if k!='type'})
+        self._event_buffer.clear()
+        self._fork_base=data
 
     def blocked_recently(self, window: float = 120) -> int:
         now = time.monotonic()
@@ -126,21 +199,18 @@ class Session:
     # ------------------------------------------------------------- лента событий
     def push(self, type_: str, **payload: Any) -> dict:
         """Событие в ленту диалога: номер, база, все открытые вкладки. Синхронно — порядок не путается."""
-        self.seq += 1
         payload = guard.output(payload, self, limit=False)
         if type_ in ("message", "turn", "confirm") and "text" in payload:
             payload["text"] = guard.output(payload["text"], self)
-        ev = _jsonable({"type": type_, **payload, "seq": self.seq})
-        self.history.append(ev)
-        db.safe(repo.save_event, self.id, self.seq, type_, ev)
-        for q in list(self.subscribers):
-            q.put_nowait(ev)
-        if type_ == "done":
-            db.safe(repo.update_chat, self.id, status=payload.get("status", "completed"))
-        return ev
+        if self._owner is not None and type_=='call_end' and self._owner.active_operation:
+            self._owner.active_operation.update(status='external_completed',external_result=_jsonable(payload))
+        return persistence.push(self,type_,_jsonable(payload))
 
     def signal(self, type_: str, **payload: Any) -> None:
         """Сигнал открытым вкладкам без записи в историю: «агент думает»."""
+        if self._owner is not None:
+            if self._owner.client_revision==self._fork_revision:self._owner.signal(type_,**payload)
+            return
         if type_ == 'typing':
             self.activity = 'working' if payload.get('on') else ('awaiting_user' if self.pending else 'idle')
         for q in list(self.subscribers):
@@ -172,16 +242,42 @@ class Session:
     async def ask(self, kind: str, title: str, text: str, **payload: Any) -> dict:
         """Карточка с решением клиента. Ждёт: {"approved": bool | None, "data": {...}}.
         Клиент может вместо кнопки написать текстом — тогда approved = None, а текст в data["text"]."""
+        if self._owner is not None:
+            self.flush()
+            answer=await self._owner.ask(kind,title,text,**payload)
+            self._fork_revision=self._owner.client_revision
+            self.active_operation=deepcopy(self._owner.active_operation)
+            self._replaying_operation=False
+            return answer
+        self._replaying_operation=False
+        ticket=self.pending_decisions.get(kind)
+        if ticket and ticket.get('status')=='answered':
+            ticket['status']='consumed'
+            return deepcopy(ticket['answer'])
+        if ticket and ticket.get('status')=='waiting':
+            title,text,payload=ticket['title'],ticket['text'],ticket['payload']
+        else:
+            ticket={'kind':kind,'title':title,'text':text,'payload':_jsonable(payload),
+                    'decision_id':uuid.uuid4().hex[:16],'status':'waiting',
+                    'operation_id':(self.active_operation or {}).get('id')}
+            self.pending_decisions[kind]=ticket
+        if self.active_operation:self.active_operation['status']='waiting'
         fut = asyncio.get_running_loop().create_future()
         self.pending[kind] = fut
-        decision_id = uuid.uuid4().hex[:16]
+        decision_id = ticket['decision_id']
         self.pending_ids[kind] = decision_id
         self.signal('typing',on=False)
         self.signal('model_wait',on=False)
-        self.push("confirm", kind=kind, title=title, text=text, decision_id=decision_id, **payload)
+        if not ticket.get('published'):
+            ticket['published']=True
+            self.push("confirm", kind=kind, title=title, text=text, decision_id=decision_id, **payload)
+        else:self.remember()
         try:
             with human_wait():
-                return await fut
+                answer=await fut
+                ticket['status']='consumed'
+                if self.active_operation:self.active_operation['status']='running'
+                return answer
         finally:
             if self.pending.get(kind) is fut:
                 self.pending.pop(kind, None)
@@ -190,9 +286,11 @@ class Session:
     def resolve(self, kind: str, approved: bool | None, data: dict | None, decision_id: str | None = None) -> bool:
         """Решение клиента. В ленту — resolved с подписью кнопки (для истории) и фраза, если решение сказано голосом."""
         fut = self.pending.get(kind)
-        if not fut or fut.done():
+        ticket=self.pending_decisions.get(kind)
+        if (not fut or fut.done()) and not (ticket and ticket.get('status')=='waiting'):
             return False
-        if decision_id is not None and decision_id != self.pending_ids.get(kind):
+        current_id=(ticket or {}).get('decision_id') or self.pending_ids.get(kind)
+        if decision_id is not None and decision_id != current_id:
             return False
         data = dict(data or {})
         try:
@@ -208,12 +306,17 @@ class Session:
             if not self.request_inputs or self.request_inputs[-1]['text'] != data['text'] or self.request_inputs[-1]['seq'] <= self.request_review_seq:
                 event = self.push("message", role="user", text=data['text'])
                 self.accept_request(event['text'], event['seq'])
-        self.client_revision += 1
-        label, said = data.pop("_label", None), data.pop("_said", None)
-        if said:
-            self.push("message", role="user", text=str(said)[:500])
-        self.push("resolved", kind=kind, approved=approved, label=label, decision_id=self.pending_ids.get(kind))
-        fut.set_result({"approved": approved, "data": data})
+        with persistence.atomic(self):
+            self.client_revision += 1
+            label, said = data.pop("_label", None), data.pop("_said", None)
+            if said:self.push("message", role="user", text=str(said)[:500])
+            answer={"approved":approved,"data":data}
+            if ticket:
+                ticket['status']='answered';ticket['answer']=answer
+            if self._command:
+                self._command['result']=({'handled_as':'answer'} if self._command['kind']=='message' else {'resolved':True})
+            self.push("resolved", kind=kind, approved=approved, label=label, decision_id=current_id)
+        if fut and not fut.done():fut.set_result(answer)
         return True
 
     def accept_request(self, text, seq):
@@ -223,16 +326,28 @@ class Session:
                                     "options": question.get('chips') or []})
         self.request_review = None
 
-    async def receive_text(self, text: str, marks: dict | None = None) -> str:
-        async with self.input_lock:
-            return await self._receive_text(text, marks)
+    async def receive_text(self, text: str, marks: dict | None = None, command_id: str | None = None) -> str:
+        from .commands import submit
+        result=await submit(self,'message',{'text':text,'marks':marks},command_id)
+        return result['handled_as']
+
+    async def receive_decision(self,kind,approved,data,decision_id=None,command_id=None):
+        from .commands import submit
+        result=await submit(self,'confirm',{'kind':kind,'approved':approved,'data':data,'decision_id':decision_id},command_id)
+        return result['resolved']
 
     async def _receive_text(self, text: str, marks: dict | None = None) -> str:
-        ev = self.push("message", role="user", text=text)
-        if self.refuse(text):
-            return "blocked"
-        self.accept_request(ev["text"], ev["seq"])
-        if self.pending or self.last_issue is not None:
+        progress=(self._command or {}).setdefault('progress',{})
+        with persistence.atomic(self):
+            if not progress.get('message_seq'):
+                ev=self.push('message',role='user',text=text,command_id=(self._command or {}).get('id'))
+                progress['message_seq']=ev['seq']
+                if self.refuse(text):return 'blocked'
+                self.accept_request(ev['text'],ev['seq'])
+                self.client_revision+=1
+            elif not any(x['seq']==progress['message_seq'] for x in self.request_inputs):
+                self.accept_request(text,progress['message_seq'])
+        if self.pending or any(t['status']=='waiting' for t in self.pending_decisions.values()) or self.last_issue is not None:
             from . import understanding
             from ..llm import LLMError
             try:
@@ -242,11 +357,14 @@ class Session:
                 return "unresolved"
             if review and review['intent'] == 'question' and review['decision'] != 'clarify':
                 self.request_review_seq = review['seq']
-                if self.qa_task is None or self.qa_task.done():
-                    self.qa_task = asyncio.create_task(qa.answer(self, text))
+                from .commands import start_questions
+                self.qa_pending.append({'id':(self._command or {}).get('id') or uuid.uuid4().hex,'text':text})
+                if self._command:self._command['result']={'handled_as':'question'}
+                self.remember()
+                start_questions(self)
                 return "question"
             self.client_revision += 1
-            kind = next(iter(self.pending), None)
+            kind = next(iter(self.pending), None) or next((k for k,t in self.pending_decisions.items() if t['status']=='waiting'),None)
             if kind:
                 data = {"text": text}
                 if kind == "selection":
@@ -273,8 +391,16 @@ class Session:
             while cut < len(self.messages) and self.messages[cut]["role"] != "user":
                 cut += 1
             self.messages = self.messages[cut:]
-        db.safe(repo.update_chat, self.id, memory=_jsonable(guard.output(self.messages, limit=False)),
-                profile=_jsonable({k: v for k, v in self.profile.items() if k != "market"}) or None)
+        if self._owner is None:
+            if not self._batch_depth:persistence.commit(self,command=self._command)
+
+    def checkpoint_operation(self, status, **data):
+        if self._owner is not None:self.flush()
+        owner=self._owner or self
+        if owner.active_operation:
+            owner.active_operation.update(status=status,**deepcopy(data))
+            owner.remember()
+            self.active_operation=deepcopy(owner.active_operation)
 
 
 SESSIONS: dict[str, Session] = {}
@@ -283,15 +409,33 @@ SESSIONS: dict[str, Session] = {}
 def create_session(query: str, llm: LLMClient, visitor_id: str | None = None, user_id: int | None = None) -> Session:
     s = Session(id=uuid.uuid4().hex[:12], query=query.strip(), llm=llm, visitor_id=visitor_id, user_id=user_id)
     SESSIONS[s.id] = s
-    db.safe(repo.create_chat, s.id, guard.output(s.query), visitor_id, user_id)
+    db.required(repo.create_chat, s.id, guard.output(s.query), visitor_id, user_id)
+    s.durable=True
+    s.remember()
     return s
 
 
 def restore_session(chat_id: str, text: str, llm: LLMClient) -> Session:
     """Продолжить диалог, агент которого остановлен (перезапуск сервера, долгая пауза): та же лента и память."""
-    info = db.safe(lambda d: (lambda c: c and (c.profile, c.memory, c.visitor_id, c.user_id, c.last_seq))(repo.get_chat(d, chat_id)))
+    row=db.required(repo.get_chat,chat_id)
+    info=(row.profile,row.memory,row.visitor_id,row.user_id,row.last_seq) if row else None
     profile, memory, vid, uid, last_seq = info or (None, None, None, None, 0)
     s = Session(id=chat_id, query=text.strip(), llm=llm, visitor_id=vid, user_id=uid, seq=last_seq or 0)
+    s.durable=True
+    s.state_version=(row.state_version or 0) if row else 0
+    if row and row.state and row.state.get('data',{}).get('profile')==dict(profile or {}) and row.state.get('data',{}).get('messages')==list(memory or []):
+        durable_state.restore(s,row.state)
+        s.messages=close_dangling_calls(s.messages,completed=s.operations,
+                                       active_id=(s.active_operation or {}).get('id'))
+        restore_approval(s)
+        if s.programs_result is not None and s.programs_key!=F.programs_key(s.profile):
+            s.programs_key=s.programs_result=None
+            s.mortgage=s.finance=None
+            s.profile.pop('_programs_cache',None)
+        if text.strip():s.query=text.strip();s.started=False
+        s._durable_snapshot=durable_state.snapshot(s)
+        SESSIONS[chat_id]=s
+        return s
     s.profile = dict(profile or {})
     s.last_issue=s.profile.get('_last_issue')
     s.requested_action=s.profile.get('_requested_action')
@@ -334,7 +478,25 @@ def restore_session(chat_id: str, text: str, llm: LLMClient) -> Session:
     return s
 
 
-def close_dangling_calls(messages: list[dict], reason: str = "прервано: агент перезапускался, клиент не успел ответить") -> list[dict]:
+def restore_approval(s):
+    if '_approved_budget_max' not in s.profile:
+        names={};approved=None
+        for m in s.messages:
+            for call in m.get('tool_calls') or []:names[call['id']]=call['function']['name']
+            if m.get('role')!='tool':continue
+            try:r=json.loads(m.get('content','{}'))
+            except (TypeError,ValueError):continue
+            if not isinstance(r,dict):continue
+            if names.get(m.get('tool_call_id'))=='confirm_red_lines' and 'approved' in r:
+                approved=r.get('budget_max') if r['approved'] else None
+            if names.get(m.get('tool_call_id'))=='update_request' and approved:
+                value=(r.get('profile') or {}).get('budget_max')
+                if value is not None and value!=approved:approved=None
+        s.profile['_approved_budget_max']=approved
+    s.red_lines_ok=bool(s.profile.get('_approved_budget_max') and s.profile['_approved_budget_max']==s.profile.get('budget_max'))
+
+
+def close_dangling_calls(messages: list[dict], reason: str = "прервано: агент перезапускался, клиент не успел ответить", *, completed=None, active_id=None) -> list[dict]:
     """Действие было начато, но сервер остановился раньше результата: даём модели честный результат «прервано»,
     иначе разговор с вызовом без ответа модель не примет."""
     out: list[dict] = []
@@ -344,8 +506,11 @@ def close_dangling_calls(messages: list[dict], reason: str = "прервано: 
             answered = {x.get("tool_call_id") for x in messages[i + 1:] if x.get("role") == "tool"}
             for call in m["tool_calls"]:
                 if call["id"] not in answered:
+                    if call['id']==active_id:continue
+                    operation=(completed or {}).get(call['id']) or {}
+                    content=operation['result'] if operation.get('status')=='completed' else {'error':reason}
                     out.append({"role": "tool", "tool_call_id": call["id"],
-                                "content": json.dumps({"error": reason}, ensure_ascii=False)})
+                                "content": json.dumps(content, ensure_ascii=False)})
     return out
 
 

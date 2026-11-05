@@ -102,7 +102,7 @@ def failed_input(s, exc):
     if not isinstance(exc,UnderstandingError):
         text=('Сервис обработки сообщения сейчас не ответил. Условия и последняя подборка сохранены; '
               'можно повторить сообщение позже. Это не просьба изменить ваши условия.')
-    s.last_issue={'kind':'input_error','message':text}
+    s.last_issue={'kind':'model_format' if isinstance(exc,UnderstandingError) else 'upstream_unavailable','message':text}
     s.profile['_last_issue']=dict(s.last_issue)
     s.remember()
     return text
@@ -191,6 +191,16 @@ def frame_from_call(call,tools,inputs):
 
 
 async def prepare(s):
+    import asyncio
+    seq=s.request_inputs[-1]['seq'] if s.request_inputs else s.request_review_seq
+    if s.review_task is not None and not s.review_task.done() and s.review_task_seq==seq:
+        return await asyncio.shield(s.review_task)
+    s.review_task_seq=seq
+    s.review_task=asyncio.create_task(_prepare(s))
+    return await asyncio.shield(s.review_task)
+
+
+async def _prepare(s):
     """Один принятый разбор на сообщение; предложения инструментов не служат источником пожеланий."""
     inputs=[x for x in s.request_inputs if x['seq'] > s.request_review_seq]
     if not inputs:return None
@@ -226,6 +236,7 @@ async def prepare(s):
         messages=[{'role':'system','content':instruction},guard.data_message('request_review',payload)]
         try:
             requested_action=None
+            condition_sources={}
             response=await s.llm.chat(messages,tools=tools,
                                       tag='request_review',temperature=.01,max_tokens=2500)
             if response.tool_calls:
@@ -251,7 +262,7 @@ async def prepare(s):
                     parsed=await s.llm.chat([{'role':'system','content':prompt},guard.data_message('profile_changes',data)],
                         json_mode=True,tag='profile_extract',temperature=.01,max_tokens=3000)
                     changes=parse_json_loose(parsed.text)
-                    changes=profile_patch.decode(changes,contract_for_changes,inputs,s.profile.get('_unsupported_keys'))
+                    changes=profile_patch.decode(changes,contract_for_changes,inputs,s.profile.get('_unsupported_keys'),provenance=condition_sources)
                     requested_action=changes.pop('_requested_action',None)
                     if rank and (any(v is not None for v in (changes.get('fields') or {}).values()) or
                                  any(v is not None for v in (changes.get('criteria') or {}).values()) or
@@ -262,6 +273,7 @@ async def prepare(s):
             result=input_frame.complete_frame(result,CHANGE_SCHEMA)
             result = input_frame.decode(result, payload['profile'], payload, CHANGE_SCHEMA)
             if requested_action:result['requested_action']=requested_action
+            if condition_sources:result['condition_sources']=condition_sources
             validation.validate(result['changes'], CHANGE_SCHEMA)
             if not guard.input_verdict(result['changes']).ok or guard.output(result['changes'], limit=False) != result['changes']:
                 raise ValueError('Небезопасные изменения')
@@ -308,7 +320,7 @@ async def ensure(s):
         changes={key:value for key,value in changes.items() if key in basic
                  and s.profile.get(key) in (None, [], '')}
     if review['decision'] == 'apply' and changes:
-        result = apply_request(s, changes)
+        result = apply_request(s, changes, condition_sources=review.get('condition_sources'))
     else:
         result = None
     s.request_review_seq = review['seq']

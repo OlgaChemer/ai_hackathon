@@ -471,9 +471,9 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
         future = asyncio.get_running_loop().create_future()
         s.pending['price'] = future
         before = deepcopy(s.profile)
-        with patch.object(qa,'answer',AsyncMock()) as answer:
+        with patch.object(qa,'reply',AsyncMock(return_value='Ответ на вопрос')) as answer:
             self.assertEqual(await s.receive_text(text),'question')
-            await asyncio.sleep(0)
+            await s.qa_task
             answer.assert_awaited_once()
         self.assertFalse(future.done())
         self.assertEqual(s.profile,before)

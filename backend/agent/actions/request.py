@@ -88,14 +88,19 @@ def updated_profile(profile, changes):
     for key in LIST_KEYS:  # пустой список от модели — снять условие
         if key in changes and changes[key] == []:
             p[key] = []
-    return p
+    from ..conditions import reconcile
+    return reconcile(p,changes)
 
 
-def apply_request(s, changes):
+def apply_request(s, changes, *, condition_sources=None):
     """Только структурированные, проверенные изменения. Естественный язык здесь не читается."""
     old_profile = dict(s.profile)
     before = {k: s.profile.get(k) for k in CORE_KEYS}
     p = updated_profile(s.profile, changes)
+    if condition_sources:
+        from ..conditions import normalize
+        p['_condition_sources']={**(p.get('_condition_sources') or {}),**condition_sources}
+        normalize(p)
     notes = []
     if p.get("city") and p["city"] not in sources.SUPPORTED_CITIES:
         notes.append(f"Города «{p['city']}» нет среди {len(sources.SUPPORTED_CITIES)} городов Циана, которые я знаю. "
@@ -106,6 +111,7 @@ def apply_request(s, changes):
     if not missing:
         p["summary"] = profile_summary(p)
     s.profile = p
+    if p!=old_profile:s.profile_revision+=1
     s.prefs.sync(p)
     if any(p.get(k) != before[k] for k in CORE_KEYS):
         budget_changed = p.get("budget_max") != old_profile.get("budget_max")
