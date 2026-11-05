@@ -155,7 +155,7 @@ def semantic_tools(contract,inputs,unsupported,has_results=True):
         Tool('read_selection','Прочитать найденные данные: отобрать N, отсортировать, сравнить показанные, посчитать статистику или получить ещё варианты. Условия профиля не меняет. Новое количество только из новой реплики, при отсутствии limit=null.',read_schema),
         Tool('profile_change','Клиент меняет условия квартиры/города/бюджета, снимает ограничение либо добавляет вопросы продавцу. Включая составную просьбу изменить условия и отобрать N. Параметры извлечёт отдельный структурированный разбор. Для одного лишь отбора без изменения условий — read_selection.',obj({})),
         Tool('unsupported_request','Новое пожелание вне проверяемых свойств: удобство внутри квартиры не заменяется внешней инфраструктурой. Это явный запрос клиента, а не ошибка формата и не неизвестные данные объявления. Только распознать ограничение возможности, ничего не исполнять.',obj({
-            'quote':{'type':'string','enum':list(dict.fromkeys(row['text'] for row in inputs)),
+            'quote':{'type':'string','minLength':1,'maxLength':1000,
                      'description':'Дословная новая реплика, содержащая неподдерживаемое пожелание.'}},['quote'])),
         Tool('informational_question','Клиент задаёт информационный вопрос и не меняет условия/не выбирает действие. Включая вопрос о предыдущем сбое.',obj({})),
         Tool('call_intent','Клиент явно просит звонить. Сам ничего не исполняет. Без явной просьбы запрещён; для вопросов продавцу используй profile_change.',obj({
@@ -189,6 +189,8 @@ def frame_from_call(call,tools,inputs):
         return {'intent':'refine' if update else 'selection','selection':a,**({'needs_extraction':True} if update else {})}
     if call.name=='profile_change':return {'intent':'refine','needs_extraction':True}
     if call.name=='unsupported_request':
+        if not any(a['quote'].casefold() in row['text'].casefold() for row in inputs):
+            raise ValueError('Неподдержанное пожелание требует дословной цитаты нового ввода')
         return {'intent':'refine','unsupported':[{'text':a['quote'][:200],'source':a['quote'],'action':'add'}]}
     if call.name=='pause_request':return {'intent':'hold','needs_extraction':True}
     if call.name=='informational_question':return {'intent':'question'}
