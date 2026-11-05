@@ -130,6 +130,16 @@ class P1P2(unittest.IsolatedAsyncioTestCase):
         for item in incidents:
             with self.subTest(id=item['id']):
                 s=self.agent();before=deepcopy(s.profile);inputs=[{'seq':1,'text':item['input']}]
+                if item['expected']=='clarify_city_without_profile_change':
+                    frame=profile_patch.decode(item['frame'],profile_patch.schema(input_frame.schema(CHANGE_SCHEMA,inputs)),inputs)
+                    frame=input_frame.complete_frame({'intent':'refine',**frame},CHANGE_SCHEMA)
+                    result=input_frame.decode(frame,{}, {'messages':inputs,'supported_cities':sources.SUPPORTED_CITIES,
+                        'ambiguous_catalog_names':understanding.catalog_ambiguities(sources.SUPPORTED_CITIES)},CHANGE_SCHEMA)
+                    self.assertEqual(result['decision'],'clarify')
+                    self.assertEqual(set(result['options']),{'Нижний Новгород','Великий Новгород'})
+                    self.assertEqual(result['changes'],{})
+                    self.assertEqual(s.profile,before)
+                    continue
                 with self.assertRaises(ValueError):
                     if item['stage']=='profile_extract':
                         profile_patch.decode(item['frame'],profile_patch.schema(input_frame.schema(CHANGE_SCHEMA,inputs)),inputs)

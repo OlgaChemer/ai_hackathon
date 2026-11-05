@@ -183,7 +183,7 @@ def decode(patch,contract,inputs,aliases=None,*,provenance=None):
                 city=normalize_city(name)
                 if city not in SUPPORTED_CITIES:raise ValueError('Город нужно сопоставить с supported_cities; не подставляй похожий')
                 words=[]
-                for token in input_frame.source_words([{'text':row['source']}]):
+                for token in input_frame.quoted_words(row['source'],inputs):
                     lemmas=input_frame.place_lemmas(token,input_frame.catalog_words())
                     matches=[w for w in lemmas if w in city.split() or normalize_city(w)==city]
                     if len(matches)==1:words.append({'source':token,'lemma':matches[0]})

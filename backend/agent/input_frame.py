@@ -46,6 +46,18 @@ def source_words(messages):
         for word in message['text'].split() if word.strip(punctuation)))
 
 
+def quoted_words(quote,messages):
+    """Полные исходные слова, пересекающие буквальную цитату, включая её окончания."""
+    words=[]
+    for message in messages:
+        text=message['text']
+        spans=list(re.finditer(re.escape(quote),text,re.IGNORECASE))
+        for token in re.finditer(r'[^\s.,!?…:;()\[\]{}«»"]+',text):
+            if any(token.start()<span.end() and token.end()>span.start() for span in spans):
+                words.append(token.group())
+    return list(dict.fromkeys(words))
+
+
 def place_lemmas(source,words):
     """Привязка сущности к словарю, не разбор команды/намерения пользователя."""
     raw=source.casefold().replace('ё','е')
