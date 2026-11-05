@@ -16,7 +16,9 @@ async def submit(s,kind,payload,command_id=None):
                         guard.output(payload,s,limit=False)) if s.durable else {
                             'id':command_id,'kind':kind,'payload':payload,'progress':{},'status':'accepted'}
     if receipt['status']=='rejected':raise guard.InputRejected(receipt['result']['error']['message'])
-    if receipt['status']=='completed':return receipt['result']
+    if receipt['status']=='completed':
+        start_questions(s)
+        return receipt['result']
     future=enqueue(s,receipt)
     return await asyncio.shield(future)
 
@@ -76,10 +78,16 @@ def start_questions(s):
 
 async def answer_questions(s):
     from . import qa
-    while s.qa_pending:
-        item=s.qa_pending[0]
-        # Вопрос не теряется, даже если следующий уже принят.
-        reply=await qa.reply(s,item['text'])
-        with persistence.atomic(s):
-            s.qa_pending=[q for q in s.qa_pending if q['id']!=item['id']]
-            s.push('message',role='agent',text=reply,in_reply_to=item['id'])
+    try:
+        while s.qa_pending:
+            item=s.qa_pending[0]
+            # Вопрос не теряется, даже если следующий уже принят.
+            reply=await qa.reply(s,item['text'])
+            with persistence.atomic(s):
+                s.qa_pending=[q for q in s.qa_pending if q['id']!=item['id']]
+                s.push('message',role='agent',text=reply,in_reply_to=item['id'])
+    except db.PersistenceError:
+        # Ответ ещё не зафиксирован. Останавливаем и основной ход, чтобы
+        # ошибка фонового FAQ не оставила продолжающееся действие без хранения.
+        if s.task is not None and not s.task.done():s.task.cancel()
+        s.signal('error',error_kind='persistence',text='Не удалось сохранить ответ. Вопрос сохранён; продолжите диалог после восстановления соединения.')

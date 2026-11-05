@@ -352,3 +352,18 @@ class DurableStateTest(unittest.IsolatedAsyncioTestCase):
         self.assertIn('selection',s.pending)
         card.cancel()
         with self.assertRaises(asyncio.CancelledError):await card
+
+    async def test_failed_question_delivery_keeps_the_question_and_stops_business_work(self):
+        from backend.agent import qa
+        s=self.agent();s.qa_pending=[{'id':'question','text':'Что это значит?'}];s.remember()
+        queue=asyncio.Queue();s.subscribers.add(queue)
+        s.task=asyncio.create_task(asyncio.sleep(30))
+        with patch.object(qa,'reply',AsyncMock(return_value='Ответ')),patch.object(repo,'commit_dialogue',side_effect=RuntimeError('disk failure')):
+            await commands.answer_questions(s)
+        with self.assertRaises(asyncio.CancelledError):await s.task
+        self.assertEqual([q['id'] for q in s.qa_pending],['question'])
+        self.assertFalse(any(e.get('in_reply_to')=='question' for e in s.history))
+        failure=queue.get_nowait()
+        self.assertEqual((failure['type'],failure['error_kind'],failure['seq']),('error','persistence',0))
+        restored=session.restore_session(s.id,'',s.llm)
+        self.assertEqual(restored.qa_pending,s.qa_pending)
