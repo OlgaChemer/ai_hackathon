@@ -198,8 +198,9 @@ def frame_from_call(call,tools,inputs):
         scope_source=a.pop('scope_source',None)
         if a['operation']=='compare' and a['scope']=='all' and not scope_source:
             raise ValueError('compare/all требует прямой просьбы сравнивать весь найденный пул. Отсылка к текущим карточкам — compare/shown, без расширения области.')
-        if a['operation']=='compare' and a.get('group_by') is not None:
-            raise ValueError('Сравнение отдельных квартир не группирует их: group_by=null. Для статистики по группам используй analyze.')
+        if a['operation']=='compare':
+            # Сравниваются объекты; группировка имеет смысл только для analyze.
+            a['group_by']=None
         quote=a.pop('count_source')
         keep=a.pop('keep_order')
         update=a.pop('update_conditions')
