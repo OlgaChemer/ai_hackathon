@@ -31,7 +31,7 @@ async def next_step(d,auto=True):
 async def approve(d,e,data=None):
     r=await d.client.post(f'/api/session/{d.sid}/confirm',json={'kind':e['kind'],'approved':True,
         'decision_id':e['decision_id'],'data':data or {}})
-    r.raise_for_status();assert r.json()['resolved'],r.json()
+    r.raise_for_status();assert r.json()['ok'],r.json()
 
 
 async def budget(base):
@@ -101,7 +101,7 @@ async def agreements():
     db.configure('sqlite://');llm=get_llm()
     for text,action in [('Да','market_prices'),('Давай','market_prices'),('Покажи','market_prices'),
                         ('Какую сумму обычно просят за такие квартиры?','market_prices'),
-                        ('Рассчитай доступный бюджет для ипотеки по моим доходам.','affordable_budget')]:
+                        ('Рассчитай личный доступный бюджет по моим доходам и накоплениям.','affordable_budget')]:
         s=session.create_session('',llm)
         s.profile=merge_profile({'city':'Москва','rooms':3,'housing':'both','payment':'cash','center_required':True})
         s.push('message',role='user',text='Не знаю, какой средний бюджет.')
