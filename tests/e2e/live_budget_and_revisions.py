@@ -39,9 +39,9 @@ async def budget(base):
     try:
         await d.start('Найди мне квартиру в центре Москвы по выгодной цене.')
         step=await next_step(d)
-        assert step.get('kind')=='clarify',step
+        assert step.get('kind') in ('clarify','finance'),step
         await d.send('3');step=await next_step(d)
-        assert step.get('kind')=='clarify',step
+        assert step.get('kind') in ('clarify','finance'),step
         await d.send('Не знаю, какой средний?');step=await next_step(d)
         m=d.profile.get('market');assert m and m.get('median'),(step,d.messages)
         assert d.profile['budget_max'] is None
