@@ -179,7 +179,7 @@ def semantic_tools(contract,inputs,unsupported,has_results=True):
             'listing_ids':{'type':'array','maxItems':10,'items':{'type':'string'},'description':'ID показанных объектов; пусто — по понравившимся'}},['listing_ids'])),
         Tool('pause_request','Клиент просит остановиться/пока не искать/пока не звонить. Можно сохранить явно добавленные вопросы и условия без действий.',obj({})),
         Tool('continue_input','Клиент просит продолжить без изменения условий.',obj({})),
-        Tool('other_input','Прочая реплика без изменения параметров и без команды выдачи.',obj({})),
+        Tool('other_input','Разговорная или неясная реплика без изменения параметров и команды. Ответить с контекстом текущего вопроса/ошибки, не возобновлять бизнес-действия.',obj({})),
     ]
     return tools if has_results else [tool for tool in tools if tool.name!='read_selection']
 
@@ -214,7 +214,7 @@ def frame_from_call(call,tools,inputs):
         return {'intent':'question',**({'requested_action':a['action']} if a.get('action') else {}),
                 **({'needs_extraction':True} if a.get('update_conditions') else {})}
     if call.name=='call_intent':return {'intent':'call','call_ids':a['listing_ids']}
-    return {'intent':'continue' if call.name=='continue_input' else 'other'}
+    return {'intent':'continue' if call.name=='continue_input' else 'question'}
 
 
 async def prepare(s):
