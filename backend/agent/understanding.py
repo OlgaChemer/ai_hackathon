@@ -285,7 +285,8 @@ async def _prepare(s):
             continue
         except LLMError:raise
         if s.request_inputs[-1]['seq']!=version or s.client_revision!=revision or s.profile!=base_profile:
-            raise UnderstandingError('Поступило новое сообщение во время разбора')
+            from .session import Superseded
+            raise Superseded()
         s.request_review={'seq':version,'base_profile':base_profile,**result}
         query=result.get('selection') or {}
         record('request_review',session=s.id,decision=result['decision'],intent=result['intent'],

@@ -352,6 +352,11 @@ class Session:
             from ..llm import LLMError
             try:
                 review = await understanding.prepare_from_http(self)
+            except Superseded:
+                # Новая команда уже в состоянии. Это отмена старой работы,
+                # а не ошибка клиента; failed_input не должен удалить новый ввод.
+                self.inbox.put_nowait(text)
+                return 'message'
             except (LLMError, TurnStopped) as exc:
                 await self.say(understanding.failed_input(self,exc), await_reply=True)
                 return "unresolved"

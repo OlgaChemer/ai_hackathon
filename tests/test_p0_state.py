@@ -126,7 +126,8 @@ class DurableStateTest(unittest.IsolatedAsyncioTestCase):
     async def test_internal_type_error_is_not_disguised_as_bad_model_arguments(self):
         s=self.agent();actions._load();entry=actions.REGISTRY['market_prices']
         from dataclasses import replace
-        with patch.dict(actions.REGISTRY,market_prices=replace(entry,run=AsyncMock(side_effect=TypeError('implementation defect')))):
+        async def broken(s):raise TypeError('implementation defect')
+        with patch.dict(actions.REGISTRY,market_prices=replace(entry,run=broken)):
             with self.assertRaisesRegex(TypeError,'implementation defect'):
                 await actions.execute(s,ToolCall('market_prices',{},'bad-code'))
 

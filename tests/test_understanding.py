@@ -430,7 +430,7 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
         s.profile['payment'] = 'cash'
         s.client_revision += 1
         release.set()
-        with self.assertRaises(U.UnderstandingError):
+        with self.assertRaises(session.Superseded):
             await task
         self.assertEqual(s.profile['city'],'Москва')
         self.assertEqual(s.profile['payment'],'cash')
@@ -503,7 +503,7 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
         event = s.push('message',role='user',text='Нет, Самара')
         s.accept_request(event['text'],event['seq'])
         release.set()
-        with self.assertRaises(U.UnderstandingError):
+        with self.assertRaises(session.Superseded):
             await task
         self.assertEqual(s.profile['city'],'Москва')
 
