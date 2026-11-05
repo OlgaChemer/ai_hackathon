@@ -133,6 +133,15 @@ def decode(patch,contract,inputs,aliases=None,*,provenance=None):
     for condition in patch['unsupported']:
         if isinstance(condition,dict) and condition.get('action')=='remove' and condition.get('key') in aliases:
             condition['text']=aliases[condition['key']]
+        elif isinstance(condition,dict) and condition.get('action')=='add':
+            quote,label=condition.get('source'),condition.get('text')
+            if (isinstance(quote,str) and quote.strip() and any(quote.casefold() in text for text in texts)
+                    and isinstance(label,str) and label.strip() and not any(label.casefold() in text for text in texts)
+                    and label not in aliases.values() and condition.get('key') not in aliases):
+                # Класс unsupported модель указала явно. Для показа берём
+                # исходную цитату, а не её пересказ: новых фактов это не добавляет.
+                # Старое условие нельзя переносить на новую команду-альтернативу.
+                condition['text']=quote[:200]
     validation.validate(patch,contract)
     frame={'fields':{},'criteria':{},'places':patch['places'],'unsupported':patch['unsupported']}
     known=input_frame.basic_fields(CHANGE_SCHEMA)

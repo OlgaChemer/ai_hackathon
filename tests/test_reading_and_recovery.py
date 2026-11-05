@@ -400,6 +400,20 @@ class ReadingAndRecovery(unittest.IsolatedAsyncioTestCase):
         result=U.frame_from_call(ToolCall('profile_change',{}),tools,inputs)
         self.assertEqual(result,{'intent':'refine','needs_extraction':True})
 
+    def test_unsupported_label_is_displayed_as_the_verified_original_quote(self):
+        from backend.agent import profile_patch
+        text='Хочу квартиру где внутри бассейн';inputs=[{'text':text}]
+        contract=profile_patch.schema(input_frame.schema(CHANGE_SCHEMA,inputs))
+        patch_data={'fields':[],'criteria':[],'places':[],'selection':[],
+                    'unsupported':[{'text':'бассейн внутри квартиры','source':text,'action':'add','key':'indoor_pool'}]}
+        decoded=profile_patch.decode(patch_data,contract,inputs)
+        self.assertEqual(decoded['unsupported'][0]['text'],text)
+        # Когда модель повторяет прежнее условие в ответ на новую команду,
+        # нормализация не должна придавать этому повтору новый источник.
+        known={'indoor_pool':'бассейн внутри квартиры'}
+        again=profile_patch.decode(patch_data,contract,inputs,known)
+        self.assertEqual(again['unsupported'][0]['text'],known['indoor_pool'])
+
     def test_removing_named_condition_also_removes_its_generic_filter(self):
         from backend.agent.actions.request import updated_profile
         profile=merge_profile({'city':'Казань','filters':[
