@@ -64,6 +64,7 @@ def commit_dialogue(db: Session, chat_id: str, expected_version: int, state: dic
         fields['last_seq'] = events[-1]['seq']
     for ev in events:
         if ev['type'] == 'done':fields['status'] = ev.get('status', 'completed')
+        if ev['type'] == 'purchase_reset':fields['status']='running'
     changed = db.execute(update(Chat).where(Chat.id == chat_id,
         func.coalesce(Chat.state_version, 0) == expected_version).values(**fields))
     if changed.rowcount != 1:raise StateConflict('Состояние диалога изменилось. Требуется загрузить актуальную версию.')

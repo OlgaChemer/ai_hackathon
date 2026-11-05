@@ -28,7 +28,7 @@ POLICIES={
     'ask_housing':Policy(('housing_needed',),('search','selection')),
     'mortgage_programs':Policy(('programs_needed','profile_ready','payment','family_or_cash'),information=True),
     'savings_plan':Policy(('profile_ready','saving_payment'),information=True),
-    'affordable_budget':Policy((),information=True),
+    'affordable_budget':Policy(('affordability_requested',),information=True),
     'search_listings':Policy(('search_ready',),('selection',)),
     'show_selection':Policy(('selection_source',)),
     'offer_search_alternatives':Policy(('search',)),
@@ -54,6 +54,7 @@ REASONS={
     'calls':'Сначала нужны результаты переговоров.', 'limit':'Сначала подтвердите лимит покупки.',
     'agreed':'Сначала покупатель подтверждает итоговую цену.', 'chosen':'Сначала покупатель выбирает квартиру после просмотра.',
     'finance_ready':'Сначала подготовьте финансовый расчёт.', 'deal_not_done':'План уже подтверждён.',
+    'affordability_requested':'Расчёт по личным доходам нужен по явной просьбе клиента. Для средней цены квартир используйте market_prices.',
 }
 
 
@@ -87,6 +88,7 @@ def decision(s,name):
         'search':s.search is not None,'shown':bool(s.shown),'call_consent':bool(s.call_targets),
         'fresh_selection':not s.selection_profile_stale,'calls':bool(s.calls),'limit':s.red_lines_ok,
         'agreed':bool(s.agreed),'chosen':bool(s.chosen),'finance_ready':finance_ready,'deal_not_done':s.status.get(8)!='done',
+        'affordability_requested':s.requested_action=='affordable_budget',
     }
     for requirement in policy.requires:
         if not tests.get(requirement,False):return False,REASONS.get(requirement,'Условие исполнения не выполнено.')

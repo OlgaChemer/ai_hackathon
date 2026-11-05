@@ -98,6 +98,9 @@ class BudgetDialogue(unittest.IsolatedAsyncioTestCase):
         inputs=[{'text':'Да'}];tools=understanding.semantic_tools(input_frame.sparse_schema(CHANGE_SCHEMA,inputs),inputs,[])
         with self.assertRaises(ValueError):
             understanding.frame_from_call(ToolCall('informational_question',{'action':'call_seller'}),tools,inputs)
+        from backend.agent.capabilities import decision
+        s=self.agent();self.assertFalse(decision(s,'affordable_budget')[0])
+        s.requested_action='affordable_budget';self.assertTrue(decision(s,'affordable_budget')[0])
 
     def test_qa_sees_center_both_markets_history_and_measured_prices(self):
         s=self.agent();s.market=self.prices(s)
@@ -133,12 +136,15 @@ class BudgetDialogue(unittest.IsolatedAsyncioTestCase):
                 s.chosen='old' if phase!='price' else None
                 s.status={6:'done',7:'done',8:'done',9:'done'} if phase=='completed' else {6:'done',7:'done'}
                 s.pending_decisions={'sign':{'kind':'sign','status':'waiting','decision_id':'stale','text':'Старый план','payload':{}}}
+                if phase=='completed':s.push('done',status='completed',demo=True)
                 s.push('message',role='agent',text='Прежняя квартира выбрана');seq=s.seq
                 apply_request(s,{'city':'Казань','rooms_options':[2],'budget_max':12_000_000,'prefer_center':False,'center_required':False})
                 self.assertIsNone(s.chosen);self.assertEqual(s.agreed,{});self.assertEqual(s.calls,{})
                 self.assertFalse(s.red_lines_ok);self.assertFalse(s.resolve('sign',True,{},'stale'))
                 self.assertFalse(decision(s,'prepare_deal')[0]);self.assertNotIn(8,s.status)
                 restored=session.restore_session(s.id,'',ScriptedLLM())
+                from backend.db import repo
+                self.assertEqual(db.required(repo.get_chat,s.id).status,'running')
                 self.assertIsNone(restored.chosen);self.assertEqual(restored.profile['city'],'Казань')
                 self.assertTrue(any(e['type']=='purchase_reset' and e['seq']>seq for e in s.history))
                 # Новое отдельное подтверждение и выбор: прежний done не блокирует новый сценарий.

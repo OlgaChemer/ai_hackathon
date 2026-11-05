@@ -208,7 +208,7 @@ class Session:
         self.stage='Запрос' if purchase else 'Финансы'
         if had_purchase or (financial and had_finance):
             self.push('purchase_reset',clear_steps=([2] if financial else [])+list(range(5 if purchase else 8,10)),
-                      kinds=list(kinds),text='Условия изменились: прежние решения по объекту и план нужно пересмотреть.' if purchase
+                      kinds=list(kinds),text='Условия изменились: прежние решения по объекту и план нужно пересмотреть.' if purchase and had_purchase
                       else 'Финансирование изменилось: прежний план покупки нужно пересчитать.')
 
     # ------------------------------------------------------------- лента событий

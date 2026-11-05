@@ -67,6 +67,7 @@ read_selection — чтение/отбор по УЖЕ найденным дан
 Если есть только новые условия без команды выдачи, выбери profile_change.
 informational_question — вопрос об устройстве, предложении, предыдущей ошибке: «что сломалось/что надо уточнить».
 Если ответ требует данных или расчёта, укажи action из информационных инструментов: средние/типичные цены, «не знаю бюджет, какой средний?» -> market_prices; расчёт бюджета по доходам -> affordable_budget; расчёт ипотеки -> mortgage_programs; накопления -> savings_plan.
+«Не знаю, какой средний?» спрашивает ЦЕНУ КВАРТИР: market_prices, даже если сейчас открыта форма финансов. affordable_budget считает, сколько МОЖЕТ ПОЗВОЛИТЬ СЕБЕ конкретный человек, не среднюю рыночную цену. Для него нужна просьба оценить личные доходы/расходы/накопления или явное согласие на такой расчёт. Не выбирай его из-за одного отсутствующего бюджета.
 Если в таком вопросе есть новые условия (город, комнаты, рынок и т.п.), выбери action и update_conditions=true: эти условия извлечёт отдельный шаг. Не теряй параметры составного вопроса.
 Короткое «да/покажи/давай» относится к последнему предложению в recent_dialogue. Если агент предложил показать цены/сделать расчёт — это просьба выполнить соответствующий action, а не отвлечённый FAQ. Не придумывай бюджет или согласие на звонок/сделку из такого ответа.
 Для чтения цен отдельное разрешение не нужно. Если спрашивают о смысле показателя и расчёт не требуется — action=null. Прежняя карточка бюджета не запрещает получить ориентиры.
@@ -172,8 +173,8 @@ def semantic_tools(contract,inputs,unsupported,has_results=True):
                      'description':'Дословная новая реплика, содержащая неподдерживаемое пожелание.'}},['quote'])),
         Tool('informational_question','Информация без изменения условий. Если нужны данные/расчёт, выбери существующий action; согласие на предложение такого расчёта тоже action. Объяснение без инструмента — null.',obj({
             'action':{'type':['string','null'],'enum':[*information_actions,None],
-                      'description':'market_prices — получить цены, affordable_budget — бюджет по доходам, mortgage_programs — ипотека, savings_plan — накопления. Не обещай действие вместо его выбора.'},
-            'update_conditions':{'type':'boolean','description':'true — вместе с вопросом названы/изменены условия. Отдельный шаг проверит их перед исполнением.'}})),
+                      'description':'market_prices — средние/типичные ЦЕНЫ КВАРТИР; affordable_budget — ЛИЧНАЯ платёжеспособность по просьбе рассчитать доходы/расходы; mortgage_programs — ипотека; savings_plan — накопления. Не повторяй ранее открытый инструмент вместо смысла нового вопроса.'},
+            'update_conditions':{'type':'boolean','description':'true — вместе с вопросом названы/изменены условия. Отдельный шаг проверит их перед исполнением.'}},['action'])),
         Tool('call_intent','Клиент явно просит звонить. Сам ничего не исполняет. Без явной просьбы запрещён; для вопросов продавцу используй profile_change.',obj({
             'listing_ids':{'type':'array','maxItems':10,'items':{'type':'string'},'description':'ID показанных объектов; пусто — по понравившимся'}},['listing_ids'])),
         Tool('pause_request','Клиент просит остановиться/пока не искать/пока не звонить. Можно сохранить явно добавленные вопросы и условия без действий.',obj({})),
@@ -324,7 +325,7 @@ async def _prepare(s):
         record('request_review',session=s.id,decision=result['decision'],intent=result['intent'],
                fields=len(result['changes']),changed_keys=list(result['changes']),
                operation=result.get('selection_operation'),scope=query.get('scope'),
-               ordering=query.get('sort'),count=query.get('limit'),repaired=bool(attempt))
+               ordering=query.get('sort'),count=query.get('limit'),requested_action=result.get('requested_action'),repaired=bool(attempt))
         return s.request_review
     raise UnderstandingError('Не удалось получить корректный структурированный ввод: '+str(error))
 
