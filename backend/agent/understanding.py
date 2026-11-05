@@ -66,6 +66,11 @@ read_selection — чтение/отбор по УЖЕ найденным дан
 «В центре Москвы» — параметры; «школы рядом» — параметры; школа/центр/новостройка НЕ города.
 Если есть только новые условия без команды выдачи, выбери profile_change.
 informational_question — вопрос об устройстве, предложении, предыдущей ошибке: «что сломалось/что надо уточнить».
+Если ответ требует данных или расчёта, укажи action из информационных инструментов: средние/типичные цены, «не знаю бюджет, какой средний?» -> market_prices; расчёт бюджета по доходам -> affordable_budget; расчёт ипотеки -> mortgage_programs; накопления -> savings_plan.
+Если в таком вопросе есть новые условия (город, комнаты, рынок и т.п.), выбери action и update_conditions=true: эти условия извлечёт отдельный шаг. Не теряй параметры составного вопроса.
+Короткое «да/покажи/давай» относится к последнему предложению в recent_dialogue. Если агент предложил показать цены/сделать расчёт — это просьба выполнить соответствующий action, а не отвлечённый FAQ. Не придумывай бюджет или согласие на звонок/сделку из такого ответа.
+Для чтения цен отдельное разрешение не нужно. Если спрашивают о смысле показателя и расчёт не требуется — action=null. Прежняя карточка бюджета не запрещает получить ориентиры.
+Статистика «по этим/найденным квартирам» выполняется read_selection analyze/compare, а не market_prices: область текущей подборки сохраняется.
 call_intent — только ЯВНО позвонить; listing_ids из показанных ID; [] — по понравившимся.
 Вопросы продавцу/условия не разрешают звонок. pause_request — явная пауза/пока не звони, даже с новыми вопросами.
 Новое неизвестное свойство без других изменений («внутри бассейн/сауна») — unsupported_request. Составной ввод с базовыми параметрами — profile_change с явным unsupported. Не подменяй удобство внутри квартиры фитнесом рядом.
@@ -123,6 +128,11 @@ def dialogue_context(s):
     rows=[{'role':e['role'],'text':e['text']} for e in s.history
           if e.get('type')=='message' and e.get('role') in ('user','agent')]
     if sum(row['role']=='user' for row in rows)<2:
+        if s.durable:
+            from .. import db
+            from ..db import repo
+            saved=db.required(repo.recent_messages,s.id,12)
+            if saved:return saved
         # После перезапуска история событий ещё не загружена в Session,
         # но сохранённый разговор уже есть. Он нужен для коротких исправлений.
         memory=[{'role':'agent' if m['role']=='assistant' else 'user','text':m['content']}
@@ -132,6 +142,8 @@ def dialogue_context(s):
 
 
 def semantic_tools(contract,inputs,unsupported,has_results=True):
+    from .capabilities import POLICIES
+    information_actions=[name for name,policy in POLICIES.items() if policy.information]
     from .selection_request import SCHEMA
     def obj(props,required=()):return {'type':'object','additionalProperties':False,'properties':props,'required':list(required)}
     quotes=list(dict.fromkeys([*input_frame.source_words(inputs),*(row['text'] for row in inputs),*unsupported]))
@@ -158,7 +170,10 @@ def semantic_tools(contract,inputs,unsupported,has_results=True):
         Tool('unsupported_request','Новое пожелание вне проверяемых свойств: удобство внутри квартиры не заменяется внешней инфраструктурой. Это явный запрос клиента, а не ошибка формата и не неизвестные данные объявления. Только распознать ограничение возможности, ничего не исполнять.',obj({
             'quote':{'type':'string','minLength':1,'maxLength':1000,
                      'description':'Дословная новая реплика, содержащая неподдерживаемое пожелание.'}},['quote'])),
-        Tool('informational_question','Клиент задаёт информационный вопрос и не меняет условия/не выбирает действие. Включая вопрос о предыдущем сбое.',obj({})),
+        Tool('informational_question','Информация без изменения условий. Если нужны данные/расчёт, выбери существующий action; согласие на предложение такого расчёта тоже action. Объяснение без инструмента — null.',obj({
+            'action':{'type':['string','null'],'enum':[*information_actions,None],
+                      'description':'market_prices — получить цены, affordable_budget — бюджет по доходам, mortgage_programs — ипотека, savings_plan — накопления. Не обещай действие вместо его выбора.'},
+            'update_conditions':{'type':'boolean','description':'true — вместе с вопросом названы/изменены условия. Отдельный шаг проверит их перед исполнением.'}})),
         Tool('call_intent','Клиент явно просит звонить. Сам ничего не исполняет. Без явной просьбы запрещён; для вопросов продавцу используй profile_change.',obj({
             'listing_ids':{'type':'array','maxItems':10,'items':{'type':'string'},'description':'ID показанных объектов; пусто — по понравившимся'}},['listing_ids'])),
         Tool('pause_request','Клиент просит остановиться/пока не искать/пока не звонить. Можно сохранить явно добавленные вопросы и условия без действий.',obj({})),
@@ -194,7 +209,9 @@ def frame_from_call(call,tools,inputs):
             raise ValueError('Неподдержанное пожелание требует дословной цитаты нового ввода')
         return {'intent':'refine','unsupported':[{'text':a['quote'][:200],'source':a['quote'],'action':'add'}]}
     if call.name=='pause_request':return {'intent':'hold','needs_extraction':True}
-    if call.name=='informational_question':return {'intent':'question'}
+    if call.name=='informational_question':
+        return {'intent':'question',**({'requested_action':a['action']} if a.get('action') else {}),
+                **({'needs_extraction':True} if a.get('update_conditions') else {})}
     if call.name=='call_intent':return {'intent':'call','call_ids':a['listing_ids']}
     return {'intent':'continue' if call.name=='continue_input' else 'other'}
 
@@ -279,6 +296,12 @@ async def _prepare(s):
                         result['intent']='refine'
                     result={**changes,**result}
             else:result=parse_json_loose(response.text)
+            information_action=result.pop('requested_action',None)
+            if information_action:
+                from .capabilities import POLICIES
+                if information_action not in POLICIES or not POLICIES[information_action].information:
+                    raise ValueError('Информационный запрос не разрешает это действие')
+            requested_action=information_action or requested_action
             result=input_frame.complete_frame(result,CHANGE_SCHEMA)
             result = input_frame.decode(result, payload['profile'], payload, CHANGE_SCHEMA)
             if requested_action:result['requested_action']=requested_action
@@ -373,7 +396,12 @@ async def ensure(s):
                              chips=['Самые выгодные','Самые просторные','Оставить подборку'])
         return {'needs_clarification':True,'question':explanation,
                 'client_said':answer['data'].get('text','')}
-    s.requested_action=review.get('requested_action') if review['intent']!='hold' else None
+    from .capabilities import POLICIES
+    previous=s.requested_action
+    requested=review.get('requested_action')
+    if not requested and previous in POLICIES and POLICIES[previous].information and review['intent'] not in ('hold','call','selection'):
+        requested=previous
+    s.requested_action=requested if review['intent']!='hold' else None
     if s.requested_action:s.profile['_requested_action']=s.requested_action
     else:s.profile.pop('_requested_action',None)
     if review['intent'] not in ('seller_questions','question'):

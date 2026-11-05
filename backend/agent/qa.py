@@ -32,9 +32,13 @@ def build_context(s) -> dict:
     ctx['непроверяемые пожелания'] = p.get('_unsupported_conditions') or []
     ctx['последняя ошибка обработки'] = s.last_issue
     if p.get("city"):
-        ctx["запрос"] = p.get("summary") or {k: p.get(k) for k in ("city", "rooms", "budget_max")}
+        ctx["запрос"] = {k:v for k,v in p.items() if not k.startswith('_') and k not in ('summary','market') and v not in (None,[],"")}
         ctx["способ оплаты"] = {"cash": "наличные", "mortgage_ready": "ипотека, взнос есть",
                                 "mortgage_saving": "ипотека, взнос копит"}.get(p.get("payment"), "не выяснен")
+    from .understanding import dialogue_context
+    ctx['последние реплики']=dialogue_context(s)
+    ctx['ожидаемые решения']=[{'kind':t['kind'],'text':t['text']} for t in s.pending_decisions.values() if t['status']=='waiting']
+    if s.market:ctx['рыночные ориентиры']=s.market
     if s.mortgage:
         chosen = next(c for c in s.mortgage["programs"] if c["key"] == s.mortgage["chosen"])
         ctx["ипотека"] = {"считаем по": chosen["title"], "ставка": f"{chosen['rate'] * 100:.1f}%".replace(".", ","),

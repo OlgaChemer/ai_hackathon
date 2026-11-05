@@ -15,7 +15,8 @@ function marketBlock(p) {
   const x = (v) => Math.max(0, Math.min(100, ((v - lo) / (hi - lo)) * 100));
   return html`
     <div class="market">
-      <h3 class="sub">Цены рынка по запросу (${m.count} свежих объявлений Циана)</h3>
+      <h3 class="sub">Ориентиры по выборке: ${m.count} объявлений Циана</h3>
+      <p>${m.scope?.center_radius_km ? `До ${m.scope.center_radius_km} км по прямой от опорной точки центра. ` : ''}${m.scope?.markets?.length === 2 ? 'Новостройки и вторичка. ' : ''}${m.reasons?.length ? 'Часть проверок или источников неполна; возможны данные из кэша. ' : ''}Это полученная выборка, а не весь рынок.</p>
       <div class="market-scale" aria-label="Обычно от ${mln(m.p25)} до ${mln(m.p75)}, середина ${mln(m.median)}">
         <div class="track"></div>
         <div class="band" style="left:${x(m.p25)}%;width:${x(m.p75) - x(m.p25)}%"></div>

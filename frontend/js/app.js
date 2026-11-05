@@ -162,6 +162,20 @@ async function handle(ev, myGen) {
       delete api.decisions[ev.kind];
       resolved(ev);
       break;
+    case 'purchase_reset':
+      for (const step of ev.clear_steps || []) delete state.results[step];
+      for (const kind of ev.kinds || []) {
+        if (api.decisions[kind]) resolved({kind,decision_id:api.decisions[kind],approved:null,label:'Условия изменились'});
+        delete api.decisions[kind];
+      }
+      if ((ev.kinds || []).includes('call') && state.call) {
+        state.call.ended = true;
+        setTyping(state.call,null);
+        if (!quiet && state.phone) { state.phone.hangup(); state.phone = null; }
+      }
+      addMsg('note',ev.text);
+      if (!quiet) renderStage();
+      break;
     case "product_opened":
       state.opened[ev.product] = ev.amount;
       if (!quiet && state.results[2]) renderChatResult(2);

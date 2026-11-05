@@ -46,7 +46,15 @@ def patch(live_llm=False):
                 x.setdefault('nearby_evidence',{})[kind]={'source':'fixture','distance_kind':'straight_line'}
         return True
 
+    async def market_search(city,rooms,budget,page=1,okrug=None,new=False):
+        lat,lng=CITY_CENTERS.get(city,(55.7986,49.1053))
+        rows=[listing(id=f'market-fixture-{city}-{rooms}-{new}-{page}-{i}',city=city,rooms=rooms,is_new=new,
+                      price=20_000_000+int(new)*10_000_000+i*200_000,area=60+i,
+                      lat=lat+.001*(i%4),lng=lng+.001*(i%4),photo=None) for i in range(20)]
+        return rows,{'status':'live','source':'Изолированный тестовый пул','fetched_at':'2026-11-05T00:00:00+00:00'}
+
     sources.collect=collect
+    sources.cian.search=market_search
     sources.more=AsyncMock(return_value=[])
     sources.stored=lambda *a,**k:[]
     sources.comparables=lambda *a,**k:[]

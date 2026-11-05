@@ -65,11 +65,12 @@ async def _collect_one(profile: dict, on_batch=None) -> tuple[list[dict], list[d
     return items, report
 
 
-async def market(profile: dict) -> dict | None:
+async def market(profile: dict, on_progress=None) -> dict | None:
     """Цены рынка по запросу (без бюджета) — чтобы клиенту было от чего оттолкнуться."""
     if not cian.supported(profile.get("city")) or profile.get("rooms") is None:
         return None
-    return await cian.market(profile["city"], profile["rooms"], profile.get("okrug"), profile.get("housing") == "new")
+    from .market_estimate import estimate
+    return await estimate(profile,on_progress)
 
 
 def _comparables_one(profile: dict) -> list[dict]:

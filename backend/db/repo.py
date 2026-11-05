@@ -112,6 +112,13 @@ def chat_events(db: Session, chat_id: str, after: int = 0) -> list[dict]:
     return [r.payload for r in rows]
 
 
+def recent_messages(db: Session, chat_id: str, limit: int = 12) -> list[dict]:
+    rows=list(db.scalars(select(ChatEvent).where(ChatEvent.chat_id==chat_id,ChatEvent.type=='message')
+                        .order_by(ChatEvent.seq.desc()).limit(limit)))
+    return [{'role':row.payload['role'],'text':row.payload['text']} for row in reversed(rows)
+            if row.payload.get('role') in ('user','agent') and row.payload.get('text')]
+
+
 def last_nonempty_selection(db: Session, chat_id: str) -> dict | None:
     rows=db.scalars(select(ChatEvent).where(ChatEvent.chat_id==chat_id,ChatEvent.type=='result')
                     .order_by(ChatEvent.seq.desc()).limit(100))

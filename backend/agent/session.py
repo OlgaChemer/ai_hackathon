@@ -185,18 +185,31 @@ class Session:
         """Согласия относятся к прежним условиям и не могут разрешать новую сделку."""
         if not keep_limit:
             self.red_lines_ok = False
-        if self.programs_key != F.programs_key(self.profile):
+        financial=self.programs_key != F.programs_key(self.profile)
+        self.search = None
+        self.invalidate_decisions(financial=financial)
+
+    def invalidate_decisions(self, *, purchase=True, financial=False):
+        """Смена условий отзывает прежний выбор/план, но сохраняет историю процесса."""
+        had_purchase=bool(self.calls or self.agreed or self.chosen or self.current or self.journal or self.status.get(8)=='done')
+        had_finance=bool(self.programs_result or self.mortgage or self.finance or self.status.get(2))
+        if financial:
             self.programs_key = self.programs_result = None
             self.profile.pop('_programs_cache',None)
             self.mortgage = self.finance = None
-        self.search = None
-        self.calls.clear()
-        self.agreed.clear()
-        self.chosen = self.current = None
-        # Последняя видимая подборка остаётся до успешного нового результата.
-        # Допуски действий проверяют новый профиль и search, а не факт показа.
-        self.call_targets = []
-        self.journal.clear()
+            self.status.pop(2,None)
+        if purchase:
+            self.calls.clear();self.agreed.clear();self.chosen=self.current=None
+            self.call_targets=[];self.journal.clear()
+        first=3 if purchase else 8
+        self.status={k:v for k,v in self.status.items() if k<first}
+        kinds=('call','price','object','sign') if purchase else ('sign',)
+        self.pending_decisions={k:t for k,t in self.pending_decisions.items() if k not in kinds}
+        self.stage='Запрос' if purchase else 'Финансы'
+        if had_purchase or (financial and had_finance):
+            self.push('purchase_reset',clear_steps=([2] if financial else [])+list(range(5 if purchase else 8,10)),
+                      kinds=list(kinds),text='Условия изменились: прежние решения по объекту и план нужно пересмотреть.' if purchase
+                      else 'Финансирование изменилось: прежний план покупки нужно пересчитать.')
 
     # ------------------------------------------------------------- лента событий
     def push(self, type_: str, **payload: Any) -> dict:
@@ -367,7 +380,7 @@ class Session:
             except (LLMError, TurnStopped) as exc:
                 await self.say(understanding.failed_input(self,exc), await_reply=True)
                 return "unresolved"
-            if review and review['intent'] == 'question' and review['decision'] != 'clarify':
+            if review and review['intent'] == 'question' and review['decision'] != 'clarify' and not review.get('requested_action'):
                 self.request_review_seq = review['seq']
                 from .commands import start_questions
                 if len(self.qa_pending)>=settings.question_queue_capacity:

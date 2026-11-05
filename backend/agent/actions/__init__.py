@@ -108,16 +108,14 @@ async def _execute(s, call: ToolCall) -> dict:
         await worker.step(a.step)
     try:
         result=await a.run(worker, **args)
-        worker.flush(result=result)
-        if s.requested_action==call.name:
-            s.requested_action=None
-            s.profile.pop('_requested_action',None)
-            s.remember()
-        return result
     except ActionError as exc:
         result={"error_kind":exc.kind,"error":str(exc)}
-        worker.flush(result=result)
-        return result
+    worker.flush(result=result)
+    if s.requested_action==call.name:
+        s.requested_action=None
+        s.profile.pop('_requested_action',None)
+        s.remember()
+    return result
 
 
 def _load() -> None:

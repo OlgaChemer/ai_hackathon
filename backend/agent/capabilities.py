@@ -15,19 +15,20 @@ class Policy:
     requires: tuple[str,...]
     invalidates: tuple[str,...]=()
     units: tuple[tuple[str,str],...]=()
+    information: bool=False
 
 
 POLICIES={
     'update_request':Policy(('new_input',),('search','selection','agreements','finance')),
     'ask_client':Policy(('can_clarify',)),
-    'market_prices':Policy(('city_rooms',)),
+    'market_prices':Policy(('city_rooms',),information=True),
     'confirm_red_lines':Policy(('profile_ready','limit_needed')),
     'ask_payment':Policy(('payment_needed',),('finance',)),
     'ask_family':Policy(('family_needed',),('finance',)),
     'ask_housing':Policy(('housing_needed',),('search','selection')),
-    'mortgage_programs':Policy(('programs_needed','profile_ready','payment','family_or_cash')),
-    'savings_plan':Policy(('profile_ready','saving_payment')),
-    'affordable_budget':Policy(()),
+    'mortgage_programs':Policy(('programs_needed','profile_ready','payment','family_or_cash'),information=True),
+    'savings_plan':Policy(('profile_ready','saving_payment'),information=True),
+    'affordable_budget':Policy((),information=True),
     'search_listings':Policy(('search_ready',),('selection',)),
     'show_selection':Policy(('selection_source',)),
     'offer_search_alternatives':Policy(('search',)),
@@ -63,7 +64,7 @@ def programs_current(s):
 def decision(s,name):
     policy=POLICIES.get(name)
     if policy is None:return False,'Для этого инструмента не определена политика исполнения.'
-    if s.request_intent=='hold' and name!='update_request':return False,'Клиент приостановил действия.'
+    if s.request_intent=='hold' and name!='update_request' and not policy.information:return False,'Клиент приостановил действия.'
     if (s.request_intent=='call' and s.call_targets and not s.calls and not s.selection_profile_stale
             and name not in ('update_request','call_seller')):
         return False,'Сначала выполните явную просьбу о звонке по выбранному объекту.'
@@ -101,7 +102,8 @@ def catalog(s=None):
         allowed,reason=decision(s,a.name) if s is not None else (policy is not None,None)
         rows.append({'name':a.name,'description':a.description,'arguments':a.parameters,
                      'allowed':allowed,'reason':reason,'requires':list(policy.requires) if policy else [],
-                     'invalidates':list(policy.invalidates) if policy else [],'units':dict(policy.units) if policy else {}})
+                     'invalidates':list(policy.invalidates) if policy else [],'units':dict(policy.units) if policy else {},
+                     'information':bool(policy and policy.information)})
     return rows
 
 

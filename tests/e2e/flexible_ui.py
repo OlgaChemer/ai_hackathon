@@ -109,6 +109,20 @@ async def scenario(browser,base,width):
     await page.wait_for_function("document.querySelectorAll('.offer').length===1 && !document.querySelector('[data-selection=more]').disabled")
     assert await page.evaluate('window.audioPending'), 'Проверка не застала ожидающую озвучку'
     await page.evaluate('window.finishTestSpeech()')
+    # Новые условия отзывают старый план и его кнопку, сохраняя историческую переписку.
+    await page.evaluate("""async () => {
+      const {state}=await import('/js/state.js');
+      const {api}=await import('/js/api.js');
+      const {confirmCard}=await import('/js/cards.js');
+      state.results[8]={oldPlan:true};state.results[9]={oldSummary:true};
+      confirmCard({kind:'sign',title:'Прежний план',text:'Старое решение',decision_id:'old-plan'});
+      api.decisions.sign='old-plan';
+      state.es.onmessage(new MessageEvent('message',{data:JSON.stringify({type:'purchase_reset',clear_steps:[8,9],
+        kinds:['sign'],text:'Условия изменились: прежний план нужно пересмотреть.'})}));
+    }""")
+    await page.wait_for_function("import('/js/state.js').then(m=>!m.state.results[8] && !m.state.results[9])")
+    assert await page.locator('.confirm').filter(has_text='Прежний план').evaluate('(node)=>node.classList.contains("is-done")')
+    assert await page.locator('.offer').count()==1
     assert not errors,errors
     await page.screenshot(path=f'/tmp/flexible-ui-{width}.png',full_page=False)
     await context.close()

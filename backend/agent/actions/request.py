@@ -112,6 +112,8 @@ def apply_request(s, changes, *, condition_sources=None):
     if not missing:
         p["summary"] = profile_summary(p)
     s.profile = p
+    from ...sources.market_estimate import current
+    if s.market and not current(s.market,p):s.market=None
     changed_keys={k for k in old_profile.keys() | p.keys()
                   if not k.startswith('_') and k not in ('summary','market') and p.get(k)!=old_profile.get(k)}
     if p!=old_profile:s.profile_revision+=1
@@ -135,11 +137,10 @@ def apply_request(s, changes, *, condition_sources=None):
         s.search["shown_ids"].clear()
         # Видимые карточки — последний успешный снимок, не рабочий пул.
         # Меняем их только после успешного вычисления следующей выдачи.
-        s.calls.clear()
-        s.agreed.clear()
-        s.chosen = s.current = None
-        s.journal.clear()
+        s.invalidate_decisions()
         notes.append("Пожелания учтены: при следующем показе подборки (show_selection) отфильтрую и пересортирую.")
+    elif changed_keys & {'payment','children','youngest_age','matcap'}:
+        s.invalidate_decisions(purchase=False,financial=True)
     if changed_keys-{'seller_questions'}:
         s.selection_profile_stale=True
         s.profile['_selection_stale']=True
@@ -155,14 +156,37 @@ def apply_request(s, changes, *, condition_sources=None):
 async def market_prices(s) -> dict:
     if not (s.profile.get("city") and s.profile.get("rooms") is not None):
         raise ActionError("Сначала нужны город и число комнат (update_request).")
-    await s.say(f"Смотрю цены на Циане ({s.profile['city']}), чтобы подсказать бюджет…")
-    s.market = await sources.market(s.profile)
-    if not s.market:
-        raise ActionError("Циан сейчас не отдал цены — спроси бюджет без подсказки.")
+    from ...sources.market_estimate import current
+    if not current(s.market,s.profile):
+        await s.say(f"Проверяю цены на Циане ({s.profile['city']}) по вашим условиям, чтобы помочь с бюджетом…")
+        try:
+            s.market = await sources.market(s.profile,on_progress=lambda count:s.signal('search_progress',on=True,
+                text=f'Проверяю ценовые ориентиры: получено {count} объявлений'))
+        finally:s.signal('search_progress',on=False)
+    if not s.market or s.market.get('error_kind'):
+        details=s.market or {};count=details.get('count',0)
+        message=(f"Для надёжного ценового ориентира нашлось только {count} объявлений с подтверждёнными условиями; нужно хотя бы 6. "
+                 if details.get('received') else "Циан сейчас не вернул объявления для ценового ориентира. ")
+        message+='Ваши условия сохранены. Можно попробовать позже, обсудить изменение условий или рассчитать бюджет по доходам.'
+        s.market=None
+        s.last_issue={'kind':details.get('error_kind','market_source_unavailable'),'message':message}
+        await s.say(message,await_reply=True)
+        return {'error_kind':s.last_issue['kind'],'error':message,'coverage':details}
     emit_profile(s)
     m = s.market
+    centre=' До 5 км по прямой от опорной точки центра.' if (m.get('scope') or {}).get('center_radius_km') else ''
+    if any(r.get('city')=='Москва' and r.get('query_okrug')=='ЦАО' for r in m.get('reports') or []):
+        centre+=' Для этой выборки просмотрены объявления ЦАО.'
+    markets='; '.join(('новостройки' if row['new'] else 'вторичка')+f": {row['count']}" for row in m.get('markets') or [])
+    if not markets:markets='рынок по запросу'
+    await s.say(f"По полученной выборке: медиана {fmt(m['median'])}, средняя цена {fmt(m.get('mean',m['median']))}; "
+                f"средняя половина предложений — {fmt(m['p25'])}–{fmt(m['p75'])}. "
+                f"Проверено {m['count']} объявлений, {markets}.{centre} "
+                +('Часть данных из кэша или охват неполный. ' if m.get('reasons') else '')
+                +"Это ориентир по выборке, а не цена всего рынка; лимит покупки выбираете вы.")
     return {"typical_from": m["p25"], "median": m["median"], "typical_to": m["p75"], "min": m["min"],
-            "per_m2": round(m["ppm2"], -3), "listings": m["count"]}
+            "mean":m.get('mean'),"per_m2": round(m["ppm2"], -3) if m.get('ppm2') is not None else None, "listings": m["count"],
+            'scope':m.get('scope'),'coverage':{'reports':m.get('reports'),'reasons':m.get('reasons')}}
 
 
 @action("ask_client", 1,

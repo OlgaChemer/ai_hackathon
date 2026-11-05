@@ -44,6 +44,8 @@ def state_brief(s) -> str:
     else:
         lines.append("Запрос ещё не записан.")
     lines.append("Рамки клиентом " + ("подтверждены." if s.red_lines_ok else "НЕ подтверждены."))
+    if s.market:
+        lines.append('Ценовые ориентиры уже показаны: '+json.dumps(s.market,ensure_ascii=False))
     if s.mortgage:
         chosen = next(c for c in s.mortgage["programs"] if c["key"] == s.mortgage["chosen"])
         lines.append(f"Ипотека посчитана: {chosen['title']}, {chosen['rate'] * 100:.1f}%, платёж {fmt(chosen['monthly'])}.")
@@ -62,6 +64,9 @@ def state_brief(s) -> str:
                      + (", цену подтвердил клиент" if lid in s.agreed else "") + (", квартира выбрана" if s.chosen == lid else ""))
     if s.request_intent:
         lines.append("Проверенное намерение клиента: " + s.request_intent + ".")
+    if s.requested_action:
+        from .capabilities import decision
+        lines.append('Запрошено действие: '+s.requested_action+'. '+(decision(s,s.requested_action)[1] or 'Выполнить сейчас.'))
     if s.call_targets:
         lines.append('Клиент просил звонить только по ID: ' + ', '.join(s.call_targets))
     if s.selection_query:
@@ -136,7 +141,8 @@ async def run(s) -> None:
                                        {"role":"user","content":checked['client_said']}])
                     s.remember()
                     continue
-            if s.requested_action and not available(s,s.requested_action):
+            from .capabilities import POLICIES
+            if s.requested_action and not available(s,s.requested_action) and not (POLICIES.get(s.requested_action) and POLICIES[s.requested_action].information):
                 s.requested_action=None;s.profile.pop('_requested_action',None);s.remember()
             intake = next_search_action(s)
             if not isinstance(forced,ToolCall) and (intake in ("confirm_red_lines", "ask_payment") or (intake and intake==s.requested_action)):
