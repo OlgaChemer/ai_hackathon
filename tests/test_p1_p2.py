@@ -185,7 +185,7 @@ class PhoneScope(unittest.TestCase):
         with patch.object(db,'configure',return_value=db._engine),patch.object(main,'get_llm',return_value=ScriptedLLM()),patch.object(phone,'settings',cfg),patch.object(phone_access,'settings',cfg),\
              patch.object(phone,'credentials',AsyncMock(return_value={'username':'test','password':'opaque','realm':'test','ws':'wss://test'})),\
              patch.object(phone,'synthesize',AsyncMock(return_value=b'wav')) as synth,\
-             TestClient(main.app) as owner,TestClient(main.app) as stranger:
+             TestClient(main.app,base_url='https://testserver') as owner,TestClient(main.app,base_url='https://testserver') as stranger:
             sid=owner.post('/api/session',json={'query':'Ищу квартиру'}).json()['id'];s=session.SESSIONS[sid]
             s.profile=merge_profile({'city':'Казань','rooms':2,'budget_max':9_000_000,'payment':'cash'})
             s.red_lines_ok=True;s.call_targets=['cian-1']
