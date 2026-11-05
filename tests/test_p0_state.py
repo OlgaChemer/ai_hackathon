@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, patch
 from backend import db, sources
 from backend.db import repo
 from backend.agent import actions, persistence, session
-from backend.agent.actions.request import updated_profile
+from backend.agent.actions.request import updated_profile, apply_request
 from backend.agent.profile import merge_profile
 from backend.llm import ToolCall
 from tests.fakes import ScriptedLLM
@@ -215,6 +215,15 @@ class DurableStateTest(unittest.IsolatedAsyncioTestCase):
     def test_clearing_all_nearby_requirements_also_clears_generic_aliases(self):
         p=merge_profile({'poi':['school'],'filters':[{'field':'nearby:clinic','op':'lte','values':['500'],'priority':'required'}]})
         self.assertEqual(conditions.compile_profile(updated_profile(p,{'poi':[]})),[])
+
+    def test_removing_named_condition_rebuilds_pool_of_previously_excluded_listings(self):
+        s,x=self.with_listing()
+        apply_request(s,{'area_min':1000})
+        self.assertEqual(s.search['pool'],[])
+        apply_request(s,{'clear_criteria':['area_min']})
+        self.assertEqual([r['id'] for r in s.search['pool']],[x['id']])
+        self.assertIsNone(s.profile['area_min'])
+        self.assertTrue(s.selection_profile_stale)
 
     def test_snapshot_restores_the_business_process_not_just_the_screen(self):
         s=self.agent();x=listing()
