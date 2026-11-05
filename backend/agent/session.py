@@ -426,7 +426,7 @@ SESSIONS: dict[str, Session] = {}
 
 def cache_session(s):
     if s.id not in SESSIONS and len(SESSIONS)>=settings.max_cached_dialogues:
-        idle=[old for old in SESSIONS.values() if not running(old)
+        idle=[old for old in SESSIONS.values() if not running(old) and not old.subscribers
               and (old.command_task is None or old.command_task.done()) and (old.qa_task is None or old.qa_task.done())]
         if not idle:raise db.CommandCapacityError('Обработчики заняты. История сохранена; повторите позже.')
         SESSIONS.pop(min(idle,key=lambda old:old.idle_since).id,None)

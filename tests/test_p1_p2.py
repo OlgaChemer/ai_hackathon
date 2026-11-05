@@ -165,6 +165,13 @@ class P1P2(unittest.IsolatedAsyncioTestCase):
             restored=session.restore_session(old.id,'',old.llm)
             self.assertEqual(restored.profile,old.profile)
             self.assertEqual(len(session.SESSIONS),3)
+            restored.idle_since=0
+            restored.subscribers.add(events.EventBuffer(8))
+            self.agent()
+            self.assertIs(session.SESSIONS[restored.id],restored)
+            for agent in session.SESSIONS.values():agent.subscribers.add(events.EventBuffer(8))
+            with self.assertRaises(db.CommandCapacityError):self.agent()
+            self.assertEqual(len(session.SESSIONS),3)
 
     def test_metrics_are_bounded_and_do_not_use_session_or_client_text_labels(self):
         with patch.object(telemetry,'_counts',Counter()),patch.object(telemetry,'_durations',{}):
