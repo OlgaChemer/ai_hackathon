@@ -100,6 +100,11 @@ def evaluate(condition,x):
         note=actual
         if field=='center_km':source='map'
     if field in (x.get('listed') or {}):source='seller_call'
+    provenance=(x.get('fact_sources') or {}).get(field) or x.get('provenance') or {}
+    if checked is None:checked=provenance.get('observed_at') or x.get('stored_at')
+    if source in ('cian','seller_call'):
+        source=provenance.get('source') or source
+        checked=provenance.get('observed_at') or x.get('stored_at') or checked
     return {'key':condition['key'],'condition_id':field,'label':condition['label'],'status':status,
             'required':condition['priority']=='required','source':source,
             'evidence':str(note) if note is not None else None,'checked_at':checked}

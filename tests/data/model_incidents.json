@@ -1,0 +1,5 @@
+[
+  {"id":"indoor_pool_as_distance","input":"Хочу квартиру где внутри бассейн","stage":"profile_extract","frame":{"fields":[{"key":"filters","value":"[{\"field\":\"nearby:fitness\",\"op\":\"gt\",\"values\":[\"0\"],\"priority\":\"required\"}]","source":"Хочу квартиру где внутри бассейн"}],"criteria":[],"places":[],"unsupported":[],"selection":[]},"expected":"format_error_without_profile_change"},
+  {"id":"unfounded_card_count","input":"4 а не 3","stage":"request_review","call":{"name":"read_selection","arguments":{"operation":"rank","scope":"all","limit":3,"order_by":"area","direction":"desc","keep_order":true,"update_conditions":false,"count_source":"4","aggregates":null,"group_by":null}},"expected":"format_error_without_profile_change"},
+  {"id":"old_quote_as_new_wish","input":"Покажи самые просторные","stage":"request_review","call":{"name":"unsupported_request","arguments":{"quote":"Хочу квартиру где внутри бассейн"}},"expected":"format_error_without_profile_change"}
+]

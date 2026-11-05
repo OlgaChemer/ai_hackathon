@@ -58,6 +58,7 @@ CONFIRMATIONS = {
     "clarify": {}, "price": {}, "object": {}, "sign": {},
     "red_lines": {"budget_max": number(100_000)},
     "call": {"mode": choice("auto", "human", "phone"),
+             'phone_grant_id':{'type':'string','maxLength':40},
              "questions":{"type":"array","maxItems":15,"items":{"type":"string","maxLength":300}}},
     "payment": {"payment": choice("cash", "mortgage_ready", "mortgage_saving")},
     "housing": {"housing": choice("secondary", "new", "both")},

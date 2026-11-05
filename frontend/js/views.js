@@ -286,6 +286,13 @@ export function selection(d, marks) {
       </div>
     </div>
     ${html.raw(unverified ? html`<p class="hint" data-verification-summary>Обязательные условия подтверждены у ${confirmed}. Требуют проверки: ${unverified}. Непроверенные варианты помечены на карточках и не считаются подтверждёнными совпадениями.</p>` : "")}
+    ${html.raw(d.coverage ? html`<details class="ranking-explanation" data-search-coverage><summary>Охват и проверка данных</summary>
+      <p>${d.coverage.summary}</p>
+      <p>Проверки условий: подтверждено ${d.coverage.checks?.confirmed || 0}, не выполнено ${d.coverage.checks?.refuted || 0}, нет данных ${d.coverage.checks?.unknown || 0}.</p>
+      <p>${d.coverage.reasons?.some(r => ['source_unavailable','page_unavailable'].includes(r)) ? 'Часть страниц источника недоступна. Это не означает, что подходящих квартир на рынке нет.' : 'Результат относится к полученным объявлениям, не ко всему рынку.'}
+      ${d.coverage.reasons?.some(r => r.startsWith('map_')) ? 'Часть инфраструктуры не успели проверить.' : ''}</p>
+      <p>Свежесть известна у ${d.coverage.freshness?.known || 0} объявлений; неизвестна у ${d.coverage.freshness?.unknown || 0}.</p>
+    </details>` : '')}
     ${html.raw(d.learned?.length ? html`<div class="learned"><span>Учёл:</span>${html.raw(d.learned.map((l) => html`<span class="chip">${l}</span>`).join(""))}</div>` : "")}
     ${html.raw(d.cards.some((c) => c.lat && c.lng) ? mapBlock(d.cards) : "")}
     ${html.raw(d.aggregates?.length ? html`<p class="hint">Расчёт по ${d.total} вариантам: ${d.aggregates.map(a => `${a.function}(${a.field}) = ${a.value == null ? 'нет данных' : Number(a.value).toLocaleString('ru-RU', {maximumFractionDigits:2})}${a.unknown ? `; нет данных у ${a.unknown}` : ''}`).join(' · ')}</p>` : '')}

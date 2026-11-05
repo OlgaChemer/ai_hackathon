@@ -91,6 +91,24 @@ async def scenario(browser,base,width):
     assert 'перепланировки' in text and 'звукоизоляцией' in text
     await page.locator('[data-seller-questions]').fill(text+'\nКогда освободите квартиру?')
     assert 'Когда освободите' in await page.locator('[data-seller-questions]').input_value()
+    # Зависшая озвучка переговоров не задерживает новую подборку и её решения.
+    await page.evaluate("""async () => {
+      const {state,chatLog}=await import('/js/state.js');
+      const {voice}=await import('/js/voice.js');
+      const {createCall,renderCall}=await import('/js/call.js');
+      const listing=state.results[4].cards[0];
+      state.call=createCall({listing,fair:listing.fair,authority:listing.price});
+      chatLog.append(renderCall(state.call,()=>{}));
+      window.audioPending=true;
+      voice.speak=()=>new Promise(resolve=>{window.finishTestSpeech=()=>{window.audioPending=false;resolve();};});
+      const emit=ev=>state.es.onmessage(new MessageEvent('message',{data:JSON.stringify(ev)}));
+      emit({type:'turn',speaker:'agent',text:'Проверяю детали квартиры'});
+      emit({type:'result',step:4,kind:'selection',data:{...state.results[4],cards:[listing]}});
+      emit({type:'confirm',kind:'selection',decision_id:'audio-independent',title:'Обновлённый выбор',text:'Выберите квартиру'});
+    }""")
+    await page.wait_for_function("document.querySelectorAll('.offer').length===1 && !document.querySelector('[data-selection=more]').disabled")
+    assert await page.evaluate('window.audioPending'), 'Проверка не застала ожидающую озвучку'
+    await page.evaluate('window.finishTestSpeech()')
     assert not errors,errors
     await page.screenshot(path=f'/tmp/flexible-ui-{width}.png',full_page=False)
     await context.close()

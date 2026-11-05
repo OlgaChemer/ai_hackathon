@@ -21,6 +21,8 @@ class TurnStopped(Exception):
 
 
 def record(event: str, **fields) -> None:
+    from .telemetry import observe
+    observe(event,fields)
     turn = _current.get()
     context = {"session": turn.session_id, "turn": turn.id} if turn else {}
     log.info("%s", json.dumps({"event": event, **context, **fields}, ensure_ascii=False))

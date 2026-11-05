@@ -26,6 +26,7 @@ def snapshot(s):
     if data['search']:
         data['search'].pop('map_deadline',None)
         data['search'].pop('map_revision',None)
+        data['search'].pop('source_deadline',None)
     return {'format':1,'data':data}
 
 

@@ -276,6 +276,7 @@ class DurableStateTest(unittest.IsolatedAsyncioTestCase):
                 connection.execute('ALTER TABLE chats DROP COLUMN state')
                 connection.execute('ALTER TABLE chats DROP COLUMN state_version')
                 connection.execute('DROP TABLE chat_commands')
+                connection.execute('DROP TABLE schema_migrations')  # в прежней версии журнала миграций не было
             db.configure('sqlite:///'+database)
             restored=session.restore_session(chat_id,'',s.llm)
             self.assertEqual(restored.profile,profile)

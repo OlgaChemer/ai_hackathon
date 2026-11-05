@@ -17,7 +17,7 @@ import logging
 import re
 import tempfile
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
@@ -514,13 +514,13 @@ async def search(city: str, rooms: int, budget: int | None, page: int = 1, okrug
     key = (city, rooms, budget, page, okrug, new)
     hit = _memory.get(key)
     if hit and time.time() - hit[0] < CACHE_TTL:
-        return hit[1], {"status": "cached", "note": "из кеша сессии"}
+        return hit[1], {"status": "cached", "note": "из кеша сессии",'fetched_at':datetime.fromtimestamp(hit[0],timezone.utc).isoformat(timespec='seconds')}
     try:
         listings, via = await _fetch_available(city, rooms, budget, page, okrug, new)
         _memory[key] = (time.time(), listings)
         _save_snapshot(city, rooms, listings, new)
         note = f"страница {page}" + (" (запасной путь curl_cffi после капчи)" if via == "curl_cffi" else "")
-        return listings, {"status": "live", "note": note, "via": via}
+        return listings, {"status": "live", "note": note, "via": via,'fetched_at':datetime.now(timezone.utc).isoformat(timespec='seconds')}
     except SourceUnavailable as exc:
         log.warning("Циан недоступен: %s", exc)
         if page > 1:
@@ -528,7 +528,7 @@ async def search(city: str, rooms: int, budget: int | None, page: int = 1, okrug
         saved, fetched_at = load_snapshot(city, rooms, new)
         saved = [x for x in saved if (not budget or x["price"] <= budget * 1.05) and _okrug_ok(x, okrug)]
         if saved:
-            return saved, {"status": "snapshot", "note": f"{exc}; сохранённый срез от {fetched_at}"}
+            return saved, {"status": "snapshot", "note": f"{exc}; сохранённый срез от {fetched_at}",'fetched_at':fetched_at}
         raise
 
 

@@ -12,10 +12,12 @@ import { $, addMsg, chatLog, config, resetState, stage, state } from "./state.js
 import * as V from "./views.js";
 import { SELECTION_PROMPT, initVoiceChat, phoneActive, sayPrompt, talk } from "./voicechat.js";
 import { bindMic, recorder, voice } from "./voice.js";
+import { EffectQueue } from './effects.js';
 
 let gen = 0; // поколение диалога: события старого диалога отбрасываются
 let queue = [];
 let pumping = false;
+const effects = new EffectQueue(128, () => { voice.stop(); state.phone?.hangup(); });
 const HANGUP = "(положил трубку)"; // сервер понимает это как конец разговора
 
 // ------------------------------------------------------------------ результаты и подборка
@@ -99,7 +101,6 @@ async function handle(ev, myGen) {
   if (ev.seq && ev.type !== "replay_end" && ev.seq <= state.lastSeq) return;
   const call = state.call;
   const quiet = Boolean(ev.replay); // история диалога: рисуем сразу, без пауз, голоса и звонка
-  const pause = (ms) => (quiet ? null : sleep(ms));
   if (ev.seq) state.lastSeq = Math.max(state.lastSeq, ev.seq);
   switch (ev.type) {
     case "provider": setProvider(ev); break;
@@ -119,7 +120,6 @@ async function handle(ev, myGen) {
       addMsg(ev.role, ev.text);
       if (ev.await_reply) setChatExpanded(true);
       if (!quiet && ev.role === "agent" && talk.on && !phoneActive()) talk.say(ev.text);
-      await pause(ev.role === "agent" ? 300 : 0);
       break;
     case "result":
       if (ev.kind === 'selection' && !ev.data.cards?.length && state.results[4]?.cards?.length) {
@@ -137,7 +137,6 @@ async function handle(ev, myGen) {
         state.marks = { liked: new Set(ev.data.liked || []), disliked: new Set(ev.data.disliked || []) };
       }
       if (!quiet) renderStage();
-      await pause(ev.kind === "selection" ? 0 : 500);
       break;
     case "confirm":
       showThinking(false);
@@ -184,6 +183,8 @@ async function handle(ev, myGen) {
       const node = addLine(call, ev);
       updatePrices(call);
       if (quiet) break;
+      effects.enqueue(async () => {
+      if (gen !== myGen) return;
       node?.classList.add("is-speaking");
       const t0 = performance.now();
       if (call.mode === "phone") {
@@ -198,6 +199,7 @@ async function handle(ev, myGen) {
       node?.classList.remove("is-speaking");
       if (gen !== myGen) return;
       if (!call.ended && !call.awaitingSeller) setTyping(call, ev.speaker === "agent" ? (call.mode === "human" ? null : "seller") : "agent");
+      });
       break;
     }
     case "price":
@@ -210,7 +212,7 @@ async function handle(ev, myGen) {
     case "await_seller":
       if (!call) break;
       if (quiet) { call.awaitingSeller = true; break; } // поле ответа покажем, если агент и сейчас ждёт (replay_end)
-      if (call.mode === "phone") await listenPhone(call, myGen);
+      if (call.mode === "phone") effects.enqueue(async () => { if (gen === myGen) await listenPhone(call,myGen); });
       else showSellerInput(call, submitSeller);
       break;
     case "call_end":
@@ -221,14 +223,20 @@ async function handle(ev, myGen) {
       setTyping(call, null);
       setStatus(call, ev.status === "agreed" ? "Звонок завершён · договорились" : "Звонок завершён · ждём вашего решения", true);
       showLearned(call, ev.learned, ev.viewing);
-      if (!quiet && state.phone) { state.phone.hangup(); state.phone = null; }
+      if (!quiet && state.phone) {
+        const phone = state.phone;
+        effects.enqueue(() => { phone.hangup(); if (state.phone === phone) state.phone = null; });
+      }
       break;
     case "done": // сделка подписана; агент остаётся на связи — можно спрашивать дальше
-      addMsg("note", "Сделка завершена. Можно задать вопрос по ней или начать новый диалог.");
+      addMsg("note", "Демонстрационный план покупки подтверждён. Можно задать вопрос по нему или начать новый диалог.");
       if (!quiet) refreshChats();
       break;
     case "typing": // агент думает (сигнал без номера, в истории его нет)
       showThinking(ev.on);
+      break;
+    case 'resync_required':
+      openStream(state.sid,state.lastSeq);
       break;
     case "model_wait":
       showThinking(ev.on, "Модель занята, жду очередь…");
@@ -328,6 +336,7 @@ function leaveChat() {
   voice.stop();
   talk.interrupt();
   gen += 1;
+  effects.reset();
   queue = [];
   resetState();
   chatLog.innerHTML = "";
@@ -354,6 +363,7 @@ function openStream(id, after) {
   };
   es.onerror = () => {
     es.close();
+    if (state.es !== es) return;
     if (gen !== myGen || !state.running || state.streamEnded) return;
     if (state.retries++ < 5) {
       setTimeout(() => { if (gen === myGen && state.running) openStream(id, state.lastSeq); }, 1500 * state.retries);
@@ -571,7 +581,7 @@ else {
 }
 api.health().then((h) => {
   recorder.available = Boolean(h.stt?.installed && h.stt.status !== "error");
-  config.phoneReady = Boolean(h.phone?.configured);
+  config.phoneReady = Boolean(h.phone?.ready);
   config.sellerPhoneDefault = h.phone?.seller_phone || "";
   setProvider(h);
 })

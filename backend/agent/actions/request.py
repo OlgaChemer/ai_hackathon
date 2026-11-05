@@ -8,7 +8,8 @@ from ..profile import in_districts, merge_profile, missing_required, passes_hard
 from . import ActionError, action
 
 LIST_KEYS = ("districts", "avoid_districts", "features", "poi", "wishes", "material", "soft_criteria", "rooms_options", "cities")
-CORE_KEYS = ("city", "rooms", "budget_max", "okrug", "housing", "rooms_options", "cities", "districts", "prefer_center", "center_required")
+from ..capabilities import CORE_FIELDS, FILTER_FIELDS
+CORE_KEYS = CORE_FIELDS
 PROPERTY_FIELDS={'area_min':'area','kitchen_min':'kitchen','year_min':'year',
                  'metro_max_minutes':'metro_minutes','prefer_center':'center_km',
                  'condition':'condition','material':'material'}
@@ -125,8 +126,7 @@ def apply_request(s, changes, *, condition_sources=None):
         s.invalidate_deal(keep_limit=not budget_changed)
         if p.get("city") != before["city"]:
             s.market = None
-    elif s.search and (changed_keys & {"features", "poi", "kitchen_min", "area_min", "not_first_floor", "not_last_floor",
-                                         "condition", "material", "year_min", "metro_max_minutes", "soft_criteria", "clear_criteria", "avoid_districts", "filters", "wishes"}):
+    elif s.search and (changed_keys & FILTER_FIELDS):
         # Возвращаем ранее отфильтрованные варианты при снятии жёсткого ограничения.
         # Рынок/город/комнаты не менялись: исходная выдача остаётся актуальным пулом.
         if "listings" in s.search:

@@ -27,6 +27,8 @@ from .db import repo
 from .llm import LLMError, get_llm
 from . import maptiles, phone, ratelimit, stt
 from .agent import guard
+from . import telemetry,readiness,phone_access
+from .events import EventBuffer
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -39,6 +41,12 @@ app.middleware("http")(auth.visitor_middleware)
 async def persistence_failure(request: Request, exc: db.PersistenceError):
     return JSONResponse({'detail':str(exc),'error_kind':'revision_conflict' if isinstance(exc,db.StateConflict) else 'persistence'},
                         status_code=409 if isinstance(exc,db.StateConflict) else 503)
+
+
+@app.exception_handler(db.CommandCapacityError)
+async def command_capacity(request:Request,exc:db.CommandCapacityError):
+    telemetry.count('command_rejected')
+    return JSONResponse({'detail':str(exc),'error_kind':'capacity'},status_code=429,headers={'Retry-After':'2'})
 
 SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY",
@@ -118,6 +126,12 @@ class SpeakRequest(BaseModel):
     text: str = Field(min_length=1, max_length=2000)
 
 
+class PhoneRequest(BaseModel):
+    chat_id: str=Field(max_length=32)
+    decision_id: str=Field(max_length=40)
+    destination: str=Field(pattern=r'^7\d{10}$')
+
+
 class AuthRequest(BaseModel):
     email: str = Field(max_length=254)
     password: str = Field(max_length=200)
@@ -147,6 +161,30 @@ async def health():
         "places": places.status(),
         "phone": phone.status(),
     }
+
+
+@app.get('/api/health/live')
+async def liveness():return {'live':True}
+
+
+@app.get('/api/health/ready')
+async def ready():
+    try:llm=get_llm()
+    except LLMError:llm=None
+    result=readiness.report(llm)
+    result['capabilities']={'speech':stt.status(),'infrastructure':places.status(),'phone':phone.status()}
+    return JSONResponse(result,status_code=200 if result['ready'] else 503)
+
+
+@app.get('/api/metrics')
+async def metrics():
+    result=telemetry.snapshot();sessions=list(O.SESSIONS.values())
+    subscribers=[q for s in sessions for q in s.subscribers]
+    result['queues']={'commands':sum(s.command_queue.qsize() for s in sessions),
+                      'questions':sum(len(s.qa_pending) for s in sessions),
+                      'subscribers':len(subscribers),'sse_backlog':sum(q.qsize() for q in subscribers),
+                      'active_dialogues':sum(O.running(s) for s in sessions)}
+    return result
 
 
 MAX_AUDIO = 5 * 1024 * 1024  # ~ минута речи в webm/opus
@@ -189,20 +227,35 @@ def _check_pin(request: Request):
         raise HTTPException(403, "Нужен PIN для звонков (PHONE_PIN в .env сервера)")
 
 
-@app.get("/api/phone")
-async def phone_config(request: Request):
+@app.post("/api/phone")
+async def phone_config(req:PhoneRequest,request: Request):
     """SIP-доступ Exolve для звонка из браузера. На публичном сервере — только с PIN."""
     _check_pin(request)
+    s=_session(req.chat_id,request)
+    who=phone_access.actor(*auth.whoami(request))
+    grant=db.required(phone_access.reserve,s,who,req.decision_id)
+    if grant.get('error'):raise HTTPException(grant['status'],grant['error'])
     try:
-        return {**await phone.credentials(), "seller_phone": settings.seller_phone}
+        return {**await phone.credentials(),'grant_token':grant['token'],'destination':req.destination,
+                'listing_id':grant['listing_id'],'max_seconds':settings.phone_call_max_seconds}
     except phone.PhoneError as exc:
+        db.required(phone_access.close,grant['token'],who)
         raise HTTPException(503, str(exc)) from exc
+
+
+@app.post('/api/phone/close')
+async def phone_close(request:Request):
+    who=phone_access.actor(*auth.whoami(request))
+    return {'closed':db.required(phone_access.close,request.headers.get('X-Phone-Grant'),who)}
 
 
 @app.post("/api/tts")
 async def text_to_speech(req: SpeakRequest, request: Request):
     """Голос агента для телефонного звонка: текст -> WAV."""
     _check_pin(request)
+    who=phone_access.actor(*auth.whoami(request))
+    if not db.required(phone_access.charge_tts,request.headers.get('X-Phone-Grant'),who,len(req.text)):
+        raise HTTPException(403,'Разрешение на синтез истекло, не относится к этому диалогу или лимит речи исчерпан.')
     try:
         audio = await phone.synthesize(req.text)
     except (phone.PhoneError, httpx.HTTPError) as exc:
@@ -251,6 +304,8 @@ async def me(request: Request):
 
 @app.post("/api/session")
 async def start(req: StartRequest, request: Request):
+    if sum(O.running(s) for s in O.SESSIONS.values())>=settings.max_active_dialogues:
+        raise HTTPException(503,'Сейчас обрабатывается много диалогов. Повторите позже.',headers={'Retry-After':'5'})
     vid, uid = auth.whoami(request)
     s = O.create_session(req.query, _llm(), visitor_id=vid, user_id=uid)
     s.voice_mode = req.voice_mode
@@ -310,10 +365,19 @@ async def chat_stream(sid: str, request: Request, after: int = 0):
     if live is None:
         info=db.required(repo.get_chat,sid)
         if info and info.state:live=O.restore_session(sid,'',_llm())
+    if live is not None:
+        if live.task is None and sum(O.running(s) for s in O.SESSIONS.values())>=settings.max_active_dialogues:
+            raise HTTPException(503,'Все обработчики диалогов заняты. История сохранена; повторите позже.',headers={'Retry-After':'5'})
+        if len(live.subscribers)>=settings.max_dialogue_subscribers:
+            raise HTTPException(429,'Этот диалог уже открыт в нескольких вкладках.',headers={'Retry-After':'5'})
 
     async def gen():
-        q: asyncio.Queue = asyncio.Queue()
+        q = EventBuffer(settings.sse_queue_capacity)
         if live is not None:
+            if ((live.task is None and sum(O.running(s) for s in O.SESSIONS.values())>=settings.max_active_dialogues)
+                    or len(live.subscribers)>=settings.max_dialogue_subscribers):
+                yield _sse({'type':'error','seq':0,'error_kind':'capacity','text':'Обработчики заняты. Диалог сохранён; повторите позже.'})
+                return
             live.subscribers.add(q)  # сначала подписка, потом история — ни одно событие не потеряется
             if live.task is None:  # новый диалог (или продолжение) запускаем, когда вкладка уже слушает
                 live.task = asyncio.create_task(run_session(live))
@@ -342,6 +406,7 @@ async def chat_stream(sid: str, request: Request, after: int = 0):
                         continue
                     sent = ev["seq"]
                 yield _sse(ev)
+                if ev['type']=='resync_required':break
                 if ev["type"] == "error":
                     break
         finally:
@@ -379,6 +444,11 @@ async def confirm(sid: str, req: ConfirmRequest, request: Request):
     _cooldown(s)
     try:
         s.voice_mode = req.voice_mode
+        if req.kind=='call' and req.data.get('mode')=='phone':
+            data=dict(req.data);token=data.pop('phone_grant_token',None)
+            identifier=db.required(phone_access.identify,token,phone_access.actor(*auth.whoami(request)),sid,req.decision_id)
+            if not identifier:raise HTTPException(403,'Нет разрешения на этот телефонный звонок.')
+            data['phone_grant_id']=identifier;req.data=data
         resolved = await s.receive_decision(req.kind, req.approved, req.data, req.decision_id,req.command_id)
     except guard.InputRejected as exc:
         raise HTTPException(422, str(exc)) from exc

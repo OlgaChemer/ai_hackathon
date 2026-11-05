@@ -181,11 +181,6 @@ export function confirmCard(ev) {
     collect = bindFamilyForm(card);
   }
   if (ev.kind === "call" && config.phoneReady) {
-    // регистрируемся в Exolve заранее: по клику звонок уходит сразу
-    if (live) {
-      if (!state.phone || state.phone.ended) state.phone = new PhoneCall();
-      state.phone.connect().catch((e) => console.warn("Exolve:", e.message));
-    }
     extra.innerHTML = html`<label class="phone-field">Ваш телефон — агент позвонит вам как продавцу
       <input type="tel" inputmode="tel" placeholder="+7 999 123-45-67" value="${storedPhone()}" data-phone autocomplete="tel"></label>`;
   }
@@ -207,7 +202,7 @@ export function confirmCard(ev) {
     ],
     price: [[`Подтвердить ${rub(ev.price)}`, true, {}], ["Отклонить, звонить дальше", false, {}]],
     object: [["Выбираю эту квартиру", true, {}], ["Ищем дальше", false, {}]],
-    sign: [["Подписать электронно", true, {}], ["Отложить", false, {}]],
+    sign: [["Подтвердить демо-план", true, {}], ["Отложить", false, {}]],
   }[ev.kind] || [["Подтвердить", true, {}], ["Отклонить", false, {}]];
 
   // голосом: что сказать вслух и как ответить
@@ -282,7 +277,7 @@ async function dialSeller(card, label) {
   const buttons = card.querySelectorAll("button, input");
   buttons.forEach((x) => (x.disabled = true));
   voice.stop();
-  const phone = state.phone && !state.phone.ended ? state.phone : new PhoneCall();
+  const phone = state.phone && !state.phone.ended ? state.phone : new PhoneCall({chat_id:state.sid,decision_id:card.dataset.decisionId});
   state.phone = phone;
   phone.onAudioState = (audioState) => {
     const button = $("resumeCallAudio");
@@ -306,7 +301,7 @@ async function dialSeller(card, label) {
   phone.onEnded = () => {
     if (state.phone === phone && state.call && !state.call.ended) addMsg("note", "Продавец положил трубку.");
   };
-  await decide(card, "call", true, { mode: "phone", questions: collectQuestions(card) }, `${label}: ${formatPhone(number)}`);
+  await decide(card, "call", true, { mode: "phone", questions: collectQuestions(card), phone_grant_token:phone.configuration?.grant_token }, `${label}: ${formatPhone(number)}`);
 }
 
 function collectQuestions(card) {

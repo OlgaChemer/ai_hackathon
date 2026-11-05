@@ -17,6 +17,7 @@ from ..pricing import fair_price, score_listing, value_rank
 from ..profile import in_districts, passes_hard_filters, rooms_text
 from . import ActionError, action
 from .. import listing_query as Q
+from ..coverage import report as coverage_report
 
 BATCH = 10       # квартир в подборке
 MAX_PAGES = 3   # страниц выдачи Циана на один поиск
@@ -76,6 +77,11 @@ async def check_map(s, listings: list[dict], announce: bool = False, kinds=None)
     candidates = ranked(listings,meta,s.prefs)
     ok = await geo.nearby(candidates[:30], kinds, budget_s=max(0, deadline - time.monotonic()),
                          on_progress=lambda:report_progress(s,(s.search or {}).get('listings') or listings,'map'))
+    if s.search is not None:
+        reasons=s.search.setdefault('coverage_reasons',[])
+        if not ok:
+            reason='map_budget_exhausted' if time.monotonic()>=deadline else 'map_incomplete'
+            if reason not in reasons:reasons.append(reason)
     if not ok and not s.map_warned:
         s.map_warned = True
         await s.say("Карта не успела проверить часть адресов или не ответила. Отмечу пробелы на карточках — близость нужных объектов пока не подтверждена.")
@@ -127,10 +133,20 @@ async def _more_pages(s, until) -> None:
     """Догружает страницы выдачи (до MAX_PAGES), пока until() не станет True."""
     st, profile = s.search, s.profile
     while not until() and st["pages"] < MAX_PAGES:
+        deadline=st.get('source_deadline')
+        if deadline is not None and time.monotonic()>=deadline:
+            st.setdefault('coverage_reasons',[]).append('search_budget_exhausted')
+            break
         st["pages"] += 1
         seen = {x["id"] for x in st["listings"]}
-        extra = [x for x in await sources.more(profile, st["pages"]) if x["id"] not in seen]
+        batch=await sources.more({**profile,**({'_source_deadline':deadline} if deadline is not None else {})},st['pages'])
+        reports=getattr(batch,'reports',None)
+        st.setdefault('page_reports',[]).extend(reports or [{'source':'cian','page':st['pages'],
+            'status':'unknown','count':len(batch),'note':'Источник не сообщил исход страницы'}])
+        extra = [x for x in batch if x["id"] not in seen]
         if not extra:
+            reason='page_unavailable' if any(r.get('status')=='unavailable' for r in reports or []) else 'no_new_items'
+            st.setdefault('coverage_reasons',[]).append(reason)
             break
         st["listings"] += extra
         fresh = [x for x in extra if passes_hard_filters(x, profile) and (not st["strict"] or in_districts(x, st["named"]))]
@@ -160,7 +176,8 @@ async def search_listings(s) -> dict:
     def batch(items):
         observed.update({x['id']:x for x in items})
         report_progress(s,list(observed.values()),'collect')
-    listings, report = await sources.collect(p,on_batch=batch)
+    deadline=time.monotonic()+settings.search_budget_s
+    listings, report = await sources.collect({**p,'_source_deadline':deadline},on_batch=batch)
     known = sources.stored(p, exclude={x["id"] for x in listings})
     if known:
         listings += known
@@ -172,23 +189,25 @@ async def search_listings(s) -> dict:
     st = s.search = {"listings": listings, "pool": pool, "comps": comps, "report": report, "meta": {}, "pages": 1,
                      "named": p.get("districts") or [], "strict": False, "map_ok": True,
                      "shown_ids": set(p.get('_seen_listing_ids') or [x['id'] for x in s.shown]),
-                     "map_deadline": time.monotonic() + settings.places_budget_s, "map_revision": s.client_revision}
+                     "map_deadline": time.monotonic() + settings.places_budget_s, "map_revision": s.client_revision,
+                     'page_reports':[{**r,'page':1} for r in report if r.get('status')!='db'],'coverage_reasons':[],
+                     'source_deadline':deadline}
     if not pool:
         if s.shown:s.push('selection_notice',text='По новым условиям результатов пока нет. Сохранена предыдущая подборка; она относится к прежним условиям.')
         alternatives = ["Рассмотреть меньше комнат", "Изменить район"]
         if p.get("housing") in ("secondary", "new"):
             alternatives.insert(0, "Посмотреть новостройки" if p["housing"] == "secondary" else "Посмотреть вторичку")
         st["alternatives"] = alternatives
-        s.push("result", step=3, kind="search", data={"report": report, "total": len(listings), "matched": 0, "rows": [], "alternatives": alternatives})
+        s.push("result", step=3, kind="search", data={"report": report, "total": len(listings), "matched": 0, "rows": [], "alternatives": alternatives,'coverage':coverage_report(s)})
         s.push("search_progress", on=False)
         if report and all(r["status"] == "unavailable" for r in report):
-            raise ActionError(f"Циан сейчас не отдаёт объявления ({report[0]['note']}), в базе агента подходящих нет.")
+            raise ActionError(f"Циан сейчас не отдаёт объявления ({report[0]['note']}), в базе агента подходящих нет.",kind='source_unavailable')
         m = s.market
         return {"found": len(listings), "in_budget": 0,
+                'coverage':coverage_report(s),
                 "market": {"min": m["min"], "typical_from": m["p25"], "typical_to": m["p75"]} if m else None,
                 "alternatives": alternatives,
-                "hint": "Покажи варианты изменения кнопками ask_client. Целых квартир в бюджете нет (доли и комнаты не показываю) — предложи поднять бюджет, "
-                        "меньше комнат или весь город"}
+                "hint":"В полученном срезе нет вариантов по текущим условиям. Учитывай охват, причины неполноты и неизвестные факты из coverage; это не утверждение об отсутствии квартир на всём рынке. Предложи изменение условий без молчаливого расширения."}
     out: dict = {}
     if p.get("prefer_center"):
         await _more_pages(s, lambda: False)  # ищем все допустимые комнатности, а не только свежую первую страницу
@@ -216,12 +235,13 @@ async def search_listings(s) -> dict:
         else:
             r["count"] = sum(1 for x in st["listings"] if not x.get("stored_at") and bool(x.get("is_new")) == r.get("new", False) and x.get("city") == r.get("city", p["city"]) and x.get("rooms") == r.get("rooms", p["rooms"]))
     s.push("result", step=3, kind="search", data={"report": report, "total": len(st["listings"]), "matched": len(good),
-                                                   "rows": rows, "store": sources.store.stats(p), **out})
+                                                   "rows": rows, "store": sources.store.stats(p),'coverage':coverage_report(s), **out})
     over = sum(1 for x in good if st["meta"][x["id"]]["fair"]["overprice_pct"] > 1)
     report_progress(s,st['listings'],'ready')
     s.push("search_progress", on=False)
     await s.finish_step(3)
     return {"found": len(st["listings"]), "in_budget": len(st["pool"]), "selectable": len(good),
+            'coverage':coverage_report(s),
             "overpriced": over, "from_agent_db": len(known), "price_from": min((x["price"] for x in good), default=None),
             "price_to": max((x["price"] for x in good), default=None),
             "sources": [{"source": r["source"], "count": r["count"], "status": r["status"]} for r in report], **out}
@@ -329,7 +349,11 @@ async def show_selection(s, query: dict | None = None) -> dict:
         'confirmed_count':sum(x['match']['status']=='confirmed' for x in s.shown),
         'unverified_count':sum(x['match']['status']=='unverified' for x in s.shown),
         'query':effective,'remaining':result['remaining'],'total':result['total'],'aggregates':result['aggregates'],'groups':result['groups'],
+        'coverage':coverage_report(s),
     })
+    from ...runtime import record
+    record('selection',confirmed=sum(x['match']['status']=='confirmed' for x in s.shown),
+           unverified=sum(x['match']['status']=='unverified' for x in s.shown))
     if first and effective == Q.default_query():
         await s.say('Вот лучшие варианты. Отметьте «Нравится» или «Не то» — учту и подберу ещё. Можно менять условия, порядок и количество; звоню только по вашей просьбе.')
     else:

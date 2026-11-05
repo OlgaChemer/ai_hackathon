@@ -68,6 +68,12 @@ def commit_dialogue(db: Session, chat_id: str, expected_version: int, state: dic
         func.coalesce(Chat.state_version, 0) == expected_version).values(**fields))
     if changed.rowcount != 1:raise StateConflict('Состояние диалога изменилось. Требуется загрузить актуальную версию.')
     for ev in events:db.add(ChatEvent(chat_id=chat_id, seq=ev['seq'], type=ev['type'], payload=ev))
+    ticket=(state.get('data',{}).get('pending_decisions') or {}).get('call') or {}
+    answer=ticket.get('answer') or {};details=answer.get('data') or {}
+    if ticket.get('status')=='answered' and answer.get('approved') and details.get('mode')=='phone':
+        from .models import PhoneGrant
+        grant=db.get(PhoneGrant,details.get('phone_grant_id'))
+        if grant and grant.chat_id==chat_id:grant.status='connected'
     if command:
         row = db.scalar(select(ChatCommand).where(ChatCommand.chat_id==chat_id, ChatCommand.command_id==command['id']))
         if row is not None:
@@ -78,10 +84,13 @@ def commit_dialogue(db: Session, chat_id: str, expected_version: int, state: dic
     return version
 
 
-def accept_command(db: Session, chat_id: str, command_id: str, kind: str, fingerprint: str, payload: dict) -> dict:
+def accept_command(db: Session, chat_id: str, command_id: str, kind: str, fingerprint: str, payload: dict, capacity: int = 64) -> dict:
     from ..db import StateConflict
     row = db.scalar(select(ChatCommand).where(ChatCommand.chat_id==chat_id, ChatCommand.command_id==command_id))
     if row is None:
+        from ..db import CommandCapacityError
+        pending=db.scalar(select(func.count()).select_from(ChatCommand).where(ChatCommand.chat_id==chat_id,ChatCommand.status=='accepted'))
+        if pending>=capacity:raise CommandCapacityError('Очередь диалога заполнена. Команда не принята; повторите позже.')
         row=ChatCommand(chat_id=chat_id, command_id=command_id, kind=kind, fingerprint=fingerprint,
                         payload=payload, status='accepted', progress={})
         db.add(row);db.flush()

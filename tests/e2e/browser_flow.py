@@ -79,7 +79,7 @@ async def full_deal(pg, shots: str, tag: str) -> None:
     ok(f"{tag}: звонок прошёл", await wait_text(pg, "Узнал у продавца", 90))
     await click(pg, "Подтвердить")
     await click(pg, "Выбираю эту квартиру")
-    await click(pg, "Подписать электронно")
+    await click(pg, "Подтвердить демо-план")
     ok(f"{tag}: сделка до подписания", await wait_text(pg, "Сделка оформлена", 60))
     if shots:
         await pg.screenshot(path=f"{shots}/{tag}_summary.png")

@@ -51,6 +51,9 @@ def state_brief(s) -> str:
         lines.append(f"План накоплений: не хватает {fmt(s.finance['gap'])}, срок {s.finance['months']} мес.")
     if s.search:
         lines.append(f"Поиск: найдено {len(s.search['listings'])}, в бюджете {len(s.search['pool'])}.")
+        from .coverage import report
+        coverage=report(s)
+        lines.append('Охват: '+coverage['summary']+' Причины неполноты: '+', '.join(coverage['reasons']))
     if s.shown:
         cards = "; ".join(f"{i + 1}) {x['id']} — {x.get('address')}, {fmt(x['price'])}" for i, x in enumerate(s.shown))
         lines.append(f"Последняя подборка: {cards}. Нравятся: {', '.join(s.prefs.liked) or 'ничего'}.")

@@ -20,26 +20,23 @@ const FAIL = {
   Forbidden: "Exolve запретил звонок: проверьте баланс и определяемый номер у SIP ID.",
 };
 
-let config = null;
 
 function pinGet() { try { return localStorage.getItem("phonePin") || ""; } catch { return ""; } }
 function pinSet(v) { try { if (v) localStorage.setItem("phonePin", v); else localStorage.removeItem("phonePin"); } catch { /* приватный режим */ } }
 const pinHeaders = () => (pinGet() ? { "X-Phone-Pin": pinGet() } : {});
 
-export async function phoneConfig() {
-  if (config) return config;
-  let res = await fetch("/api/phone", { headers: pinHeaders() });
+export async function phoneConfig(scope) {
+  const options = () => ({method:'POST',headers:{'Content-Type':'application/json',...pinHeaders()},body:JSON.stringify(scope)});
+  let res = await fetch('/api/phone',options());
   if (res.status === 403) {
-    const pin = prompt("PIN для звонков (задан на сервере в PHONE_PIN):");
-    if (!pin) throw new Error("Звонок отменён: нужен PIN.");
-    pinSet(pin.trim());
-    res = await fetch("/api/phone", { headers: pinHeaders() });
-    if (res.status === 403) pinSet("");
+    const pin = prompt('PIN операторского режима звонков:');
+    if (!pin) throw new Error('Звонок отменён: нужен операторский доступ.');
+    pinSet(pin.trim()); res = await fetch('/api/phone',options());
+    if (res.status === 403) pinSet('');
   }
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.detail || `Сервер не отдал настройки звонка (${res.status})`);
-  config = data;
-  return config;
+  if (!res.ok) throw new Error(data.detail || 'Не удалось получить разрешение на звонок.');
+  return data;
 }
 
 /** «8 (999) 123-45-67» -> «79991234567»; null, если это не российский номер. */
@@ -72,7 +69,8 @@ async function realIp() {
 const FILLERS = ["Так, понял.", "Угу, секунду.", "Понял вас.", "Хорошо, секунду."];
 
 export class PhoneCall {
-  constructor() {
+  constructor(scope = {}) {
+    this.scope = scope; this.configuration = null; this.durationTimer = null;
     this.ua = null;
     this.session = null;
     this.ctx = null; // создаётся только непосредственно в пользовательском жесте
@@ -143,7 +141,7 @@ export class PhoneCall {
   }
 
   async #register() {
-    const cfg = await phoneConfig();
+    const cfg = this.configuration = await phoneConfig(this.scope);
     const ip = await realIp();
     if (!ip) throw new Error("Не удалось связаться с webrtc.exolve.ru (проверьте интернет/VPN).");
     const id = Math.random().toString(36).slice(2, 12);
@@ -181,7 +179,9 @@ export class PhoneCall {
       const audioReady = this.unlockAudio();
       await audioReady;
       if (this.ctx.state !== "running") throw new Error("Safari приостановил звук. Нажмите кнопку звонка ещё раз.");
+      this.scope.destination = number;
       await this.connect();
+      if (this.configuration.destination !== number) throw new Error("Разрешён другой номер.");
       if (this.ended) throw new Error("Звонок отменён.");
     } catch (e) {
       this.hangup();
@@ -192,6 +192,7 @@ export class PhoneCall {
     const mark = (what) => console.info(`[звонок] ${what}: ${Math.round(performance.now() - t0)} мс`);
     let iceTimer = null;
     return new Promise((resolve, reject) => {
+      this.durationTimer = setTimeout(() => { this.hangup(); this.onEnded(); }, (this.configuration.max_seconds || 300) * 1000);
       this.session = this.ua.call(number, {
         mediaStream: this.out.stream,
         pcConfig: { iceServers: [{ urls: STUN }] },
@@ -231,7 +232,7 @@ export class PhoneCall {
   }
 
   async #synth(text) {
-    const res = await fetch("/api/tts", { method: "POST", headers: { "Content-Type": "application/json", ...pinHeaders() }, body: JSON.stringify({ text: speechText(text) }) });
+    const res = await fetch("/api/tts", { method: "POST", headers: { "Content-Type": "application/json", ...pinHeaders(), "X-Phone-Grant":this.configuration?.grant_token || "" }, body: JSON.stringify({ text: speechText(text) }) });
     if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || `Синтез речи не удался (${res.status})`);
     return res.arrayBuffer(); // декодируем после создания AudioContext по нажатию клиента
   }
@@ -294,6 +295,11 @@ export class PhoneCall {
   }
 
   hangup() {
+    clearTimeout(this.durationTimer);
+    if (this.configuration?.grant_token) {
+      fetch('/api/phone/close',{method:'POST',headers:{'X-Phone-Grant':this.configuration.grant_token},keepalive:true}).catch(() => {});
+      this.configuration.grant_token = null;
+    }
     if (this.ended) return;
     this.ended = true;
     this.audioAbort.abort();
