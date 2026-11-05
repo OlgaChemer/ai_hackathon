@@ -165,6 +165,11 @@ def semantic_tools(contract,inputs,unsupported,has_results=True):
         'maxLength':1000,
         'description':'Буквальная цитата НОВОЙ реплики, откуда взято количество limit. При limit=null — null. «4 а не 3» -> limit4, count_source:4. Не цитируй прежнюю выдачу.'}
     read_schema['required'].append('count_source')
+    global_words={'все','всех','весь','вся','всю','всей','всего','всем','целиком','полностью','пула','пулу','пуле','базы'}
+    global_quotes=[row['text'] for row in inputs if any(word.casefold().replace('ё','е') in global_words
+                    for word in input_frame.source_words([row]))]
+    read_schema['properties']['scope_source']={'type':['string','null'],'enum':[None,*global_quotes],
+        'description':'Только для compare/all: исходная просьба сравнивать весь найденный пул. Без прямой просьбы шире показанных используй compare/shown. Для rank/analyze не требуется.'}
     tools=[
         Tool('read_selection','Прочитать найденные данные: отобрать N, отсортировать, сравнить показанные, посчитать статистику или получить ещё варианты. Условия профиля не меняет. Новое количество только из новой реплики, при отсутствии limit=null.',read_schema),
         Tool('profile_change','Клиент меняет условия квартиры/города/бюджета, снимает ограничение либо добавляет вопросы продавцу. Включая составную просьбу изменить условия и отобрать N. Параметры извлечёт отдельный структурированный разбор. Для одного лишь отбора без изменения условий — read_selection.',obj({})),
@@ -190,6 +195,11 @@ def frame_from_call(call,tools,inputs):
     validation.validate(call.arguments,tool.parameters)
     a=deepcopy(call.arguments)
     if call.name=='read_selection':
+        scope_source=a.pop('scope_source',None)
+        if a['operation']=='compare' and a['scope']=='all' and not scope_source:
+            raise ValueError('compare/all требует прямой просьбы сравнивать весь найденный пул. Отсылка к текущим карточкам — compare/shown, без расширения области.')
+        if a['operation']=='compare' and a.get('group_by') is not None:
+            raise ValueError('Сравнение отдельных квартир не группирует их: group_by=null. Для статистики по группам используй analyze.')
         quote=a.pop('count_source')
         keep=a.pop('keep_order')
         update=a.pop('update_conditions')
