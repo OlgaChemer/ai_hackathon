@@ -21,7 +21,7 @@ class BudgetModel(ScriptedLLM):
         if kw.get('tag')=='request_review':
             payload=json.loads(next(m['content'] for m in messages if m['role']=='user'))['data']
             self.reviews.append(payload)
-            return LLMResponse('',[ToolCall('informational_question',{'action':'market_prices'})])
+            return LLMResponse('',[ToolCall('request_information',{'action':'market_prices'})])
         return await super().chat(messages,**kw)
 
 
@@ -97,7 +97,7 @@ class BudgetDialogue(unittest.IsolatedAsyncioTestCase):
         from backend.agent.request_schema import CHANGE_SCHEMA
         inputs=[{'text':'Да'}];tools=understanding.semantic_tools(input_frame.sparse_schema(CHANGE_SCHEMA,inputs),inputs,[])
         with self.assertRaises(ValueError):
-            understanding.frame_from_call(ToolCall('informational_question',{'action':'call_seller'}),tools,inputs)
+            understanding.frame_from_call(ToolCall('request_information',{'action':'call_seller'}),tools,inputs)
         from backend.agent.capabilities import decision
         s=self.agent();self.assertFalse(decision(s,'affordable_budget')[0])
         s.requested_action='affordable_budget';self.assertTrue(decision(s,'affordable_budget')[0])
