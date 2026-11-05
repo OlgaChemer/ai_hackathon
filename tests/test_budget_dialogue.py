@@ -166,6 +166,21 @@ class BudgetDialogue(unittest.IsolatedAsyncioTestCase):
 class MarketScope(unittest.IsolatedAsyncioTestCase):
     def setUp(self):db.configure('sqlite://')
 
+    def test_explicit_client_money_overrides_an_unrelated_suggestion_but_ambiguous_quotes_are_rejected(self):
+        from backend.agent.numbers import ground_money
+        from backend.agent import profile_patch,input_frame
+        from backend.agent.request_schema import CHANGE_SCHEMA
+        text='Тогда лимит 80 миллионов рублей. Остальные условия сохрани.'
+        inputs=[{'text':text}]
+        for quote in (text,'80','80 миллионов'):
+            result=profile_patch.decode({'fields':[{'key':'budget_max','value':'27000000','source':quote}],
+                'criteria':[],'places':[],'unsupported':[],'selection':[]},profile_patch.schema(input_frame.schema(CHANGE_SCHEMA,inputs)),inputs)
+            self.assertEqual(result['fields']['budget_max']['value'],80_000_000)
+        text='Лимит 80 млн, первоначальный взнос 20 млн.'
+        with self.assertRaises(ValueError):ground_money(27_000_000,text,[{'text':text}])
+        self.assertEqual(ground_money(80_000_000,text,[{'text':text}]),80_000_000)
+        self.assertEqual(ground_money(20_000_000,'20 млн',[{'text':text}]),20_000_000)
+
     async def test_both_markets_all_rooms_center_and_unknowns_share_one_sample_policy(self):
         p=merge_profile({'city':'Москва','rooms_options':[2,3],'housing':'both','prefer_center':True,'center_required':True})
         original=deepcopy(p)

@@ -4,6 +4,25 @@ from __future__ import annotations
 import re
 
 
+MONEY_MENTION=re.compile(r'\d+(?:[.,]\d+)?\s*(?:млн\.?|миллион[а-яё]*|лям[а-яё]*)(?:\s*\d{1,3}\s*тыс[а-яё]*\.?)?'
+                         r'|\d[\d ]*\s*тыс[а-яё]*\.?|\d{1,3}(?:[ .]\d{3}){2,}|\d{6,}',re.IGNORECASE)
+
+
+def ground_money(actual,quote,messages):
+    """Числовая сумма привязана к исходной цитате, а не к предложению агента."""
+    values=set()
+    for message in messages:
+        text=message['text']
+        citations=list(re.finditer(re.escape(quote),text,re.IGNORECASE))
+        for mention in MONEY_MENTION.finditer(text):
+            if not any(mention.start()<c.end() and mention.end()>c.start() for c in citations):continue
+            amount=parse_money(mention.group())
+            if amount is not None:values.add(amount)
+    if not values or actual in values:return actual
+    if len(values)==1:return next(iter(values))
+    raise ValueError('Сумма не совпадает с цитатой клиента. Привяжи значение к конкретной названной сумме, не к предложению агента.')
+
+
 def parse_money(text: str) -> int | None:
     """'9 млн' -> 9000000, '8,7 млн' -> 8700000, '8 700 000' -> 8700000, '8700 тыс' -> 8700000."""
     t = text.lower()

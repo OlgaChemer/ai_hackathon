@@ -196,6 +196,9 @@ def decode(patch,contract,inputs,aliases=None,*,provenance=None):
                 if kind not in ('boolean','array'):raise ValueError('Для изменения '+key+' нужно новое значение')
                 actual=False if kind=='boolean' else []
             else:actual=value(row['value'],known[key])
+            if key in ('budget_max','matcap') and type(actual) in (int,float):
+                from .numbers import ground_money
+                actual=ground_money(actual,row['source'],inputs)
             put('fields',key,{'value':actual,'source':row['source']})
             continue
         if 'priority' not in row and priority!='remove' and key in explicit:continue
