@@ -184,13 +184,13 @@ def passes_hard_filters(x: dict, p: dict) -> bool:
     if p.get('center_required'):
         from .pricing import center_distance
         distance = center_distance(x)
-        if distance is None or distance > 5:
+        if distance is not None and distance > 5:
             return False
-    from .listing_query import check
+    from .conditions import compile_profile,evaluate
     # Инфраструктуру проверяем после обращения к карте. До обогащения отсутствие
     # nearby не означает отсутствие объекта: иначе exists отсечёт весь пул ещё
     # до вызова провайдера. Итоговые обязательные фильтры проверяет selectable.
-    if any(check(x,f) is False for f in p.get('filters') or []
-           if f['priority']=='required' and not f['field'].startswith('nearby:')):
+    if any(evaluate(c,x)['status'] is False for c in compile_profile(p)
+           if c['priority']=='required' and not c['field'].startswith('nearby:')):
         return False
     return True

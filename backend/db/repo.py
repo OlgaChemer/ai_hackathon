@@ -7,7 +7,7 @@ from typing import Any
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session
 
-from .models import (Chat, ChatEvent, CrawlRun, Listing, ListingFeature, ListingPrice, SecurityEvent, TrackedSearch,
+from .models import (Chat, ChatEvent, ChatCommand, CrawlRun, Listing, ListingFeature, ListingPrice, SecurityEvent, TrackedSearch,
                      Visitor, utcnow)
 
 # ================================================================ посетители и диалоги
@@ -52,6 +52,49 @@ def save_event(db: Session, chat_id: str, seq: int, type_: str, payload: dict) -
 
 def update_chat(db: Session, chat_id: str, **fields: Any) -> None:
     db.execute(update(Chat).where(Chat.id == chat_id).values(**fields))
+
+
+def commit_dialogue(db: Session, chat_id: str, expected_version: int, state: dict,
+                    profile: dict, memory: list, events: list, command: dict | None = None) -> int:
+    """Снимок, результат команды и лента фиксируются одной транзакцией."""
+    from ..db import StateConflict
+    version = expected_version + 1
+    fields = dict(state=state, state_version=version, profile=profile, memory=memory, updated_at=utcnow())
+    if events:
+        fields['last_seq'] = events[-1]['seq']
+    for ev in events:
+        if ev['type'] == 'done':fields['status'] = ev.get('status', 'completed')
+    changed = db.execute(update(Chat).where(Chat.id == chat_id,
+        func.coalesce(Chat.state_version, 0) == expected_version).values(**fields))
+    if changed.rowcount != 1:raise StateConflict('Состояние диалога изменилось. Требуется загрузить актуальную версию.')
+    for ev in events:db.add(ChatEvent(chat_id=chat_id, seq=ev['seq'], type=ev['type'], payload=ev))
+    if command:
+        row = db.scalar(select(ChatCommand).where(ChatCommand.chat_id==chat_id, ChatCommand.command_id==command['id']))
+        if row is not None:
+            row.progress = dict(command.get('progress') or {})
+            if command.get('result') is not None:
+                row.result = command['result'];row.status = 'rejected' if command.get('status')=='rejected' else 'completed'
+    db.flush()
+    return version
+
+
+def accept_command(db: Session, chat_id: str, command_id: str, kind: str, fingerprint: str, payload: dict) -> dict:
+    from ..db import StateConflict
+    row = db.scalar(select(ChatCommand).where(ChatCommand.chat_id==chat_id, ChatCommand.command_id==command_id))
+    if row is None:
+        row=ChatCommand(chat_id=chat_id, command_id=command_id, kind=kind, fingerprint=fingerprint,
+                        payload=payload, status='accepted', progress={})
+        db.add(row);db.flush()
+    elif row.fingerprint != fingerprint or row.kind != kind:
+        raise StateConflict('Этот ID команды уже использован для другого запроса.')
+    return {'id':row.command_id,'kind':row.kind,'payload':row.payload,'status':row.status,
+            'progress':dict(row.progress or {}),'result':row.result}
+
+
+def queued_commands(db: Session, chat_id: str) -> list[dict]:
+    rows=db.scalars(select(ChatCommand).where(ChatCommand.chat_id==chat_id, ChatCommand.status=='accepted').order_by(ChatCommand.id))
+    return [{'id':r.command_id,'kind':r.kind,'payload':r.payload,'status':r.status,
+             'progress':dict(r.progress or {}),'result':r.result} for r in rows]
 
 
 def chat_events(db: Session, chat_id: str, after: int = 0) -> list[dict]:

@@ -54,6 +54,7 @@ requested_card — только ПРЯМАЯ просьба показать а�
 
 ROUTER_SYSTEM='''Определи смысл ТОЛЬКО новых messages одним вызовом смысловой функции. Ничего не выполняй.
 profile и recent_dialogue — контекст; не источник новых условий.
+unsupported_request — новое пожелание, для которого нет точного свойства в listing_fields/критериях: например удобство внутри квартиры, а не объект рядом. Передай исходную реплику quote дословно. Не подменяй такое пожелание nearby и не выдумывай радиус. Для составного ввода с новыми городом/комнатами/бюджетом используй profile_change и unsupported в разборе.
 profile_change — любые НОВЫЕ/отменённые условия квартиры, город, комнаты, рынок, оплата, вопросы продавцу.
 Включая составную просьбу: «отмени площадь и покажи две большие», «сдача в2027 и три просторных».
 Отмена неподдержанного условия вместе с отбором тоже profile_change.
@@ -67,11 +68,12 @@ read_selection — чтение/отбор по УЖЕ найденным дан
 informational_question — вопрос об устройстве, предложении, предыдущей ошибке: «что сломалось/что надо уточнить».
 call_intent — только ЯВНО позвонить; listing_ids из показанных ID; [] — по понравившимся.
 Вопросы продавцу/условия не разрешают звонок. pause_request — явная пауза/пока не звони, даже с новыми вопросами.
-Новое неизвестное свойство («внутри бассейн/сауна») тоже profile_change. Проверяемость определит извлечение свойств; не подменяй фитнесом рядом.
+Новое неизвестное свойство без других изменений («внутри бассейн/сауна») — unsupported_request. Составной ввод с базовыми параметрами — profile_change с явным unsupported. Не подменяй удобство внутри квартиры фитнесом рядом.
 Неоднозначный город/улица — profile_change: условия извлечёт отдельный шаг, уточнение сформирует код. Диапазон комнат 1–2 — обе комнатности, не вопрос выбора одной.
 continue_input — продолжить без изменений; other_input — остальное.
 Чтение: operation rank — выбрать N/сортировать, compare — ответить какая из показанных лучше по показателю, analyze — статистика, more — ЕЩЁ/НОВЫЕ.
 scope all по умолчанию; shown — при явном «из этих/показанных»; liked — по понравившимся.
+«Понравившиеся/избранные отсортируй» -> scope liked, даже если liked сейчас пустой. Не расширяй область до all молча: исполнитель объяснит отсутствие отмеченных. Указанная область важнее значения по умолчанию.
 «Среди этих двух какая выгоднее за кв м» -> compare/shown/price_per_m2/asc, limit=null. Двух — группа, не порог цены и не новый размер карточек.
 «Где из этих двух больше площадь?» -> compare/shown/area/desc.
 order_by: больше/просторнее -> area; дешевле -> price; выгоднее метр -> price_per_m2; просто выгоднее -> value_score.
@@ -102,7 +104,7 @@ def failed_input(s, exc):
     if not isinstance(exc,UnderstandingError):
         text=('Сервис обработки сообщения сейчас не ответил. Условия и последняя подборка сохранены; '
               'можно повторить сообщение позже. Это не просьба изменить ваши условия.')
-    s.last_issue={'kind':'input_error','message':text}
+    s.last_issue={'kind':'model_format' if isinstance(exc,UnderstandingError) else 'upstream_unavailable','message':text}
     s.profile['_last_issue']=dict(s.last_issue)
     s.remember()
     return text
@@ -153,6 +155,9 @@ def semantic_tools(contract,inputs,unsupported,has_results=True):
     tools=[
         Tool('read_selection','Прочитать найденные данные: отобрать N, отсортировать, сравнить показанные, посчитать статистику или получить ещё варианты. Условия профиля не меняет. Новое количество только из новой реплики, при отсутствии limit=null.',read_schema),
         Tool('profile_change','Клиент меняет условия квартиры/города/бюджета, снимает ограничение либо добавляет вопросы продавцу. Включая составную просьбу изменить условия и отобрать N. Параметры извлечёт отдельный структурированный разбор. Для одного лишь отбора без изменения условий — read_selection.',obj({})),
+        Tool('unsupported_request','Новое пожелание вне проверяемых свойств: удобство внутри квартиры не заменяется внешней инфраструктурой. Это явный запрос клиента, а не ошибка формата и не неизвестные данные объявления. Только распознать ограничение возможности, ничего не исполнять.',obj({
+            'quote':{'type':'string','minLength':1,'maxLength':1000,
+                     'description':'Дословная новая реплика, содержащая неподдерживаемое пожелание.'}},['quote'])),
         Tool('informational_question','Клиент задаёт информационный вопрос и не меняет условия/не выбирает действие. Включая вопрос о предыдущем сбое.',obj({})),
         Tool('call_intent','Клиент явно просит звонить. Сам ничего не исполняет. Без явной просьбы запрещён; для вопросов продавцу используй profile_change.',obj({
             'listing_ids':{'type':'array','maxItems':10,'items':{'type':'string'},'description':'ID показанных объектов; пусто — по понравившимся'}},['listing_ids'])),
@@ -184,6 +189,10 @@ def frame_from_call(call,tools,inputs):
                 raise ValueError('Количество limit не соответствует числу в count_source. Возьми запрошенное новое количество, не прежний размер выдачи.')
         return {'intent':'refine' if update else 'selection','selection':a,**({'needs_extraction':True} if update else {})}
     if call.name=='profile_change':return {'intent':'refine','needs_extraction':True}
+    if call.name=='unsupported_request':
+        if not any(a['quote'].casefold() in row['text'].casefold() for row in inputs):
+            raise ValueError('Неподдержанное пожелание требует дословной цитаты нового ввода')
+        return {'intent':'refine','unsupported':[{'text':a['quote'][:200],'source':a['quote'],'action':'add'}]}
     if call.name=='pause_request':return {'intent':'hold','needs_extraction':True}
     if call.name=='informational_question':return {'intent':'question'}
     if call.name=='call_intent':return {'intent':'call','call_ids':a['listing_ids']}
@@ -191,6 +200,16 @@ def frame_from_call(call,tools,inputs):
 
 
 async def prepare(s):
+    import asyncio
+    seq=s.request_inputs[-1]['seq'] if s.request_inputs else s.request_review_seq
+    if s.review_task is not None and not s.review_task.done() and s.review_task_seq==seq:
+        return await asyncio.shield(s.review_task)
+    s.review_task_seq=seq
+    s.review_task=asyncio.create_task(_prepare(s))
+    return await asyncio.shield(s.review_task)
+
+
+async def _prepare(s):
     """Один принятый разбор на сообщение; предложения инструментов не служат источником пожеланий."""
     inputs=[x for x in s.request_inputs if x['seq'] > s.request_review_seq]
     if not inputs:return None
@@ -226,6 +245,7 @@ async def prepare(s):
         messages=[{'role':'system','content':instruction},guard.data_message('request_review',payload)]
         try:
             requested_action=None
+            condition_sources={}
             response=await s.llm.chat(messages,tools=tools,
                                       tag='request_review',temperature=.01,max_tokens=2500)
             if response.tool_calls:
@@ -251,7 +271,7 @@ async def prepare(s):
                     parsed=await s.llm.chat([{'role':'system','content':prompt},guard.data_message('profile_changes',data)],
                         json_mode=True,tag='profile_extract',temperature=.01,max_tokens=3000)
                     changes=parse_json_loose(parsed.text)
-                    changes=profile_patch.decode(changes,contract_for_changes,inputs,s.profile.get('_unsupported_keys'))
+                    changes=profile_patch.decode(changes,contract_for_changes,inputs,s.profile.get('_unsupported_keys'),provenance=condition_sources)
                     requested_action=changes.pop('_requested_action',None)
                     if rank and (any(v is not None for v in (changes.get('fields') or {}).values()) or
                                  any(v is not None for v in (changes.get('criteria') or {}).values()) or
@@ -262,6 +282,7 @@ async def prepare(s):
             result=input_frame.complete_frame(result,CHANGE_SCHEMA)
             result = input_frame.decode(result, payload['profile'], payload, CHANGE_SCHEMA)
             if requested_action:result['requested_action']=requested_action
+            if condition_sources:result['condition_sources']=condition_sources
             validation.validate(result['changes'], CHANGE_SCHEMA)
             if not guard.input_verdict(result['changes']).ok or guard.output(result['changes'], limit=False) != result['changes']:
                 raise ValueError('Небезопасные изменения')
@@ -273,7 +294,8 @@ async def prepare(s):
             continue
         except LLMError:raise
         if s.request_inputs[-1]['seq']!=version or s.client_revision!=revision or s.profile!=base_profile:
-            raise UnderstandingError('Поступило новое сообщение во время разбора')
+            from .session import Superseded
+            raise Superseded()
         s.request_review={'seq':version,'base_profile':base_profile,**result}
         query=result.get('selection') or {}
         record('request_review',session=s.id,decision=result['decision'],intent=result['intent'],
@@ -308,7 +330,7 @@ async def ensure(s):
         changes={key:value for key,value in changes.items() if key in basic
                  and s.profile.get(key) in (None, [], '')}
     if review['decision'] == 'apply' and changes:
-        result = apply_request(s, changes)
+        result = apply_request(s, changes, condition_sources=review.get('condition_sources'))
     else:
         result = None
     s.request_review_seq = review['seq']

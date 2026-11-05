@@ -147,7 +147,7 @@ async def _more_pages(s, until) -> None:
 @action("search_listings", 3,
         "Найти объявления по запросу: Циан (вторичка и/или новостройки) + база агента; названный район; удобства "
         "и «что рядом» — только подтверждённые. Показывает клиенту экран поиска со справедливой ценой. "
-        "Подтверждение рамок и ипотека для просмотра объявлений не нужны. Возвращает, сколько нашлось и сколько выполняют пожелания.")
+        "До поиска должны быть подтверждены лимит и способ оплаты. Возвращает отдельно подтверждённые и непроверенные варианты.")
 async def search_listings(s) -> dict:
     p = s.profile
     where = ", ".join(dict.fromkeys([p["city"], *(p.get("cities") or [])])) + (f", {p['okrug']}" if p.get("okrug") else "")
@@ -204,7 +204,8 @@ async def search_listings(s) -> dict:
     good = [x for x in st["pool"] if selectable(x, s.prefs)]
     confirmed = sum(fits(x, s.prefs) for x in good)
     out.update(wishes=wishes_text(s.prefs), fit_wishes=confirmed, map_checked=st["map_ok"],
-               confirmed=confirmed, unverified=len(good) - confirmed, rejected=len(st["pool"]) - len(good))
+               confirmed=confirmed, unverified=len(good) - confirmed,
+               rejected=sum(match(x,s.prefs)['status']=='rejected' for x in st['listings']))
     score_into(st["pool"], st["comps"], p, st["meta"])
     order = ranked(good, st["meta"], s.prefs)
     rows = [{"id": x["id"], "address": x["address"], "district": x.get("district"), "area": x["area"],
@@ -253,6 +254,10 @@ async def probe_budget(s, budget_max: int) -> dict:
         "не нужно придумывать их заново. Сравнение/статистика отвечают в чат и сохраняют карточки. "
         "Затем ждёт ответ клиента.")
 async def show_selection(s, query: dict | None = None) -> dict:
+    ticket=s.pending_decisions.get('selection') or {}
+    resume=(ticket.get('payload') or {}).get('selection_context')
+    if s._replaying_operation and resume:
+        return await wait_selection(s,resume['query'],resume['result'])
     if s.selection_operation in ('compare','analyze'):
         return await read_selection(s)
     st = s.search
@@ -288,7 +293,12 @@ async def show_selection(s, query: dict | None = None) -> dict:
                      shown=s.selection_scope_ids or [x['id'] for x in s.shown],seen=st['shown_ids'])
     batch=result.pop('items')
     if not batch:
+        failed=Counter(label for x in st.get('listings',[]) for label in match(x,prefs)['failed'])
+        reason=(' Проверенные объявления не проходят условия: '+', '.join(label for label,_ in failed.most_common(3))+'.'
+                if failed else ' Условия отбора: '+', '.join(Q.describe(f) for f in effective['filters'])+'.'
+                if effective['filters'] else '')
         text=('По этой команде подходящих вариантов нет. '
+              + reason + ' '
               + (f'Сохранил предыдущие {len(s.shown)} предложения; их можно сравнить или изменить отбор.' if s.shown else
                  'Можно изменить условия; новых данных для карточек пока нет.'))
         s.last_issue={'kind':'selection_empty','message':text}
@@ -301,6 +311,7 @@ async def show_selection(s, query: dict | None = None) -> dict:
         return await wait_selection(s,s.selection_query,result)
     first=not s.shown
     s.shown=[card(x,meta,prefs) for x in batch]
+    s.selection_revision+=1
     s.selection_scope_ids=[x['id'] for x in batch]
     s.selection_dirty=False
     s.selection_profile_stale=False
@@ -315,6 +326,8 @@ async def show_selection(s, query: dict | None = None) -> dict:
     s.remember()
     s.push('result',step=4,kind='selection',data={
         'cards':s.shown,'liked':prefs.liked,'disliked':prefs.disliked,'learned':prefs.learned(),
+        'confirmed_count':sum(x['match']['status']=='confirmed' for x in s.shown),
+        'unverified_count':sum(x['match']['status']=='unverified' for x in s.shown),
         'query':effective,'remaining':result['remaining'],'total':result['total'],'aggregates':result['aggregates'],'groups':result['groups'],
     })
     if first and effective == Q.default_query():
@@ -340,7 +353,8 @@ async def wait_selection(s,effective,result):
     st=s.search or {}
     batch=list(s.shown)
     prefs=s.prefs
-    r=await s.ask('selection','Подборка','Выберите квартиры, попросите ещё или уточните условия.')
+    r=await s.ask('selection','Подборка','Выберите квартиры, попросите ещё или уточните условия.',
+                  selection_context={'query':effective,'result':result})
     d=r['data']
     by_id={x['id']:x for x in batch}
     by_id.update({x['id']:x for x in st.get('pool',[])})

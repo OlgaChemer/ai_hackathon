@@ -62,7 +62,7 @@ def build_context(s) -> dict:
     return ctx
 
 
-async def answer(s, text: str) -> None:
+async def reply(s, text: str) -> str:
     system = prompts.QA_SYSTEM + ("\n" + prompts.VOICE_STYLE if s.voice_mode else "") + "\n" + guard.POLICY
     turn = Turn(s.id, settings.agent_turn_timeout_s, s.signal)
     try:
@@ -78,4 +78,8 @@ async def answer(s, text: str) -> None:
         reply = "Сейчас не могу ответить на вопрос: модель недоступна. Продолжаю работу — спросите чуть позже."
         if isinstance(exc, LLMBusy):
             reply = "Модель сейчас занята. Спросите чуть позже — текущая карточка и условия поиска сохранены."
-    await s.say(reply)
+    return reply
+
+
+async def answer(s,text: str) -> None:
+    await s.say(await reply(s,text))

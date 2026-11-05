@@ -75,6 +75,8 @@ class Chat(Base):
     status: Mapped[str] = mapped_column(String(20), default="running")  # running | completed | cancelled | … (done-статусы агента)
     profile: Mapped[dict | None] = mapped_column(JSON)
     memory: Mapped[list | None] = mapped_column(JSON)  # разговор агента с моделью (сообщения и действия) — для продолжения
+    state: Mapped[dict | None] = mapped_column(JSON)
+    state_version: Mapped[int | None] = mapped_column(Integer, default=0)
     last_seq: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
@@ -90,6 +92,22 @@ class ChatEvent(Base):
     seq: Mapped[int] = mapped_column(Integer)
     type: Mapped[str] = mapped_column(String(30))
     payload: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class ChatCommand(Base):
+    """Долговечный приём команды и её квитанция, уникальные внутри диалога."""
+    __tablename__ = 'chat_commands'
+    __table_args__ = (UniqueConstraint('chat_id', 'command_id'),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    chat_id: Mapped[str] = mapped_column(ForeignKey('chats.id', ondelete='CASCADE'), index=True)
+    command_id: Mapped[str] = mapped_column(String(64))
+    kind: Mapped[str] = mapped_column(String(30))
+    fingerprint: Mapped[str] = mapped_column(String(64))
+    payload: Mapped[dict] = mapped_column(JSON)
+    status: Mapped[str] = mapped_column(String(20), default='accepted')
+    progress: Mapped[dict] = mapped_column(JSON, default=dict)
+    result: Mapped[dict | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 

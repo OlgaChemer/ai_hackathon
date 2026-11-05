@@ -12,6 +12,7 @@ import json
 import uuid
 
 from .. import geo
+from .. import db
 from ..llm import LLMError, LLMResponse, ToolCall
 from ..llm.base import LLMBusy
 from ..config import settings
@@ -22,6 +23,7 @@ from .numbers import fmt
 from .profile import missing_required
 from .workflow import next_search_action,available
 from .session import close_dangling_calls
+from .session import Superseded
 
 MAX_ACTIONS_IN_ROW = 14  # действий подряд без ответа клиенту — дальше модель должна заговорить с клиентом
 
@@ -81,22 +83,50 @@ async def think(s, with_actions: bool):
 async def run(s) -> None:
     """Агент работает, пока открыт диалог: отвечает, действует, ждёт клиента. Остановить — отменить задачу."""
     s.push("provider", provider=s.llm.name, model=s.llm.model, degraded=False)
-    if s.query:
-        initial = s.push("message", role="user", text=s.query)
-        if s.refuse(s.query):
-            s.messages.append({"role": "user", "content": await s.inbox.get()})
-        else:
-            s.accept_request(initial["text"], initial["seq"])
-            s.messages.append({"role": "user", "content": s.query})
+    if s.query and not s.started:
+        from .persistence import atomic
+        blocked=False
+        with atomic(s):
+            s.started=True
+            initial = s.push('message',role='user',text=s.query)
+            blocked=bool(s.refuse(s.query))
+            if not blocked:
+                s.accept_request(initial['text'],initial['seq'])
+                s.messages.append({'role':'user','content':s.query})
+        if blocked:s.messages.append({'role':'user','content':await s.inbox.get()})
+    from . import commands
+    commands.resume(s)
+    if s.active_operation is None:
+        ticket=next((t for t in s.pending_decisions.values() if t['kind']=='clarify' and t['status'] in ('waiting','answered')),None)
+        if ticket:
+            answer=await s.ask(ticket['kind'],ticket['title'],ticket['text'],**ticket['payload'])
+            s.messages.extend([{'role':'assistant','content':ticket['text']},
+                               {'role':'user','content':answer['data'].get('text','')}])
+            s.pending_decisions.pop(ticket['kind'],None)
+            s.remember()
     turn = Turn(s.id, settings.agent_turn_timeout_s, s.signal)
-    forced = None
+    active=s.active_operation
+    forced=None
+    if active and active['status'] in ('waiting','running','external_started','external_completed'):
+        if active['name']=='call_seller' and active['status'] in ('running','external_started'):
+            s.call_targets=[]
+            s.request_intent='hold'
+            s.last_issue={'kind':'external_outcome_unknown','message':'Звонок был прерван. Его исход нужно проверить; автоматически повторять звонок не буду.'}
+            await s.say(s.last_issue['message'],await_reply=True)
+            s.operations[active['id']]={**active,'status':'needs_review'}
+            s.active_operation=None
+            s.pending_decisions={k:t for k,t in s.pending_decisions.items() if t.get('operation_id')!=active['id']}
+            s.remember()
+        else:
+            forced=ToolCall(active['name'],active['arguments'],active['id'])
+            s._replaying_operation=True
     auto_progress = set()
     while True:
         s.signal("typing", on=True)
         interrupted_call = None
         try:
             # Ответ в открытой карточке уже проверен HTTP-обработчиком: применяем к границе хода.
-            if s.request_review and s.request_review['seq'] > s.request_review_seq:
+            if s.request_review and s.request_review['seq']>s.request_review_seq:
                 checked = await turn.run(lambda: understanding.ensure(s), kind="tool", name="review_input")
                 if checked and checked.get("needs_clarification"):
                     s.messages.extend([{"role":"assistant","content":checked['question']},
@@ -106,15 +136,18 @@ async def run(s) -> None:
             if s.requested_action and not available(s,s.requested_action):
                 s.requested_action=None;s.profile.pop('_requested_action',None);s.remember()
             intake = next_search_action(s)
-            if intake in ("confirm_red_lines", "ask_payment") or (intake and intake==s.requested_action):
+            if not isinstance(forced,ToolCall) and (intake in ("confirm_red_lines", "ask_payment") or (intake and intake==s.requested_action)):
                 forced = intake
             if forced:
-                resp = LLMResponse("", [ToolCall(forced, {}, f"progress_{uuid.uuid4().hex[:8]}")])
-                record("search_recovery", session=s.id, action=forced)
+                recovered=forced if isinstance(forced,ToolCall) else ToolCall(forced, {}, f"progress_{uuid.uuid4().hex[:8]}")
+                resp = LLMResponse('',[recovered])
+                record('search_recovery',session=s.id,action=recovered.name)
                 forced = None
             else:
+                model_revision=s.client_revision
                 resp = await turn.run(lambda: think(s, with_actions=turn.tool_calls < MAX_ACTIONS_IN_ROW),
                                       kind="llm", name="agent")
+                if model_revision!=s.client_revision:raise Superseded()
             if not resp.tool_calls and any(x['seq'] > s.request_review_seq for x in s.request_inputs):
                 checked = await turn.run(lambda: understanding.ensure(s), kind="tool", name="review_input")
                 if checked and checked.get("needs_clarification"):
@@ -133,7 +166,9 @@ async def run(s) -> None:
                 if len(resp.tool_calls) > MAX_ACTIONS_IN_ROW - turn.tool_calls:
                     raise TurnStopped("tool_limit")
                 calls = [c if c.id else dataclasses.replace(c, id=f"call_{uuid.uuid4().hex[:8]}") for c in resp.tool_calls]
-                s.messages.append({"role": "assistant", "content": guard.output(resp.text or "", s), "tool_calls": [
+                old_ids={c['id'] for m in s.messages for c in m.get('tool_calls') or []}
+                resuming=s._replaying_operation and all(c.id in old_ids for c in calls)
+                if not resuming:s.messages.append({"role": "assistant", "content": guard.output(resp.text or "", s), "tool_calls": [
                     {"id": c.id, "type": "function", "function": {"name": c.name, "arguments": json.dumps(guard.output(guard.sanitize(c.arguments), limit=False), ensure_ascii=False)}}
                     for c in calls]})
                 if resp.functions_state_id:
@@ -173,6 +208,18 @@ async def run(s) -> None:
             s.messages.append({"role": "assistant", "content": text, **({"functions_state_id": resp.functions_state_id} if resp.functions_state_id else {})})
             s.remember()
             turn.finish("await_reply")
+        except Superseded:
+            s.messages=close_dangling_calls(s.messages,'Результат устарел: поступило новое сообщение клиента.')
+            s.signal('typing',on=False)
+            s.signal('model_wait',on=False)
+            s.push('search_progress',on=False)
+            # Ввод уже сохранён в request_inputs; не ждём повторной отправки.
+            while not s.inbox.empty():
+                s.messages.append({'role':'user','content':s.inbox.get_nowait()})
+            s.remember()
+            turn=Turn(s.id,settings.agent_turn_timeout_s,s.signal)
+            forced='update_request';auto_progress.clear()
+            continue
         except (LLMError, TurnStopped) as exc:
             reason = exc.reason if isinstance(exc, TurnStopped) else type(exc).__name__
             turn.finish(reason)
@@ -218,6 +265,9 @@ async def run_session(s) -> None:
         await run(s)
     except asyncio.CancelledError:
         raise
+    except db.PersistenceError:
+        s.signal('error',error_kind='persistence',text='Не удалось сохранить состояние. Успех не подтверждён; повторите отправку после восстановления соединения.')
     except Exception as exc:  # показать ошибку в интерфейсе, а не молча упасть
         record("session_error", session=s.id, error_type=type(exc).__name__)
-        s.push("error", text="Ошибка агента. Попробуйте продолжить диалог.")
+        try:s.push('error',error_kind='internal',text='Ошибка агента. Сохранённый диалог можно продолжить.')
+        except db.PersistenceError:s.signal('error',error_kind='persistence',text='Не удалось сохранить состояние диалога.')

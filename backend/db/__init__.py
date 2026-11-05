@@ -3,8 +3,8 @@
 Схема — models.py, запросы — repo.py. Таблицы создаются при старте; новые колонки добавляются
 в существующие таблицы автоматически (для прототипа вместо Alembic).
 
-Работа синхронная: SQLite отвечает за миллисекунды. Если база недоступна, агент продолжает работать
-без записи — см. safe().
+Работа синхронная. Критические изменения диалога используют required(): при ошибке
+записи успех не подтверждается. safe() предназначена для необязательного кэша и чтения.
 """
 from __future__ import annotations
 
@@ -21,6 +21,25 @@ from .models import Base
 
 log = logging.getLogger(__name__)
 T = TypeVar("T")
+
+
+class PersistenceError(RuntimeError):
+    """Критическое изменение не зафиксировано; подтверждать успех нельзя."""
+
+
+class StateConflict(PersistenceError):
+    """Другой владелец уже изменил сохранённый снимок."""
+
+
+def required(fn: Callable[..., T], *args: Any, **kw: Any) -> T:
+    try:
+        with session() as connection:
+            return fn(connection, *args, **kw)
+    except PersistenceError:
+        raise
+    except Exception as exc:
+        log.exception('critical database operation failed: %s', getattr(fn, '__name__', 'operation'))
+        raise PersistenceError('Не удалось сохранить изменение. Успех не подтверждён; повторите отправку с тем же ID.') from exc
 
 _engine: Engine | None = None
 _factory: sessionmaker | None = None

@@ -88,14 +88,19 @@ def updated_profile(profile, changes):
     for key in LIST_KEYS:  # пустой список от модели — снять условие
         if key in changes and changes[key] == []:
             p[key] = []
-    return p
+    from ..conditions import reconcile
+    return reconcile(p,changes)
 
 
-def apply_request(s, changes):
+def apply_request(s, changes, *, condition_sources=None):
     """Только структурированные, проверенные изменения. Естественный язык здесь не читается."""
     old_profile = dict(s.profile)
     before = {k: s.profile.get(k) for k in CORE_KEYS}
     p = updated_profile(s.profile, changes)
+    if condition_sources:
+        from ..conditions import normalize
+        p['_condition_sources']={**(p.get('_condition_sources') or {}),**condition_sources}
+        normalize(p)
     notes = []
     if p.get("city") and p["city"] not in sources.SUPPORTED_CITIES:
         notes.append(f"Города «{p['city']}» нет среди {len(sources.SUPPORTED_CITIES)} городов Циана, которые я знаю. "
@@ -106,6 +111,9 @@ def apply_request(s, changes):
     if not missing:
         p["summary"] = profile_summary(p)
     s.profile = p
+    changed_keys={k for k in old_profile.keys() | p.keys()
+                  if not k.startswith('_') and k not in ('summary','market') and p.get(k)!=old_profile.get(k)}
+    if p!=old_profile:s.profile_revision+=1
     s.prefs.sync(p)
     if any(p.get(k) != before[k] for k in CORE_KEYS):
         budget_changed = p.get("budget_max") != old_profile.get("budget_max")
@@ -117,7 +125,7 @@ def apply_request(s, changes):
         s.invalidate_deal(keep_limit=not budget_changed)
         if p.get("city") != before["city"]:
             s.market = None
-    elif s.search and any(p.get(k) != old_profile.get(k) for k in changes) and (changes.keys() & {"features", "poi", "kitchen_min", "area_min", "not_first_floor", "not_last_floor",
+    elif s.search and (changed_keys & {"features", "poi", "kitchen_min", "area_min", "not_first_floor", "not_last_floor",
                                          "condition", "material", "year_min", "metro_max_minutes", "soft_criteria", "clear_criteria", "avoid_districts", "filters", "wishes"}):
         # Возвращаем ранее отфильтрованные варианты при снятии жёсткого ограничения.
         # Рынок/город/комнаты не менялись: исходная выдача остаётся актуальным пулом.
@@ -132,7 +140,7 @@ def apply_request(s, changes):
         s.chosen = s.current = None
         s.journal.clear()
         notes.append("Пожелания учтены: при следующем показе подборки (show_selection) отфильтрую и пересортирую.")
-    if any(p.get(k) != old_profile.get(k) for k in changes if k != 'seller_questions'):
+    if changed_keys-{'seller_questions'}:
         s.selection_profile_stale=True
         s.profile['_selection_stale']=True
         if s.shown:s.push('selection_notice',text='Условия изменились. До успешного нового отбора сохранены предыдущие карточки; они относятся к прежним условиям.')

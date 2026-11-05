@@ -1,11 +1,21 @@
 // Обёртки над HTTP API агента.
 
 async function request(path, options = {}) {
-  const res = await fetch(path, {
+  const command = options.method === "POST" && /\/(?:message|confirm)$/.test(path);
+  const body = options.body ? { ...options.body } : undefined;
+  if (command && !body.command_id) body.command_id = crypto.randomUUID();
+  const init = {
     headers: { "Content-Type": "application/json" },
     ...options,
-    body: options.body ? JSON.stringify(options.body) : undefined,
-  });
+    body: body ? JSON.stringify(body) : undefined,
+  };
+  let res;
+  try { res = await fetch(path, init); }
+  catch (error) {
+    if (!command) throw error;
+    // Повтор сетевой отправки использует тот же ID, сервер вернёт квитанцию.
+    res = await fetch(path, init);
+  }
   if (!res.ok) {
     let detail = res.statusText;
     try { detail = (await res.json()).detail ?? detail; } catch { /* не JSON */ }

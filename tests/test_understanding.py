@@ -430,7 +430,7 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
         s.profile['payment'] = 'cash'
         s.client_revision += 1
         release.set()
-        with self.assertRaises(U.UnderstandingError):
+        with self.assertRaises(session.Superseded):
             await task
         self.assertEqual(s.profile['city'],'Москва')
         self.assertEqual(s.profile['payment'],'cash')
@@ -471,9 +471,9 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
         future = asyncio.get_running_loop().create_future()
         s.pending['price'] = future
         before = deepcopy(s.profile)
-        with patch.object(qa,'answer',AsyncMock()) as answer:
+        with patch.object(qa,'reply',AsyncMock(return_value='Ответ на вопрос')) as answer:
             self.assertEqual(await s.receive_text(text),'question')
-            await asyncio.sleep(0)
+            await s.qa_task
             answer.assert_awaited_once()
         self.assertFalse(future.done())
         self.assertEqual(s.profile,before)
@@ -503,7 +503,7 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
         event = s.push('message',role='user',text='Нет, Самара')
         s.accept_request(event['text'],event['seq'])
         release.set()
-        with self.assertRaises(U.UnderstandingError):
+        with self.assertRaises(session.Superseded):
             await task
         self.assertEqual(s.profile['city'],'Москва')
 

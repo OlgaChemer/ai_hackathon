@@ -49,11 +49,16 @@ def tools(s=None) -> list[Tool]:
 
 
 async def execute(s, call: ToolCall) -> dict:
+    from ..operations import run
+    return await run(s,call,_execute)
+
+
+async def _execute(s, call: ToolCall) -> dict:
     """Выполнить действие, которое выбрала модель. Ошибки не роняют агента — модель получает объяснение."""
     _load()
     a = REGISTRY.get(call.name) if isinstance(call.name, str) else None
     if a is None:
-        return {"error": f"Нет действия с таким именем. Доступны: {', '.join(REGISTRY)}"}
+        return {"error_kind":"unsupported_action","error": f"Нет действия с таким именем. Доступны: {', '.join(REGISTRY)}"}
     # Семантический разбор выполняется до проверки допуска: новые условия могут отозвать согласия.
     if s.request_inputs:
         from .. import understanding
@@ -76,31 +81,30 @@ async def execute(s, call: ToolCall) -> dict:
         hint = ""
         if call.name == "search_listings":
             hint = "Для поиска нужны город, комнаты и бюджет (update_request), confirm_red_lines и способ покупки (ask_payment). "
-        return {"error": f"{hint}Действие недоступно в текущем состоянии. Доступны: {names}"}
+        return {"error_kind":"action_unavailable","error": f"{hint}Действие недоступно в текущем состоянии. Доступны: {names}"}
     args = call.arguments
     try:
         validation.validate(args, a.parameters)
         inspect.signature(a.run).bind(s, **args)
     except (ValueError, TypeError):
-        return {"error": "Неверные параметры действия: проверь типы, диапазоны и обязательные поля."}
+        return {"error_kind":"model_arguments","error": "Неверные параметры действия: проверь типы, диапазоны и обязательные поля."}
     verdict = guard.input_verdict(args)
     if not verdict.ok or guard.output(args, limit=False) != args:
         guard.note(s, "tool", verdict.category or "unsafe_output", "")
-        return {"error": "Параметры действия отклонены проверкой безопасности."}
+        return {"error_kind":"invalid_arguments","error": "Параметры действия отклонены проверкой безопасности."}
+    worker=s.fork()
     if a.step and not replay:
-        await s.step(a.step)
+        await worker.step(a.step)
     try:
-        result=await a.run(s, **args)
+        result=await a.run(worker, **args)
+        worker.flush(result=result)
         if s.requested_action==call.name:
             s.requested_action=None
             s.profile.pop('_requested_action',None)
             s.remember()
         return result
     except ActionError as exc:
-        return {"error": str(exc)}
-    except TypeError:  # модель передала параметры не того вида
-        log.warning("неверные параметры действия %s", call.name)
-        return {"error": "Неверные параметры действия."}
+        return {"error_kind":"action_unavailable","error": str(exc)}
 
 
 def _load() -> None:

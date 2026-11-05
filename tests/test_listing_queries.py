@@ -25,7 +25,7 @@ class QueryEngineTest(unittest.TestCase):
                          'filters':[condition('nearby:kindergarten','exists')]})
         x=listing(city='Москва',rooms=2,price=10_000_000)
         self.assertTrue(passes_hard_filters(x,p))
-        self.assertEqual(evaluate(p,x)['status'],'rejected')
+        self.assertEqual(evaluate(p,x)['status'],'unverified')
         x['nearby']={'kindergarten':{'name':'Садик','dist':350}}
         self.assertEqual(evaluate(p,x)['status'],'confirmed')
 
@@ -62,7 +62,7 @@ class QueryEngineTest(unittest.TestCase):
         p=merge_profile({'filters':[condition('delivery_year','eq',2027)]})
         s=session.Session('test','',ScriptedLLM());s.prefs.sync(p)
         self.assertEqual(evaluate(p,x)['status'],'unverified')
-        self.assertFalse(selectable(x,s.prefs))
+        self.assertTrue(selectable(x,s.prefs))  # показывается с unverified, не как совпадение
 
     def test_disjoint_years_and_derived_price_per_metre(self):
         rows=[listing(id=str(y),delivery_year=y,price=10_000_000,area=50) for y in (2026,2027,2028,2029)]
