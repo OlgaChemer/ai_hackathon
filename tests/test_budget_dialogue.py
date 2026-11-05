@@ -180,6 +180,7 @@ class MarketScope(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):ground_money(27_000_000,text,[{'text':text}])
         self.assertEqual(ground_money(80_000_000,text,[{'text':text}]),80_000_000)
         self.assertEqual(ground_money(20_000_000,'20 млн',[{'text':text}]),20_000_000)
+        self.assertEqual(ground_money(6_700_000,'6 700000',[{'text':'Лимит 6 700000'}]),6_700_000)
 
     async def test_both_markets_all_rooms_center_and_unknowns_share_one_sample_policy(self):
         p=merge_profile({'city':'Москва','rooms_options':[2,3],'housing':'both','prefer_center':True,'center_required':True})

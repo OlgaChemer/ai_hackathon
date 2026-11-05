@@ -16,6 +16,8 @@ def ground_money(actual,quote,messages):
         citations=list(re.finditer(re.escape(quote),text,re.IGNORECASE))
         for mention in MONEY_MENTION.finditer(text):
             if not any(mention.start()<c.end() and mention.end()>c.start() for c in citations):continue
+            # Не принимай хвост неоднозначно разбитого числа за отдельную сумму.
+            if re.search(r'\d[ .]+$',text[:mention.start()]):continue
             amount=parse_money(mention.group())
             if amount is not None:values.add(amount)
     if not values or actual in values:return actual
