@@ -94,6 +94,10 @@ def decode(patch,contract,inputs,aliases=None,*,provenance=None,profile=None,rea
     patch=deepcopy(patch)
     patch.setdefault('states',[])
     patch.setdefault('filters',[])
+    for group in ('fields','criteria','filters','states'):
+        rows=patch.get(group,[])
+        if not isinstance(rows,list) or any(not isinstance(row,dict) for row in rows):
+            raise ValueError(group+' должен быть списком объектов')
     if reading is not None:
         from .clarification import names_property
         def room_fact(row):
