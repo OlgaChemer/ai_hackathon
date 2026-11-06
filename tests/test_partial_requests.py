@@ -204,6 +204,12 @@ class PartialRequests(unittest.IsolatedAsyncioTestCase):
         r=await understanding.prepare(s)
         self.assertEqual(r['intent'],'question');self.assertEqual(r['changes'],{})
         self.assertEqual(s.llm.chat.await_count,1)
+        s=self.agent({'city':'Москва','rooms':2})
+        s.llm.chat=AsyncMock(return_value=LLMResponse('',[ToolCall('other_input',{})]))
+        text='А что надо то?';e=s.push('message',role='user',text=text);s.accept_request(text,e['seq'])
+        r=await understanding.prepare(s)
+        self.assertEqual(r['intent'],'question');self.assertFalse(r.get('unsupported'))
+        self.assertEqual(s.llm.chat.await_count,1)
 
     async def test_read_only_operations_do_not_reinterpret_their_metric_as_a_condition(self):
         for operation in ('compare','analyze','more'):

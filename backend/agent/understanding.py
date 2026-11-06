@@ -354,7 +354,7 @@ async def _prepare(s):
                 from .clarification import INFORMATION_ACKS
                 information_ack=(response.tool_calls[0].name=='request_information' and len(inputs)==1
                                  and inputs[0]['text'].strip().casefold() in INFORMATION_ACKS)
-                read_only=(response.tool_calls[0].name=='informational_question' or
+                read_only=(response.tool_calls[0].name in ('informational_question','other_input') or
                            (response.tool_calls[0].name=='read_selection' and result['intent']=='selection'
                             and (result.get('selection') or {}).get('operation') in ('compare','analyze','more')))
                 no_facts=read_only or (unsupported_route and not basics)
