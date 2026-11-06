@@ -201,6 +201,12 @@ class PartialRequests(unittest.IsolatedAsyncioTestCase):
         parsed=profile_patch.decode(markets,contract,inputs)
         self.assertEqual(parsed['fields']['housing']['value'],'both')
         self.assertNotIn('filters',parsed['fields'])
+        basics=deepcopy(data);basics['states']=[]
+        basics['filters']=[{'field':'price','op':'lte','values':['20000000'],'priority':'required','source':text},
+            {'field':'city','op':'eq','values':['Москва'],'priority':'required','source':text}]
+        parsed=profile_patch.decode(basics,contract,inputs)
+        self.assertEqual(parsed['fields']['budget_max']['value'],20_000_000)
+        self.assertTrue(parsed['places']);self.assertNotIn('filters',parsed['fields'])
         generation=profile_patch.generation_schema(contract,inputs)
         self.assertNotIn('filters',generation['properties']['fields']['items']['properties']['key']['enum'])
         uncertain=deepcopy(data)

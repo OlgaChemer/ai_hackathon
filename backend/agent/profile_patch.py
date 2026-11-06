@@ -88,7 +88,7 @@ def unverifiable_distance(f):
     except (ValueError,TypeError):return False
 
 
-def decode(patch,contract,inputs,aliases=None,*,provenance=None):
+def decode(patch,contract,inputs,aliases=None,*,provenance=None,profile=None):
     if not isinstance(patch,dict):raise ValueError('Изменения должны быть JSON-объектом')
     patch=deepcopy(patch)
     patch.setdefault('states',[])
@@ -97,6 +97,15 @@ def decode(patch,contract,inputs,aliases=None,*,provenance=None):
     # Декодер старых сохранённых результатов по-прежнему поддерживается.
     for item in patch['filters']:
         quote=item.get('source','')
+        if item.get('field')=='price' and item.get('op')=='lte' and item.get('priority')=='required' and len(item['values'])==1:
+            amount=float(item['values'][0])
+            if amount.is_integer() and 1<=amount<=1_000_000_000:
+                patch.setdefault('fields',[]).append({'key':'budget_max','value':str(int(amount)),'source':quote})
+                continue
+        if item.get('field') in ('city','district') and item.get('op') in ('eq','in') and item.get('priority')=='required':
+            key='city' if item['field']=='city' else 'districts'
+            patch.setdefault('fields',[]).append({'key':key,'value':json.dumps(item['values'],ensure_ascii=False),'source':quote})
+            continue
         if item.get('field')=='is_new' and item.get('op') in ('eq','in') and item.get('priority')=='required':
             values=set(item['values'])
             if values and values<={'true','false'}:
@@ -245,7 +254,9 @@ def decode(patch,contract,inputs,aliases=None,*,provenance=None):
                     lemmas=input_frame.place_lemmas(token,input_frame.catalog_words())
                     matches=[w for w in lemmas if w in city.split() or normalize_city(w)==city]
                     if len(matches)==1:words.append({'source':token,'lemma':matches[0]})
-                if not words:raise ValueError('Название города требует исходных слов из новой реплики')
+                if not words:
+                    if profile and city in [profile.get('city'),*(profile.get('cities') or [])]:continue
+                    raise ValueError('Название города требует исходных слов из новой реплики')
                 frame['places'].append({'words':words})
             continue
         if key in known:
