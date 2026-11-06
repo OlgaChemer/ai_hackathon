@@ -100,6 +100,8 @@ def unverifiable_distance(f):
 def decode(patch,contract,inputs,aliases=None,*,provenance=None,profile=None,reading=None):
     if not isinstance(patch,dict):raise ValueError('Изменения должны быть JSON-объектом')
     patch=deepcopy(patch)
+    if 'selection' not in contract['properties'] and patch.get('selection') in (None,[]):
+        patch.pop('selection',None)  # пустой слот старого формата не является командой
     patch.setdefault('states',[])
     patch.setdefault('filters',[])
     patch.setdefault('withdraw_unsupported',[])

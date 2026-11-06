@@ -342,9 +342,9 @@ async def _prepare(s):
                     if not basics:contract_for_changes['properties']['fields']['maxItems']=0
                     else:contract_for_changes['properties']['fields']['items']['properties']['key']['enum']=sorted(basics)
                     if 'city' not in basics:contract_for_changes['properties']['places']['maxItems']=0
-                if rank or response.tool_calls[0].name=='call_intent':
-                    if rank:data['reading_command']=result['selection']
-                    else:data['message_purpose']='Просьба звонить. Номер квартиры — ссылка на объект, не количество карточек или комнат. Извлеки только явно новые условия; selection запрещён.'
+                if response.tool_calls[0].name!='profile_change':
+                    if result.get('selection') is not None:data['reading_command']=result['selection']
+                    elif response.tool_calls[0].name=='call_intent':data['message_purpose']='Просьба звонить. Номер квартиры — ссылка на объект, не количество карточек или комнат. Извлеки только явно новые условия; selection запрещён.'
                     contract_for_changes['properties'].pop('selection')
                     contract_for_changes['required'].remove('selection')
                 prompt=PROFILE_SYSTEM+'\n'+guard.POLICY
@@ -354,8 +354,9 @@ async def _prepare(s):
                 from .clarification import INFORMATION_ACKS
                 information_ack=(response.tool_calls[0].name=='request_information' and len(inputs)==1
                                  and inputs[0]['text'].strip().casefold() in INFORMATION_ACKS)
-                read_only=(response.tool_calls[0].name=='read_selection' and result['intent']=='selection'
-                           and (result.get('selection') or {}).get('operation') in ('compare','analyze','more'))
+                read_only=(response.tool_calls[0].name=='informational_question' or
+                           (response.tool_calls[0].name=='read_selection' and result['intent']=='selection'
+                            and (result.get('selection') or {}).get('operation') in ('compare','analyze','more')))
                 no_facts=read_only or (unsupported_route and not basics)
                 parsed=(LLMResponse(json.dumps({key:[] for key in strict_schema['properties']})) if information_ack or no_facts else
                         await s.llm.chat([{'role':'system','content':prompt},guard.data_message('profile_changes',data)],

@@ -203,6 +203,7 @@ class PartialRequests(unittest.IsolatedAsyncioTestCase):
         e=s.push('message',role='user',text=text);s.accept_request(text,e['seq'])
         r=await understanding.prepare(s)
         self.assertEqual(r['intent'],'question');self.assertEqual(r['changes'],{})
+        self.assertEqual(s.llm.chat.await_count,1)
 
     async def test_read_only_operations_do_not_reinterpret_their_metric_as_a_condition(self):
         for operation in ('compare','analyze','more'):
