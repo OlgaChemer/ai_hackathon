@@ -67,6 +67,12 @@ class PartialRequests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(capabilities.decision(s,'search_listings')[0])
         s.profile['payment']='mortgage_saving'
         self.assertTrue(capabilities.decision(s,'savings_plan')[0])
+        s=self.agent({'city':'Москва'})
+        self.assertTrue(capabilities.decision(s,'market_prices')[0])
+        s.research_query={'respect_budget':True,'group_by':'rooms','aggregates':[]}
+        self.assertFalse(capabilities.decision(s,'market_prices')[0])
+        s.profile['budget_max']=20_000_000
+        self.assertTrue(capabilities.decision(s,'market_prices')[0])
 
     def test_explicit_call_executes_verified_target_and_does_not_repeat_completed_call(self):
         s=self.agent({'city':'Москва','budget_max':20_000_000,'payment':'cash'})

@@ -158,6 +158,8 @@ def apply_request(s, changes, *, condition_sources=None):
 async def market_prices(s) -> dict:
     if not s.profile.get("city"):
         raise ActionError("Для исследования объявлений нужен город; комнаты и бюджет необязательны.")
+    if (s.research_query or {}).get('respect_budget') and s.profile.get('budget_max') is None:
+        raise ActionError('Чтобы посчитать доступные варианты в пределах бюджета, нужна сумма. Рыночные цены можно исследовать без неё.')
     from ...sources.market_estimate import current
     from ..research import profile as research_profile
     if not current(s.market,research_profile(s)):

@@ -21,7 +21,7 @@ class Policy:
 POLICIES={
     'update_request':Policy(('new_input',),('search','selection','agreements','finance')),
     'ask_client':Policy(('can_clarify',)),
-    'market_prices':Policy(('search_scope',),information=True),
+    'market_prices':Policy(('search_scope','research_budget'),information=True),
     'confirm_red_lines':Policy(('budget_known','limit_needed')),
     'ask_payment':Policy(('payment_needed',),('finance',)),
     'ask_family':Policy(('family_needed',),('finance',)),
@@ -41,6 +41,7 @@ POLICIES={
 
 REASONS={
     'search_scope':'Для поиска нужен город.', 'budget_known':'Для этого действия нужен конкретный лимит покупки.',
+    'research_budget':'Чтобы определить, на что хватит средств, нужна сумма. Можно отдельно изучить цены без ограничения бюджета.',
     'new_input':'Нет новых условий для применения.', 'can_clarify':'Исходных данных достаточно; переходите к подбору.',
     'city_rooms':'Нужны город и число комнат.', 'profile_ready':'Нужны город, комнаты и бюджет.',
     'limit_needed':'Этот лимит уже подтверждён.', 'payment_needed':'Способ оплаты уже известен.',
@@ -85,6 +86,7 @@ def decision(s,name):
         'family_or_cash':p.get('payment')=='cash' or p.get('children') is not None,
         'saving_payment':p.get('payment')=='mortgage_saving',
         'search_scope':not missing_search(p),'budget_known':p.get('budget_max') is not None,
+        'research_budget':not (s.research_query or {}).get('respect_budget') or p.get('budget_max') is not None,
         'search_ready':not missing_search(p) and work,
         'selection_source':(bool(s.shown) if s.selection_query.get('scope')=='shown' else s.search is not None)
             if s.selection_operation in ('compare','analyze') else s.search is not None,
