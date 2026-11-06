@@ -98,6 +98,14 @@ def decode(patch,contract,inputs,aliases=None,*,provenance=None,profile=None):
     # Декодер старых сохранённых результатов по-прежнему поддерживается.
     for item in patch['filters']:
         quote=item.get('source','')
+        if (item.get('field')=='center_km' and item.get('op')=='lte'
+                and item.get('priority')=='required' and item.get('values')==['5']
+                and any(row.get('key')=='center_required' and row.get('value') in ('true',True)
+                        and row.get('source')==quote for row in patch.get('fields',[]))):
+            # Эквивалент уже извлечённого именованного условия. Пять километров
+            # здесь — продуктовая политика центра, а не новое число клиента.
+            # Другой радиус остаётся самостоятельным проверяемым ограничением.
+            continue
         if item.get('field')=='price' and item.get('op')=='lte' and item.get('priority')=='required' and len(item['values'])==1:
             amount=float(item['values'][0])
             if amount.is_integer() and 1<=amount<=1_000_000_000:

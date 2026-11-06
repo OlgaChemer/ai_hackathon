@@ -74,6 +74,24 @@ class PartialRequests(unittest.IsolatedAsyncioTestCase):
         s.profile['budget_max']=20_000_000
         self.assertTrue(capabilities.decision(s,'market_prices')[0])
 
+    def test_equivalent_center_predicate_does_not_invent_a_second_constraint(self):
+        from backend.agent import input_frame,profile_patch
+        from backend.agent.request_schema import CHANGE_SCHEMA
+        text='Ищу две комнаты в центре Москвы до 30 млн.'
+        inputs=[{'text':text}]
+        contract=profile_patch.schema(input_frame.schema(CHANGE_SCHEMA,inputs))
+        data={key:[] for key in contract['properties']}
+        data['fields']=[{'key':'center_required','value':'true','source':text}]
+        predicate={'field':'center_km','op':'lte','values':['5'],'priority':'required','source':text}
+        data['filters']=[predicate]
+        frame=profile_patch.decode(data,contract,inputs)
+        self.assertEqual(frame['fields']['center_required']['value'],True)
+        self.assertNotIn('filters',frame['fields'])
+        for radius in ('3','7'):
+            data['filters']=[{**predicate,'values':[radius]}]
+            frame=profile_patch.decode(data,contract,inputs)
+            self.assertEqual(frame['fields']['filters']['value'][0]['values'],[radius])
+
     def test_explicit_call_executes_verified_target_and_does_not_repeat_completed_call(self):
         s=self.agent({'city':'Москва','budget_max':20_000_000,'payment':'cash'})
         x=listing(id='verified-target',city='Москва')
