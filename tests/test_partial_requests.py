@@ -51,6 +51,14 @@ class PartialRequests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(s.profile['rooms_options'],[1,2]);self.assertEqual(s.profile['field_states']['rooms'],'constrained')
         self.assertEqual(s.profile['field_states']['budget_max'],'constrained')
 
+    def test_replacing_an_alias_keeps_the_new_predicate_for_the_same_property(self):
+        from backend.agent.actions.request import updated_profile
+        for alias,field,old_value,new_value in [('not_first_floor','floor',True,'10'),('area_min','area',40,'80')]:
+            predicate={'field':field,'op':'gt','values':[new_value],'priority':'required'}
+            p=updated_profile(merge_profile({alias:old_value}),{'clear_criteria':[alias],'filters':[predicate]})
+            self.assertEqual(p['filters'],[predicate])
+            self.assertIn(p[alias],(None,False))
+
     def test_wildcard_url_does_not_invent_rooms_or_price(self):
         url=sources.cian.build_url('Москва',None,None)
         self.assertNotIn('room',url);self.assertNotIn('maxprice',url)

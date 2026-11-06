@@ -143,5 +143,6 @@ def reconcile(profile,changes):
         if field=='center_km':profile['center_required']=False
     for key in changes.get('clear_criteria') or []:
         field=property_id(key)
-        profile['filters']=[f for f in profile.get('filters') or [] if f['field']!=field]
+        replacement=any(f['field']==field and f['priority']!='remove' for f in changes.get('filters') or [])
+        if not replacement:profile['filters']=[f for f in profile.get('filters') or [] if f['field']!=field]
     return normalize(profile)

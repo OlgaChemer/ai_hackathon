@@ -75,7 +75,8 @@ def updated_profile(profile, changes):
         # одно свойство. Его явная отмена снимает оба представления.
         field=PROPERTY_FIELDS.get(key,key)
         if field.startswith('poi:'):field='nearby:'+field[4:]
-        p['filters']=[f for f in p.get('filters') or [] if f['field']!=field]
+        replacement=any(f['field']==field and f['priority']!='remove' for f in changes.get('filters') or [])
+        if not replacement:p['filters']=[f for f in p.get('filters') or [] if f['field']!=field]
         if key.startswith("poi:"):
             p["poi"] = [v for v in p["poi"] if v != key[4:]]
         elif key.startswith("feature:"):
