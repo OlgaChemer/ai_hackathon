@@ -314,6 +314,10 @@ async def _prepare(s):
                 result=frame_from_call(response.tool_calls[0],tools,inputs)
                 extract=result.pop('needs_extraction',False)
                 rank=(result.get('selection') or {}).get('operation')=='rank'
+                # Маршрутизатор может выбрать отбор и пропустить новые условия
+                # в той же фразе. Для действий проверяем факты независимо от
+                # предложенного update_conditions; это один раз на новый ввод.
+                extract=extract or rank or response.tool_calls[0].name in ('request_information','call_intent')
                 if extract:
                     data={k:payload[k] for k in ('messages','profile','supported_cities','ambiguous_catalog_names','listing_fields','pending_decisions')}
                     data['unsupported_conditions']=s.profile.get('_unsupported_conditions') or []
@@ -335,7 +339,7 @@ async def _prepare(s):
                     changes=parse_json_loose(parsed.text)
                     changes=profile_patch.decode(changes,contract_for_changes,inputs,s.profile.get('_unsupported_keys'),provenance=condition_sources)
                     requested_action=changes.pop('_requested_action',None)
-                    if rank and (any(v is not None for v in (changes.get('fields') or {}).values()) or
+                    if (rank or response.tool_calls[0].name=='request_information') and (any(v is not None for v in (changes.get('fields') or {}).values()) or
                                  any(v is not None for v in (changes.get('criteria') or {}).values()) or
                                  changes.get('places') or changes.get('unsupported')):
                         result['intent']='refine'

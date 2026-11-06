@@ -51,7 +51,7 @@ async def budget(base):
         assert m['scope']['rooms']==[3] and m['scope']['center_radius_km']==5
         assert set(m['scope']['markets'])=={True,False}
         assert any('медиана' in text.casefold() and 'выборк' in text.casefold() for text in d.messages),d.messages
-        await d.send('Все равно новостройка или вторичка, ближе к центру. За наличку.')
+        await d.send('Всё равно, новостройка или вторичка. Покупаю за наличные; остальные условия сохрани.')
         step=await next_step(d)
         assert d.profile['housing']=='both' and d.profile['payment']=='cash',d.profile
         await d.send('Да я хз, какой средний?');step=await next_step(d)
@@ -61,7 +61,8 @@ async def budget(base):
         step=await next_step(d)
         assert step.get('kind')=='selection' and d.cards,(step,d.messages[-4:])
         assert d.profile['rooms_options']==[3] and d.profile['budget_max']==80_000_000
-        assert d.profile['city']=='Москва' and d.profile['center_required']
+        from backend.agent.conditions import compile_profile
+        assert d.profile['city']=='Москва' and any(c['field']=='center_km' and c['priority']=='required' for c in compile_profile(d.profile)),d.profile
         print(json.dumps({'case':'unknown_budget_to_market_prices_to_selection','ok':True,
             'median':m['median'],'sample':m['count'],'markets':m['markets'],'cards':len(d.cards)},ensure_ascii=False),flush=True)
     finally:await d.close()

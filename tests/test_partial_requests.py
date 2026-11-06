@@ -137,6 +137,25 @@ class PartialRequests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(s.profile['not_first_floor']);self.assertFalse(s.profile['not_last_floor'])
         self.assertEqual(s.profile['budget_max'],20_000_000)
 
+    async def test_read_route_cannot_skip_new_conditions_in_same_utterance(self):
+        class Model(ScriptedLLM):
+            async def chat(model,messages,**kw):
+                if kw.get('tag')=='request_review':
+                    return LLMResponse('',[ToolCall('read_selection',{'operation':'rank','scope':'all','limit':None,
+                        'aggregates':[],'group_by':None,'order_by':'value_score','direction':'desc','keep_order':False,
+                        'update_conditions':False,'count_source':None})])
+                if kw.get('tag')=='profile_extract':
+                    return LLMResponse(json.dumps({'fields':[
+                        {'key':'housing','value':'both','source':text},{'key':'payment','value':'cash','source':text}],
+                        'criteria':[],'states':[],'filters':[],'places':[],'unsupported':[],'requested_card':[]}))
+                return await super().chat(messages,**kw)
+        s=self.agent({'city':'Москва','rooms':3});s.shown=[listing()];s.search={'pool':list(s.shown)};s.llm=Model()
+        text='Новостройка или вторичка, за наличные. Остальные условия сохрани.'
+        e=s.push('message',role='user',text=text);s.accept_request(text,e['seq'])
+        r=await understanding.prepare(s)
+        self.assertEqual(r['changes']['housing'],'both');self.assertEqual(r['changes']['payment'],'cash')
+        self.assertNotIn('rooms_options',r['changes'])
+
     def test_research_query_reuses_numeric_executor_and_rejects_invalid_metrics(self):
         rows=[listing(id='a',area=40),listing(id='b',area=80)]
         result=research.execute(rows,{'respect_budget':True,'group_by':None,'aggregates':[{'field':'area','function':'max'}]})

@@ -18,6 +18,9 @@ from tests.test_llm_and_agent import listing
 
 class BudgetModel(ScriptedLLM):
     async def chat(self,messages,**kw):
+        if kw.get('tag')=='profile_extract':
+            return LLMResponse(json.dumps({'fields':[],'criteria':[],'states':[],'filters':[],
+                'places':[],'unsupported':[],'selection':[],'requested_card':[]}))
         if kw.get('tag')=='request_review':
             payload=json.loads(next(m['content'] for m in messages if m['role']=='user'))['data']
             self.reviews.append(payload)
