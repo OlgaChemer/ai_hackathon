@@ -205,6 +205,74 @@ class ChatsAndAuthTest(unittest.TestCase):
             evs = read_until(laptop, f"/api/chat/{sid}/stream", lambda e: e["type"] == "replay_end")
             self.assertTrue(any(e["type"] == "confirm" for e in evs))
 
+    def test_all_anonymous_chats_move_in_any_state(self):
+        """Несколько анонимных подборов в разных состояниях — при регистрации переходят ВСЕ и открываются с другого устройства.
+        live — агент ждёт ответа в памяти; evicted — выгружен из памяти (только в базе); fresh — создан, ленту не открывали."""
+        with self.client() as phone, self.client() as laptop:
+            live, _ = self.start_chat(phone)
+            evicted, _ = self.start_chat(phone)
+            O.SESSIONS[evicted].task.cancel()
+            O.SESSIONS.pop(evicted)  # как после уборки простаивающих или перезапуска
+            fresh = phone.post("/api/session", json={"query": "Студия в Москве до 12 млн"}).json()["id"]
+            r = phone.post("/api/auth/register", json={"email": "many@ya.ru", "password": "секрет123"}).json()
+            self.assertEqual(r["moved_chats"], 3)
+            self.assertEqual({c["id"] for c in phone.get("/api/chats").json()["chats"]}, {live, evicted, fresh})
+            laptop.post("/api/auth/login", json={"email": "many@ya.ru", "password": "секрет123"})
+            self.assertEqual({c["id"] for c in laptop.get("/api/chats").json()["chats"]}, {live, evicted, fresh})
+            for sid in (live, evicted):
+                evs = read_until(laptop, f"/api/chat/{sid}/stream", lambda e: e["type"] == "replay_end")
+                self.assertTrue(any(e["type"] == "confirm" for e in evs), sid)
+            # живой подбор продолжается с другого устройства, выгруженный поднимается из базы с владельцем
+            self.assertEqual(laptop.post(f"/api/chat/{live}/message", json={"text": "наличными"}).status_code, 200)
+            self.assertEqual(laptop.post(f"/api/chat/{evicted}/message", json={"text": "наличными"}).status_code, 200)
+            self.assertIsNotNone(O.SESSIONS[evicted].user_id)
+
+    def test_chats_survive_server_restart_after_login(self):
+        """Перенос записан в базу: после перезапуска сервера (память пуста) подборы по-прежнему в аккаунте."""
+        with self.client() as phone:
+            a, _ = self.start_chat(phone)
+            b, _ = self.start_chat(phone)
+            phone.post("/api/auth/register", json={"email": "restart@ya.ru", "password": "секрет123"})
+        for s in O.SESSIONS.values():
+            if s.task and not s.task.done():
+                s.task.cancel()
+        O.SESSIONS.clear()
+        with self.client() as laptop:
+            laptop.post("/api/auth/login", json={"email": "restart@ya.ru", "password": "секрет123"})
+            self.assertEqual({c["id"] for c in laptop.get("/api/chats").json()["chats"]}, {a, b})
+            evs = read_until(laptop, f"/api/chat/{a}/stream", lambda e: e["type"] == "replay_end")
+            self.assertTrue(any(e["type"] == "confirm" for e in evs))
+
+    def test_login_on_other_browser_does_not_take_this_browsers_chats(self):
+        """Перенос — из того браузера, где выполнен вход. Подборы телефона не переходят, если войти только на ноутбуке."""
+        with self.client() as phone, self.client() as laptop:
+            laptop.post("/api/auth/register", json={"email": "two@ya.ru", "password": "секрет123"})
+            sid, _ = self.start_chat(phone)
+            self.assertEqual(laptop.get("/api/chats").json()["chats"], [])
+            r = phone.post("/api/auth/login", json={"email": "two@ya.ru", "password": "секрет123"}).json()
+            self.assertEqual(r["moved_chats"], 1)
+            self.assertEqual([c["id"] for c in laptop.get("/api/chats").json()["chats"]], [sid])
+
+    def test_chat_started_during_login_is_not_lost(self):
+        """Гонка: подбор создан анонимно уже после переноса (вкладка не знала о входе). При следующем открытии
+        списка в этом браузере под аккаунтом он тоже переходит в аккаунт."""
+        with self.client() as phone, self.client() as laptop:
+            phone.post("/api/auth/register", json={"email": "race@ya.ru", "password": "секрет123"})
+            vid = phone.cookies.get("vid")
+            late = O.create_session(QUERY, start_model(), visitor_id=vid, user_id=None)  # создан как анонимный
+            self.assertEqual([c["id"] for c in phone.get("/api/chats").json()["chats"]], [late.id])
+            laptop.post("/api/auth/login", json={"email": "race@ya.ru", "password": "секрет123"})
+            self.assertEqual([c["id"] for c in laptop.get("/api/chats").json()["chats"]], [late.id])
+
+    def test_two_tabs_live_dialogue_after_login_in_other_tab(self):
+        """Две вкладки одного браузера: в одной идёт подбор, в другой выполнен вход — первая продолжает работать."""
+        with self.client() as tab:
+            sid, _ = self.start_chat(tab)
+            tab.post("/api/auth/register", json={"email": "tabs@ya.ru", "password": "секрет123"})  # cookie общие
+            self.assertEqual(tab.post(f"/api/chat/{sid}/message", json={"text": "наличными"}).status_code, 200)
+            evs = read_until(tab, f"/api/chat/{sid}/stream", lambda e: e["type"] == "replay_end")
+            self.assertTrue(evs)
+
     def test_idle_sessions_are_released(self):
         s = O.create_session(QUERY, ScriptedLLM())
         self.assertEqual(O.reap_idle(now=s.idle_since + O.IDLE_DONE_S + 1), [s.id])  # не запускался и никто не смотрит
