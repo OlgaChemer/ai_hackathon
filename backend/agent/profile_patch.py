@@ -22,6 +22,10 @@ def schema(contract):
     key={'type':'string','enum':keys,
          'description':'Точный известный ключ либо unsupported для отсутствующего свойства. Не заменяй неизвестное ближайшим известным.'}
     result=obj({
+        'filters':{'type':'array','minItems':0,'maxItems':20,'items':{
+            **deepcopy(CHANGE_SCHEMA['properties']['filters']['items']),
+            'properties':{**deepcopy(CHANGE_SCHEMA['properties']['filters']['items']['properties']),'source':deepcopy(source)},
+            'required':[*CHANGE_SCHEMA['properties']['filters']['items']['required'],'source']}},
         'fields':{'type':'array','minItems':0,'maxItems':20,'items':obj({
             'key':deepcopy(key),
             'value':{'type':'string','maxLength':3000,'description':'Строковое поле — обычная строка; число/boolean/массив — JSON-значение, например [1,2], 30000000, true.'},
@@ -31,6 +35,9 @@ def schema(contract):
             'priority':{'type':'string','enum':['required','preferred','remove']},
             'value':{'type':'string','maxLength':1000,'description':'Значение в формате поля; для poi/feature и запрета этажей true; для remove пустая строка.'},
             'source':source})},
+        'states':{'type':'array','minItems':0,'maxItems':5,'items':obj({
+            'key':{'type':'string','enum':['budget_max','rooms','districts','okrug','housing']},
+            'state':{'type':'string','enum':['unknown','unrestricted']},'source':deepcopy(source)})},
         'places':deepcopy(props['places']),
         'unsupported':deepcopy(props['unsupported']),
         'selection':{'type':'array','minItems':0,'maxItems':1,'items':reading,
@@ -60,10 +67,13 @@ def generation_schema(contract,inputs):
     """Нативный вывод выбирает цитату из нового ввода, а не склоняет её заново."""
     result=deepcopy(contract)
     quotes=list(dict.fromkeys([*input_frame.source_words(inputs),*(row['text'] for row in inputs)]))
-    for group in ('fields','criteria','unsupported'):
+    for group in ('fields','criteria','unsupported','states','filters'):
         spec=result['properties'][group]['items']['properties']['source']
         spec['enum']=quotes
         spec['maxLength']=max([1000,*map(len,quotes)])
+    for group in ('fields','criteria'):
+        keys=result['properties'][group]['items']['properties']['key']['enum']
+        result['properties'][group]['items']['properties']['key']['enum']=[key for key in keys if key not in ('field_states','filters')]
     return result
 
 
@@ -79,6 +89,13 @@ def unverifiable_distance(f):
 def decode(patch,contract,inputs,aliases=None,*,provenance=None):
     if not isinstance(patch,dict):raise ValueError('Изменения должны быть JSON-объектом')
     patch=deepcopy(patch)
+    patch.setdefault('states',[])
+    patch.setdefault('filters',[])
+    # Нативный контракт передаёт сравнения объектами, без JSON внутри строки.
+    # Декодер старых сохранённых результатов по-прежнему поддерживается.
+    for item in patch['filters']:
+        quote=item.get('source','')
+        patch.setdefault('fields',[]).append({'key':'filters','value':json.dumps([{k:v for k,v in item.items() if k!='source'}]),'source':quote})
     requested=patch.setdefault('requested_card',[])
     if requested is None:patch['requested_card']=[]
     elif isinstance(requested,str):patch['requested_card']=[requested]
@@ -155,6 +172,14 @@ def decode(patch,contract,inputs,aliases=None,*,provenance=None):
                 condition['text']=quote[:200]
     validation.validate(patch,contract)
     frame={'fields':{},'criteria':{},'places':patch['places'],'unsupported':patch['unsupported']}
+    if patch['states']:
+        modes={}
+        for state in patch['states']:
+            if not state['source'] or not any(state['source'].casefold() in text for text in texts):
+                raise ValueError('Статус поля требует буквальной цитаты нового ввода')
+            if state['key'] in modes and modes[state['key']]!=state['state']:raise ValueError('Противоречащие статусы поля')
+            modes[state['key']]=state['state']
+        frame['fields']['field_states']={'value':modes,'source':patch['states'][0]['source']}
     known=input_frame.basic_fields(CHANGE_SCHEMA)
     for rows in (patch['fields'],patch['criteria']):
         for row in rows:
