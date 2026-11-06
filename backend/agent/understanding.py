@@ -326,6 +326,20 @@ async def _prepare(s):
                 from .criteria import CRITERIA_KEYS
                 data['allowed_criteria']={key:input_frame.criterion_value(key,CHANGE_SCHEMA) for key in CRITERIA_KEYS}
                 contract_for_changes=deepcopy(extraction)
+                unsupported_route=response.tool_calls[0].name=='unsupported_request'
+                if unsupported_route:
+                    # Неподдержанное удобство нельзя переинтерпретировать как
+                    # разрешённую инфраструктуру. До решения клиента можно
+                    # сохранить лишь ещё неизвестные базовые параметры.
+                    basics={'city','cities','rooms_options','studio_requested','budget_max','payment','housing'}
+                    if base_profile.get('city'):basics-={'city','cities'}
+                    if base_profile.get('rooms') is not None:basics-={'rooms_options','studio_requested'}
+                    basics-={key for key in ('budget_max','payment','housing') if base_profile.get(key) is not None}
+                    for group in ('criteria','filters','states','selection','requested_card'):
+                        contract_for_changes['properties'][group]['maxItems']=0
+                    if not basics:contract_for_changes['properties']['fields']['maxItems']=0
+                    else:contract_for_changes['properties']['fields']['items']['properties']['key']['enum']=sorted(basics)
+                    if 'city' not in basics:contract_for_changes['properties']['places']['maxItems']=0
                 if rank or response.tool_calls[0].name=='call_intent':
                     if rank:data['reading_command']=result['selection']
                     else:data['message_purpose']='Просьба звонить. Номер квартиры — ссылка на объект, не количество карточек или комнат. Извлеки только явно новые условия; selection запрещён.'
@@ -338,7 +352,8 @@ async def _prepare(s):
                 from .clarification import INFORMATION_ACKS
                 information_ack=(response.tool_calls[0].name=='request_information' and len(inputs)==1
                                  and inputs[0]['text'].strip().casefold() in INFORMATION_ACKS)
-                parsed=(LLMResponse(json.dumps({key:[] for key in strict_schema['properties']})) if information_ack else
+                no_facts=unsupported_route and not basics
+                parsed=(LLMResponse(json.dumps({key:[] for key in strict_schema['properties']})) if information_ack or no_facts else
                         await s.llm.chat([{'role':'system','content':prompt},guard.data_message('profile_changes',data)],
                             json_mode=True,json_schema=strict_schema,tag='profile_extract',temperature=.01,max_tokens=3000))
                 changes=parse_json_loose(parsed.text)

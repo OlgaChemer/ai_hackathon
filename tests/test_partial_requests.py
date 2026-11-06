@@ -147,6 +147,17 @@ class PartialRequests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(ground_state('budget_max','unrestricted','Рассчитай личный доступный бюджет по моим доходам.'))
         self.assertIsNone(ground_state('budget_max','unrestricted','Этаж неважен'))
 
+    async def test_unsupported_route_cannot_reinterpret_a_pool_as_nearby_fitness(self):
+        s=self.agent({'city':'Москва','rooms':2,'budget_max':20_000_000,'payment':'cash','housing':'secondary'})
+        text='Хочу квартиру где внутри бассейн'
+        s.llm.chat=AsyncMock(return_value=LLMResponse('',[ToolCall('unsupported_request',{'quote':text})]))
+        e=s.push('message',role='user',text=text);s.accept_request(text,e['seq'])
+        r=await understanding.prepare(s)
+        self.assertEqual(r['changes'],{})
+        self.assertEqual(r['unsupported'][0]['text'],text)
+        self.assertEqual(r['unsupported'][0]['action'],'add')
+        self.assertEqual(s.llm.chat.await_count,1)
+
     def test_spelled_numbers_do_not_conflict_with_digits_in_other_conditions(self):
         from backend.agent import input_frame
         from backend.agent.request_schema import CHANGE_SCHEMA
