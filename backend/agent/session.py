@@ -50,6 +50,7 @@ class Session:
     request_review: dict | None = None
     request_intent: str | None = None
     requested_action: str | None = None
+    research_query: dict | None = None
     client_revision: int = 0  # только принятые сообщения/решения клиента
     seq: int = 0                      # номер последнего события диалога
     history: list[dict] = field(default_factory=list)  # события этого запуска (если база недоступна)

@@ -9,6 +9,9 @@ CHANGE_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
     "properties": {
+        "field_states": {"type":"object","additionalProperties":False,
+            "properties":{key:{"type":"string","enum":["unknown","unrestricted"]} for key in ('budget_max','rooms','districts','okrug','housing')},
+            "description":"Только явно названные статусы: не знаю/помоги определить — unknown; любой/неважно/сними ограничение — unrestricted. Это снимает прежнее ограничение поля. Неназванные поля не добавляй. Для конкретного значения используй обычное поле."},
         "filters": {"type":"array", "maxItems":20, "items":PROFILE_FILTER_SCHEMA,
                     "description":"Общие сравнения полей: срок сдачи — delivery_year (не year), точный год op=eq, не позднее lte, диапазон between. Значения строками. Только явно названные изменения; remove снимает фильтр поля. Неназванные фильтры сохраняет код."},
         "center_required": {"type":"boolean", "description":"true — именно В ЦЕНТРЕ обязательно; false — центр необязателен. Не добавляй запрет для «желательно ближе к центру». Центр по умолчанию — 5 км по прямой от опорной точки; код раскрывает определение."},

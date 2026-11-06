@@ -18,12 +18,16 @@ def scope(profile):
     # не изменяя приоритет пожелания в авторитетном профиле.
     if p.get('prefer_center'):p['center_required']=True
     conditions=[c for c in compile_profile(p) if c['priority']=='required' and c['field'] not in ('price','price_per_m2')]
+    from ..agent.research import query
+    research=query(p.get('_research_query'))[0]
     return {'cities':list(dict.fromkeys([p.get('city'),*(p.get('cities') or [])])),
             'rooms':p.get('rooms_options') or [p.get('rooms')],
             'markets':[False,True] if p.get('housing') in (None,'both') else [p['housing']=='new'],
             'okrug':p.get('okrug'),'districts':p.get('districts') or [],'avoid_districts':p.get('avoid_districts') or [],
             'conditions':[{k:c[k] for k in ('field','op','values','label')} for c in conditions],
-            'budget_applied':False,'whole_market':False,'center_radius_km':5 if p.get('prefer_center') or p.get('center_required') else None}
+            'research':research,'budget_max':p.get('budget_max') if research['respect_budget'] else None,
+            'budget_applied':research['respect_budget'] and p.get('budget_max') is not None,
+            'whole_market':False,'center_radius_km':5 if p.get('prefer_center') or p.get('center_required') else None}
 
 
 def key(profile):
@@ -39,7 +43,9 @@ def current(value,profile):
 def matches(item,definition):
     from ..agent.conditions import evaluate
     from ..agent.profile import in_districts
-    if item.get('city') not in definition['cities'] or item.get('rooms') not in definition['rooms']:return False
+    if item.get('city') not in definition['cities']:return False
+    if None not in definition['rooms'] and item.get('rooms') not in definition['rooms']:return False
+    if definition.get('budget_max') is not None and item['price']>definition['budget_max']:return False
     if bool(item.get('is_new')) not in definition['markets']:return False
     if definition['okrug'] and item.get('okrug')!=definition['okrug']:return None if not item.get('okrug') else False
     if definition['districts'] and not in_districts(item,definition['districts']):return None if not item.get('district') else False
@@ -62,7 +68,7 @@ async def estimate(profile,on_progress=None):
                     try:
                         remaining=deadline-time.monotonic()
                         if remaining<=0:raise asyncio.TimeoutError()
-                        items,meta=await asyncio.wait_for(cian.search(city,rooms,None,page,query_okrug,new),remaining)
+                        items,meta=await asyncio.wait_for(cian.search(city,rooms,definition['budget_max'],page,query_okrug,new),remaining)
                         items=[{**item,'provenance':{'source':'cian','status':meta.get('status'),
                                 'observed_at':meta.get('fetched_at'),'url':item.get('url')}} for item in items]
                         if meta.get('status')=='live':store.remember(items)
@@ -77,6 +83,12 @@ async def estimate(profile,on_progress=None):
                     reports.append(report)
                     if on_progress:on_progress(len(rows))
         cleaned=cian.drop_outliers(list(rows.values()))
+        kinds=list({c['field'].split(':',1)[1] for c in definition['conditions'] if c['field'].startswith('nearby:')})
+        if kinds:
+            from .. import geo
+            preliminary={**definition,'conditions':[c for c in definition['conditions'] if not c['field'].startswith('nearby:')]}
+            candidates=[x for x in cleaned if matches(x,preliminary) is True]
+            await geo.nearby(candidates[:30],kinds,budget_s=max(0,min(settings.places_budget_s,deadline-time.monotonic())))
         checks=[(x,matches(x,definition)) for x in cleaned]
         accepted=[x for x,match in checks if match is True];unknown=sum(match is None for _,match in checks)
         if len(accepted)>=12 or time.monotonic()>=deadline or not any(r['count'] for r in reports if r['page']==page):break
@@ -89,6 +101,8 @@ async def estimate(profile,on_progress=None):
             'count':len(accepted),'received':len(rows),'unverified':unknown,'reports':reports,'reasons':sorted(reasons),
             'status':'live' if reports and all(r.get('status')=='live' for r in reports) else 'partial',
             'markets':[{'new':new,'count':sum(bool(x.get('is_new'))==new for x in accepted)} for new in definition['markets']]}
+    from ..agent.research import execute
+    result['analysis']=execute(accepted,definition['research'])
     if len(accepted)<6:return {**result,'error_kind':'insufficient_market_sample' if rows else 'market_source_unavailable'}
     prices=sorted(x['price'] for x in accepted);q1,median,q3=statistics.quantiles(prices,n=4)
     meters=[x['price']/x['area'] for x in accepted if x.get('area') and x['area']>0]

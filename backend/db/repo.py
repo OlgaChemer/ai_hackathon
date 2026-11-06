@@ -220,8 +220,9 @@ def find_listings(db: Session, city: str, rooms: int, budget_max: int | None, ok
                   is_new: bool = False, seen_days: float = 7, exclude: set[str] | frozenset = frozenset(),
                   limit: int = 400) -> list[tuple[dict, datetime]]:
     """Объявления, которые агент видел на площадке за последние seen_days: [(объявление, когда видели)]."""
-    q = select(Listing).where(Listing.city == city, Listing.rooms == rooms, Listing.is_new == is_new,
+    q = select(Listing).where(Listing.city == city, Listing.is_new == is_new,
                               Listing.status == "active", Listing.last_seen_at >= utcnow() - timedelta(days=seen_days))
+    if rooms is not None:q=q.where(Listing.rooms==rooms)
     if budget_max:
         q = q.where(Listing.price <= budget_max)
     if okrug:
@@ -232,11 +233,12 @@ def find_listings(db: Session, city: str, rooms: int, budget_max: int | None, ok
 
 def listing_stats(db: Session, city: str, rooms: int) -> dict:
     """Сколько квартир по запросу в базе и у скольких уже проверено по карте, что рядом."""
-    total = db.scalar(select(func.count()).select_from(Listing)
-                      .where(Listing.city == city, Listing.rooms == rooms, Listing.status == "active")) or 0
+    scope=[Listing.city==city,Listing.status=='active']
+    if rooms is not None:scope.append(Listing.rooms==rooms)
+    total = db.scalar(select(func.count()).select_from(Listing).where(*scope)) or 0
     mapped = db.scalar(select(func.count(func.distinct(ListingFeature.listing_id))).select_from(ListingFeature)
                        .join(Listing, Listing.id == ListingFeature.listing_id)
-                       .where(Listing.city == city, Listing.rooms == rooms, ListingFeature.source == "map")) or 0
+                       .where(*scope,ListingFeature.source == "map")) or 0
     return {"total": total, "mapped": mapped}
 
 

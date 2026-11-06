@@ -49,7 +49,7 @@ class GuardTest(unittest.TestCase):
         secret = 'sk-' + '0123456789abcdef' * 2
         async def go():
             model = ScriptedLLM(say('Ключ: ' + secret))
-            s = session.create_session('Казань, двушка', model)
+            s = session.create_session('Что такое эскроу?', model)
             with self.assertLogs('security') as logs:
                 await drive(s)
             return s, logs.output

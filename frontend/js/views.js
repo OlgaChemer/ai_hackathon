@@ -28,7 +28,7 @@ function marketBlock(p) {
 }
 
 export function profile(p) {
-  const rooms = p.rooms_options?.length > 1 ? p.rooms_options.join("–") : p.rooms === 0 ? "студия" : p.rooms ?? "уточню";
+  const rooms = p.rooms_options?.length > 1 ? p.rooms_options.join(" / ") : p.rooms === 0 ? "студия" : p.rooms ?? (p.field_states?.rooms==='unrestricted' ? "любые" : "не заданы · поиск без ограничения");
   return html`
   <section class="panel">
     <h2 class="panel-title">Задача понята</h2>
@@ -36,11 +36,11 @@ export function profile(p) {
     <dl class="facts">
       <div><dt>Город</dt><dd>${[p.city, ...(p.cities || []).filter(c => c !== p.city)].filter(Boolean).join(", ") || "уточню"}${p.okrug ? `, ${p.okrug}` : ""}</dd></div>
       <div><dt>Комнат</dt><dd>${rooms}</dd></div>
-      <div><dt>Бюджет до</dt><dd class="num">${p.budget_max ? rub(p.budget_max) : "уточню"}${html.raw(p.budget_source ? html`<small class="dd-note">${p.budget_source}</small>` : "")}</dd></div>
+      <div><dt>Бюджет до</dt><dd class="num">${p.budget_max ? rub(p.budget_max) : p.field_states?.budget_max==='unrestricted' ? "без ограничения" : "не задан · поиск без ограничения"}${html.raw(p.budget_source ? html`<small class="dd-note">${p.budget_source}</small>` : "")}</dd></div>
       <div><dt>Районы</dt><dd>${p.districts?.length ? p.districts.join(", ") : "любые"}</dd></div>
       <div><dt>Расположение</dt><dd>${p.prefer_center ? "желательно ближе к центру" : "по вашим пожеланиям"}</dd></div>
       <div><dt>Кухня</dt><dd>${p.kitchen_min ? `от ${p.kitchen_min} м²` : "любая"}</dd></div>
-      <div><dt>Рынок</dt><dd>${{ new: "новостройки", both: "новостройки и вторичка", secondary: "вторичный" }[p.housing] || "уточню"}</dd></div>
+      <div><dt>Рынок</dt><dd>${{ new: "новостройки", both: "новостройки и вторичка", secondary: "вторичный" }[p.housing] || "новостройки и вторичка · без фильтра"}</dd></div>
     </dl>
     ${html.raw(p.wishes?.length ? html`<p class="hint">Ещё учту: ${p.wishes.join("; ")}.</p>` : "")}
     ${html.raw(p.market ? marketBlock(p) : "")}

@@ -123,7 +123,7 @@ def build_url(city: str, rooms: int, budget: int | None, page: int = 1, okrug: s
     сортировка по дате — без перекоса в продвигаемые премиум-объекты."""
     region, sub, _ = REGIONS[city]
     sub = _learned_subdomains().get(city, sub)
-    room_param = "room9=1" if rooms == 0 else f"room{min(rooms, 5)}=1"
+    room_param = '' if rooms is None else "room9=1" if rooms == 0 else f"room{min(rooms, 5)}=1"
     url = (f"https://{sub}.cian.ru/cat.php?deal_type=sale&engine_version=2&offer_type=flat"
            f"&region={region}&{room_param}&object_type%5B0%5D={2 if new else 1}&flat_share=2&sort=creation_date_desc&p={page}")
     if budget:

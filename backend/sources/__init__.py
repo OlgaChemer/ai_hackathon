@@ -67,7 +67,7 @@ async def _collect_one(profile: dict, on_batch=None) -> tuple[list[dict], list[d
 
 async def market(profile: dict, on_progress=None) -> dict | None:
     """Цены рынка по запросу (без бюджета) — чтобы клиенту было от чего оттолкнуться."""
-    if not cian.supported(profile.get("city")) or profile.get("rooms") is None:
+    if not cian.supported(profile.get("city")):
         return None
     from .market_estimate import estimate
     return await estimate(profile,on_progress)

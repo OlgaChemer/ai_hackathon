@@ -42,6 +42,10 @@ selection — [] если команды нет, либо массив с одн
 Цена метра: price_per_m2 asc; самые большие: area desc; выгодные: value_score desc. selection не содержит порогов.
 При одном изменении условия selection=[]. При отмене площади и «покажи две большие» передай И отмену, И selection rank2 area desc.
 Несколько разрешённых комнатностей не требуют выбора ОДНОЙ: сохрани все варианты.
+Не знаю/помоги определить поле — fields key=field_states value={имя:unknown}. Любой/неважно/сними ограничение — {имя:unrestricted}. Поддержаны budget_max, rooms, districts, okrug, housing. Это не новое конкретное значение; неназванное сохраняется. Если вместе с вопросом дан конкретный бюджет, сохрани сумму, не помечай его unknown.
+Явное «бюджет неважен» обязательно запиши: fields [{key:field_states,value:'{"budget_max":"unrestricted"}',source:'бюджет неважен'}]. «Комнатность не знаю» -> {"rooms":"unknown"}. Несколько статусов объединяй в один JSON-объект field_states. Это поддерживаемые данные, не unsupported и не отсутствие изменений.
+Строгость числовых сравнений сохраняй: выше/больше/более/позже -> gt; ниже/меньше/раньше -> lt. «Не ниже/не менее/от» -> gte; «не выше/не более» -> lte. «Выше 10» исключает 10, это не gte.
+pending_decisions и recent_dialogue поясняют, к какому свойству относится краткий ответ («Любой», «Заехать сразу»). Значение толкуй с этим контекстом, но source всегда буквально из НОВОГО messages. Снятие запрета этажа — criteria not_first_floor/remove и not_last_floor/remove, общий filters floor/remove. Не снимай другие свойства из-за слова «любой».
 Название улицы без указания, какой именно, не считается центром города: сохрани буквальное неподдержанное условие в unsupported. Частичное имя города не достраивай, код уточнит его по каталогу.
 unsupported — только НОВОЕ условие вне доступных свойств, с буквальной цитатой; бассейн внутри квартиры не равен фитнесу рядом.
 Не подбирай ближайшее по смыслу свойство вместо отсутствующего: удобство ВНУТРИ квартиры и расстояние до внешнего объекта — разные условия. Не кодируй внутренний бассейн как nearby:fitness=0. Если точного свойства нет, запиши неизвестный ключ либо unsupported, не придумывай расстояние.
@@ -67,6 +71,7 @@ read_selection — чтение/отбор по УЖЕ найденным дан
 Если есть только новые условия без команды выдачи, выбери profile_change.
 informational_question — ОБЪЯСНИТЬ смысл показателя, устройство, предложение или предыдущую ошибку: «что означает цена по аналогам», «что означает непроверенное пожелание», «что сломалось/что надо уточнить». У этой функции нет аргументов, она не запускает расчёты.
 request_information — ПОЛУЧИТЬ новые данные или выполнить расчёт. Выбери action: средние/типичные цены, «не знаю бюджет, какой средний?» -> market_prices; расчёт бюджета по доходам -> affordable_budget; расчёт ипотеки -> mortgage_programs; накопления -> savings_plan.
+Исследование объявлений не требует заранее выбранных комнат или бюджета. «Бюджет 20 млн, на сколько комнат хватит?» -> market_prices, update_conditions=true, research respect_budget=true, group_by=rooms, aggregates по price min/median. «Какая площадь доступна за эту сумму?» -> respect_budget=true, group_by=null, aggregates area min/max/median. Средняя цена без бюджетного ограничения -> respect_budget=false. Это запрос данных, не повод просить выбрать исследуемое свойство. Если нового бюджета/параметров нет, update_conditions=false.
 «Не знаю, какой средний?» спрашивает ЦЕНУ КВАРТИР: market_prices, даже если сейчас открыта форма финансов. affordable_budget считает, сколько МОЖЕТ ПОЗВОЛИТЬ СЕБЕ конкретный человек, не среднюю рыночную цену. Для него нужна просьба оценить личные доходы/расходы/накопления или явное согласие на такой расчёт. Не выбирай его из-за одного отсутствующего бюджета.
 Если в таком вопросе есть новые условия (город, комнаты, рынок и т.п.), выбери action и update_conditions=true: эти условия извлечёт отдельный шаг. Не теряй параметры составного вопроса.
 Короткое «да/покажи/давай» относится к последнему предложению в recent_dialogue. Если агент предложил показать цены/сделать расчёт — это request_information с соответствующим action. Не придумывай бюджет или согласие на звонок/сделку из такого ответа.
@@ -147,6 +152,7 @@ def semantic_tools(contract,inputs,unsupported,has_results=True):
     from .capabilities import POLICIES
     information_actions=[name for name,policy in POLICIES.items() if policy.information]
     from .selection_request import SCHEMA
+    from .research import SCHEMA as RESEARCH_SCHEMA
     def obj(props,required=()):return {'type':'object','additionalProperties':False,'properties':props,'required':list(required)}
     quotes=list(dict.fromkeys([*input_frame.source_words(inputs),*(row['text'] for row in inputs),*unsupported]))
     read_schema=deepcopy(SCHEMA)
@@ -178,10 +184,11 @@ def semantic_tools(contract,inputs,unsupported,has_results=True):
             'quote':{'type':'string','minLength':1,'maxLength':1000,
                      'description':'Дословная новая реплика, содержащая неподдерживаемое пожелание.'}},['quote'])),
         Tool('informational_question','Объяснить смысл, устройство, показатель, прежнюю ошибку. «Что означает цена по аналогам/непроверенное пожелание?» — объяснение, без новой оценки рынка. Не изменяет условия и не выбирает инструмент.',obj({})),
-        Tool('request_information','Получить данные или выполнить расчёт, а не объяснить термин. Например, «сколько обычно стоят такие квартиры», «какой средний бюджет», «покажи цены», согласие на такой показ. Использует существующий инструмент.',obj({
+        Tool('request_information','Получить данные или выполнить расчёт. Включая вопрос «на сколько комнат хватит бюджета»: исследовать объявления, respect_budget=true, group_by=rooms. Не требует заранее выбрать неизвестное свойство. Использует существующий инструмент.',obj({
             'action':{'type':'string','enum':information_actions,
-                      'description':'market_prices — средние/типичные ЦЕНЫ КВАРТИР; affordable_budget — ЛИЧНАЯ платёжеспособность по просьбе рассчитать доходы/расходы; mortgage_programs — ипотека; savings_plan — накопления. Не повторяй ранее открытый инструмент вместо смысла нового вопроса.'},
-            'update_conditions':{'type':'boolean','description':'true — вместе с вопросом названы/изменены условия. Отдельный шаг проверит их перед исполнением.'}},['action'])),
+                      'description':'market_prices — исследовать объявления: цены, доступную комнатность/площадь/этаж по известным условиям; affordable_budget — личная платёжеспособность по доходам/накоплениям; mortgage_programs — ипотека; savings_plan — накопления.'},
+            'research':RESEARCH_SCHEMA,
+            'update_conditions':{'type':'boolean','description':'true — вместе с вопросом названы/изменены условия. Отдельный шаг проверит их перед исполнением.'}},['action','research','update_conditions'])),
         Tool('call_intent','Клиент явно просит звонить. Сам ничего не исполняет. Без явной просьбы запрещён; для вопросов продавцу используй profile_change.',obj({
             'listing_ids':{'type':'array','maxItems':10,'items':{'type':'string'},'description':'ID показанных объектов; пусто — по понравившимся'}},['listing_ids'])),
         Tool('pause_request','Клиент просит остановиться/пока не искать/пока не звонить. Можно сохранить явно добавленные вопросы и условия без действий.',obj({})),
@@ -225,7 +232,10 @@ def frame_from_call(call,tools,inputs):
     if call.name=='pause_request':return {'intent':'hold','needs_extraction':True}
     if call.name=='informational_question':return {'intent':'question'}
     if call.name=='request_information':
+        from .research import query
+        research=query(a.get('research'))[0]
         return {'intent':'refine' if a.get('update_conditions') else 'question',**({'requested_action':a['action']} if a.get('action') else {}),
+                'research':research,
                 **({'needs_extraction':True} if a.get('update_conditions') else {})}
     if call.name=='call_intent':return {'intent':'call','call_ids':a['listing_ids']}
     return {'intent':'continue' if call.name=='continue_input' else 'question'}
@@ -264,6 +274,8 @@ async def _prepare(s):
              'messages':inputs,'profile':{k:v for k,v in base_profile.items() if not k.startswith('_')},
              'listing_fields':{key: {'type':v[0],'label':v[1]} for key,v in FIELDS.items()},
              'recent_dialogue':dialogue_context(s),
+             'pending_decisions':[{'kind':t['kind'],'text':t['text'],'options':t.get('payload',{}).get('chips',[])}
+                                  for t in s.pending_decisions.values() if t.get('status')=='waiting'],
              'workflow':{'has_search':s.search is not None,'has_selection':bool(s.shown),'has_calls':bool(s.calls),'chosen':bool(s.chosen),
                          'selection_query':s.selection_query or s.profile.get('_selection_query'),
                          'unsupported_conditions':s.profile.get('_unsupported_conditions') or [],
@@ -286,7 +298,7 @@ async def _prepare(s):
                 extract=result.pop('needs_extraction',False)
                 rank=(result.get('selection') or {}).get('operation')=='rank'
                 if extract:
-                    data={k:payload[k] for k in ('messages','profile','supported_cities','ambiguous_catalog_names','listing_fields')}
+                    data={k:payload[k] for k in ('messages','profile','supported_cities','ambiguous_catalog_names','listing_fields','pending_decisions')}
                     data['unsupported_conditions']=s.profile.get('_unsupported_conditions') or []
                     data['unsupported_properties']=s.profile.get('_unsupported_keys') or {}
                     data['allowed_fields']=input_frame.basic_fields(CHANGE_SCHEMA)
@@ -311,6 +323,7 @@ async def _prepare(s):
                         result['intent']='refine'
                     result={**changes,**result}
             else:result=parse_json_loose(response.text)
+            research_request=result.pop('research',None)
             information_action=result.pop('requested_action',None)
             if information_action:
                 from .capabilities import POLICIES
@@ -320,6 +333,7 @@ async def _prepare(s):
             result=input_frame.complete_frame(result,CHANGE_SCHEMA)
             result = input_frame.decode(result, payload['profile'], payload, CHANGE_SCHEMA)
             if requested_action:result['requested_action']=requested_action
+            if research_request is not None:result['research']=research_request
             if condition_sources:result['condition_sources']=condition_sources
             validation.validate(result['changes'], CHANGE_SCHEMA)
             if not guard.input_verdict(result['changes']).ok or guard.output(result['changes'], limit=False) != result['changes']:
@@ -414,9 +428,12 @@ async def ensure(s):
     from .capabilities import POLICIES
     previous=s.requested_action
     requested=review.get('requested_action')
+    if requested=='market_prices':s.research_query=review.get('research')
     if not requested and previous in POLICIES and POLICIES[previous].information and review['intent'] not in ('hold','call','selection'):
         requested=previous
     s.requested_action=requested if review['intent']!='hold' else None
+    if s.requested_action in POLICIES and POLICIES[s.requested_action].information:
+        s.request_intent='question'  # изменения применены, цель хода — ответ исследования
     if s.requested_action:s.profile['_requested_action']=s.requested_action
     else:s.profile.pop('_requested_action',None)
     if review['intent'] not in ('seller_questions','question'):

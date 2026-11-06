@@ -32,7 +32,7 @@ def profile_brief(p: dict) -> dict:
 
 def emit_profile(s) -> None:
     data = {**{k:v for k,v in s.profile.items() if not k.startswith("_")}, "market": s.market}
-    if not missing_required(s.profile):
+    if s.profile.get('city'):
         data["summary"] = profile_summary(s.profile)
     s.push("result", step=1, kind="profile", data=data)
 
@@ -113,7 +113,8 @@ def apply_request(s, changes, *, condition_sources=None):
         p["summary"] = profile_summary(p)
     s.profile = p
     from ...sources.market_estimate import current
-    if s.market and not current(s.market,p):s.market=None
+    from ..research import profile as research_profile
+    if s.market and not current(s.market,research_profile(s)):s.market=None
     changed_keys={k for k in old_profile.keys() | p.keys()
                   if not k.startswith('_') and k not in ('summary','market') and p.get(k)!=old_profile.get(k)}
     if p!=old_profile:s.profile_revision+=1
@@ -151,16 +152,17 @@ def apply_request(s, changes, *, condition_sources=None):
 
 
 @action("market_prices", 1,
-        "Цены рынка по запросу (город, комнаты, округ, рынок) без учёта бюджета: квартили и минимум, руб. "
-        "Помогает клиенту выбрать бюджет; клиент видит их на экране.")
+        "Исследовать реальные объявления по проверенному запросу: цены, доступные комнаты/площадь и другие агрегаты. "
+        "Достаточно города. Проверенный исследовательский запрос определяет группировку и применение бюджета; неназванные условия не требуются.")
 async def market_prices(s) -> dict:
-    if not (s.profile.get("city") and s.profile.get("rooms") is not None):
-        raise ActionError("Сначала нужны город и число комнат (update_request).")
+    if not s.profile.get("city"):
+        raise ActionError("Для исследования объявлений нужен город; комнаты и бюджет необязательны.")
     from ...sources.market_estimate import current
-    if not current(s.market,s.profile):
-        await s.say(f"Проверяю цены на Циане ({s.profile['city']}) по вашим условиям, чтобы помочь с бюджетом…")
+    from ..research import profile as research_profile
+    if not current(s.market,research_profile(s)):
+        await s.say(f"Исследую объявления на Циане ({s.profile['city']}) по вашим условиям…")
         try:
-            s.market = await sources.market(s.profile,on_progress=lambda count:s.signal('search_progress',on=True,
+            s.market = await sources.market(research_profile(s),on_progress=lambda count:s.signal('search_progress',on=True,
                 text=f'Проверяю ценовые ориентиры: получено {count} объявлений'))
         finally:s.signal('search_progress',on=False)
     if not s.market or s.market.get('error_kind'):
@@ -179,14 +181,30 @@ async def market_prices(s) -> dict:
         centre+=' Для этой выборки просмотрены объявления ЦАО.'
     markets='; '.join(('новостройки' if row['new'] else 'вторичка')+f": {row['count']}" for row in m.get('markets') or [])
     if not markets:markets='рынок по запросу'
+    analysis=m.get('analysis') or {}
+    from ..listing_query import FIELDS
+    def facts(rows):
+        labels={'min':'минимум','max':'максимум','mean':'среднее','median':'медиана','count':'известных значений'}
+        return '; '.join(f"{labels[a['function']]} ({FIELDS[a['field']][1]}): "+
+                        (f"{a['value']:,.1f}".replace(',',' ').replace('.0','') if a.get('value') is not None else 'нет данных')
+                        +f" [данных: {a['known']}]" for a in rows)
+    grouped=analysis.get('groups') or []
+    research=m.get('scope',{}).get('research') or {}
+    findings=''
+    if grouped:
+        label=FIELDS[research['group_by']][1]
+        findings='\n'+'\n'.join(f"{label}: {g['value'] if g['value'] is not None else 'неизвестно'} — {g['count']} объявлений; {facts(g['aggregates'])}." for g in grouped[:12])
+        if len(grouped)>12:findings+=f'\nПоказаны 12 из {len(grouped)} групп.'
+    elif analysis.get('aggregates'):findings='\n'+facts(analysis['aggregates'])+'.'
+    budget_note=f" В пределах {fmt(s.profile['budget_max'])}." if m.get('scope',{}).get('budget_applied') else ' Бюджетный фильтр не применялся.'
     await s.say(f"По полученной выборке: медиана {fmt(m['median'])}, средняя цена {fmt(m.get('mean',m['median']))}; "
                 f"средняя половина предложений — {fmt(m['p25'])}–{fmt(m['p75'])}. "
                 f"Проверено {m['count']} объявлений, {markets}.{centre} "
                 +('Часть данных из кэша или охват неполный. ' if m.get('reasons') else '')
-                +"Это ориентир по выборке, а не цена всего рынка; лимит покупки выбираете вы.")
+                +budget_note+findings+"\nЭто результат по полученной выборке, а не полный рынок. Условия и согласия не изменены.")
     return {"typical_from": m["p25"], "median": m["median"], "typical_to": m["p75"], "min": m["min"],
             "mean":m.get('mean'),"per_m2": round(m["ppm2"], -3) if m.get('ppm2') is not None else None, "listings": m["count"],
-            'scope':m.get('scope'),'coverage':{'reports':m.get('reports'),'reasons':m.get('reasons')}}
+            'scope':m.get('scope'),'analysis':analysis,'coverage':{'reports':m.get('reports'),'reasons':m.get('reasons')}}
 
 
 @action("ask_client", 1,
@@ -206,8 +224,8 @@ async def confirm_red_lines(s) -> dict:
     p = s.profile
     if s.red_lines_ok and s.requested_action!='confirm_red_lines':
         return {"approved": True, "budget_max": p["budget_max"], "already_confirmed": True}
-    if missing_required(p):
-        raise ActionError(f"Не хватает: {', '.join(missing_required(p))} — сначала узнай у клиента и запиши (update_request).")
+    if p.get('budget_max') is None:
+        raise ActionError('Для подтверждения лимита нужна конкретная сумма. Поиск без лимита разрешён.')
     emit_profile(s)
     r = await s.ask(
         "red_lines", "Красные линии",

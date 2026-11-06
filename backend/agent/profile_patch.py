@@ -193,6 +193,10 @@ def decode(patch,contract,inputs,aliases=None,*,provenance=None):
         if key in known:
             if priority=='remove':
                 kind=known[key]['type']
+                if key in ('budget_max','housing','okrug'):
+                    old=(frame['fields'].get('field_states') or {}).get('value',{})
+                    frame['fields']['field_states']={'value':{**old,key:'unrestricted'},'source':row['source']}
+                    continue
                 if kind not in ('boolean','array'):raise ValueError('Для изменения '+key+' нужно новое значение')
                 actual=False if kind=='boolean' else []
             else:actual=value(row['value'],known[key])

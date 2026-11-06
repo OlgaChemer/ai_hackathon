@@ -48,9 +48,9 @@ class WorkflowReadinessTest(unittest.IsolatedAsyncioTestCase):
         restored.remember()
         self.assertFalse(session.restore_session(s.id,'Продолжить',s.llm).red_lines_ok)
 
-    async def test_payment_is_required_before_search_or_seller_call(self):
+    async def test_payment_is_not_required_for_reading_but_call_keeps_its_requirements(self):
         s=self.agent();s.red_lines_ok=True;s.profile['payment']=None;s.search={}
-        self.assertFalse(actions.available(s,'search_listings'))
+        self.assertTrue(actions.available(s,'search_listings'))
         self.assertFalse(actions.available(s,'call_seller'))
         with self.assertRaisesRegex(actions.ActionError,'ask_payment'):
             await deal.call_seller(s,'missing')

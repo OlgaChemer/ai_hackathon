@@ -21,7 +21,8 @@ class BudgetModel(ScriptedLLM):
         if kw.get('tag')=='request_review':
             payload=json.loads(next(m['content'] for m in messages if m['role']=='user'))['data']
             self.reviews.append(payload)
-            return LLMResponse('',[ToolCall('request_information',{'action':'market_prices'})])
+            return LLMResponse('',[ToolCall('request_information',{'action':'market_prices','update_conditions':False,
+                'research':{'respect_budget':False,'group_by':None,'aggregates':[]}})])
         return await super().chat(messages,**kw)
 
 
@@ -87,7 +88,8 @@ class BudgetDialogue(unittest.IsolatedAsyncioTestCase):
         class CompositeModel(ScriptedLLM):
             async def chat(self,messages,**kw):
                 if kw.get('tag')=='request_review':
-                    return LLMResponse('',[ToolCall('request_information',{'action':'market_prices','update_conditions':True})])
+                    return LLMResponse('',[ToolCall('request_information',{'action':'market_prices','update_conditions':True,
+                        'research':{'respect_budget':False,'group_by':None,'aggregates':[]}})])
                 if kw.get('tag')=='profile_extract':
                     return say(json.dumps({'fields':[
                         {'key':'city','value':'Казань','source':'Казани'},

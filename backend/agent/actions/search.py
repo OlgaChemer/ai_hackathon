@@ -163,13 +163,14 @@ async def _more_pages(s, until) -> None:
 @action("search_listings", 3,
         "Найти объявления по запросу: Циан (вторичка и/или новостройки) + база агента; названный район; удобства "
         "и «что рядом» — только подтверждённые. Показывает клиенту экран поиска со справедливой ценой. "
-        "До поиска должны быть подтверждены лимит и способ оплаты. Возвращает отдельно подтверждённые и непроверенные варианты.")
+        "Для чтения достаточно города; неназванные комнаты, бюджет и оплата не блокируют поиск. Возвращает отдельно подтверждённые и непроверенные варианты.")
 async def search_listings(s) -> dict:
     p = s.profile
     where = ", ".join(dict.fromkeys([p["city"], *(p.get("cities") or [])])) + (f", {p['okrug']}" if p.get("okrug") else "")
     market_txt = {None: "новостройки и вторичка", "new": "новостройки", "both": "новостройки и вторичка"}.get(p.get("housing"), "вторичный рынок")
     room_label = "/".join(map(str, p["rooms_options"])) + "-комнатные" if len(p.get("rooms_options") or []) > 1 else rooms_text(p["rooms"])
-    await s.say(f"Ищу на Циане: {where}, {room_label}, {market_txt}, до {fmt(p['budget_max'])}.")
+    budget=f"до {fmt(p['budget_max'])}" if p.get('budget_max') else 'без ограничения цены'
+    await s.say(f"Ищу на Циане: {where}, {room_label}, {market_txt}, {budget}.")
     s.push("search_progress", on=True, text="Ищу объявления и сравниваю варианты…")
     observed={}
     s._progress_signature=None

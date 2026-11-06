@@ -80,7 +80,10 @@ def apply_corrections(items: list[dict]) -> list[dict]:
 
 def track(profile: dict, new: bool) -> None:
     """Запомнить поиск: ночной обход (workers/refresh.py) будет держать базу по нему свежей."""
-    db.safe(repo.track_search, profile["city"], profile["rooms"], new, profile.get("okrug"), profile.get("budget_max"))
+    # Ночной обход хранит конкретную комнатность. Широкий исследовательский
+    # запрос не превращаем в выдуманную комнатность или NULL в этом расписании.
+    if profile.get('rooms') is not None:
+        db.safe(repo.track_search, profile["city"], profile["rooms"], new, profile.get("okrug"), profile.get("budget_max"))
 
 
 def page_checked(listing_id: str, alive: bool | None, note: str) -> None:

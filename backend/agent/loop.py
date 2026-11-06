@@ -39,7 +39,8 @@ def state_brief(s) -> str:
         if known.get("poi"):
             known["poi"] = [geo.POI[k][0] for k in known["poi"]]
         lines.append("Запрос: " + json.dumps(known, ensure_ascii=False))
-        missing = missing_required(p)
+        from .profile import missing_search
+        missing = missing_search(p)
         lines.append("Не хватает для поиска: " + (", ".join(missing) if missing else "ничего"))
     else:
         lines.append("Запрос ещё не записан.")
