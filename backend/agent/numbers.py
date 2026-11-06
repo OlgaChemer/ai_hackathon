@@ -22,9 +22,10 @@ def word_numbers(text):
            'семидесят':70,'восемьдесят':80,'восьмидесят':80,'девяност':90,'сто':100,'сот':100,
            'двест':200,'двухсот':200,'трист':300,'трехсот':300,'четырест':400,'четырехсот':400,
            'пятьсот':500,'шестьсот':600,'семьсот':700,'восемьсот':800,'девятьсот':900}
+    endings={'','ь','а','е','и','у','ю','я','ой','ый','ий','ая','ое','ые','ую','ого','ому','ом','ым','ыми','ых','м','ми','ью','ьмя'}
     values=set();group=0
     for word in re.findall(r'[а-яё]+|\S',text.casefold().replace('ё','е')):
-        root=next((r for r in sorted(roots,key=len,reverse=True) if word.startswith(r)),None)
+        root=next((r for r in sorted(roots,key=len,reverse=True) if word.startswith(r) and word[len(r):] in endings),None)
         if root is None:
             if group:values.add(group)
             group=0

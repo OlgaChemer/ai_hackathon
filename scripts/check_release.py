@@ -28,6 +28,9 @@ def main():
             cmd=[sys.executable,'-m','tests.e2e.semantic_eval','--dataset',dataset,'--repeat',str(repeats),'--report',str(directory/(dataset+'.json'))]
             if args.provider:cmd+=['--provider',args.provider]
             steps.append((dataset,cmd,600))
+        cmd=[sys.executable,'-m','tests.e2e.live_partial_requests','--case','semantic','--report',str(directory/'partial.json')]
+        if args.provider:cmd+=['--provider',args.provider]
+        steps.append(('partial',cmd,300))
     outcomes=[]
     for name,cmd,timeout in steps:
         started=time.monotonic()

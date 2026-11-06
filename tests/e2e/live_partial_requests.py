@@ -7,17 +7,20 @@
 import argparse
 import asyncio
 import json
+from pathlib import Path
 from backend import db
 from backend.agent import session,understanding as U
 from backend.agent.profile import merge_profile
 from backend.agent.actions.request import updated_profile
 from backend.llm import get_llm
+from backend.release import manifest
 from tests.e2e.live_dialogue_cases import Dialogue
 from tests.e2e.live_budget_and_revisions import next_step
 
 
-async def semantic():
-    db.configure('sqlite://');llm=get_llm()
+async def semantic(provider=None,report=None):
+    from backend.llm.factory import build_llm
+    db.configure('sqlite://');llm=build_llm(provider) if provider else get_llm()
     cases=[
         ('rooms','В Москве бюджет 20 млн, на сколько комнат хватит?'),
         ('area','Какую площадь можно купить за мой бюджет?'),
@@ -52,6 +55,8 @@ async def semantic():
             assert p['field_states'].get('rooms')=='unknown' and p['field_states'].get('budget_max')=='unknown',r
         else:assert not p['not_first_floor'] and not p['not_last_floor'] and p['budget_max']==20_000_000,r
         print(json.dumps({'semantic':kind,'ok':True},ensure_ascii=False),flush=True)
+    if report:Path(report).write_text(json.dumps({'manifest':manifest(llm),'passed':len(cases),'total':len(cases),
+        'case_names':[c[0] for c in cases],'scope':'NLU and bound card choices; no business actions or telephone calls'},ensure_ascii=False,indent=2))
 
 
 async def dialogues(base):
@@ -88,8 +93,9 @@ async def dialogues(base):
 
 if __name__=='__main__':
     p=argparse.ArgumentParser();p.add_argument('--base',default='http://127.0.0.1:8797');p.add_argument('--case',choices=['semantic','dialogues','all'],default='all')
+    p.add_argument('--provider',choices=['gigachat','deepseek']);p.add_argument('--report')
     a=p.parse_args()
     async def main():
-        if a.case in ('semantic','all'):await semantic()
+        if a.case in ('semantic','all'):await semantic(a.provider,a.report)
         if a.case in ('dialogues','all'):await dialogues(a.base)
     asyncio.run(main())

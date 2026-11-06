@@ -84,6 +84,8 @@ class PartialRequests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(r['changes']['filters'][0]['values'],['12'])
         frame['fields']['filters']['value'][0]={'field':'delivery_year','op':'eq','values':['2026'],'priority':'required'}
         with self.assertRaises(ValueError):input_frame.decode(frame,merge_profile({}),payload,CHANGE_SCHEMA)
+        from backend.agent.numbers import word_numbers
+        self.assertEqual(word_numbers('стоимость, вторичка, однако, триумф'),set())
 
     async def test_partial_search_executes_without_payment_or_agreements(self):
         s=self.agent({'city':'Москва','filters':[{'field':'floor','op':'gt','values':['10'],'priority':'required'}],'poi':['park']})
