@@ -139,7 +139,8 @@ async def _more_pages(s, until) -> None:
             break
         st["pages"] += 1
         seen = {x["id"] for x in st["listings"]}
-        batch=await sources.more({**profile,**({'_source_deadline':deadline} if deadline is not None else {})},st['pages'])
+        batch=await sources.more({**profile,'_search_districts':st.get('search_districts') or (),
+                                  **({'_source_deadline':deadline} if deadline is not None else {})},st['pages'])
         reports=getattr(batch,'reports',None)
         st.setdefault('page_reports',[]).extend(reports or [{'source':'cian','page':st['pages'],
             'status':'unknown','count':len(batch),'note':'Источник не сообщил исход страницы'}])
@@ -160,6 +161,26 @@ async def _more_pages(s, until) -> None:
 # ------------------------------------------------------------------ действия
 
 
+async def _search_area(s, p) -> tuple[str, ...]:
+    """Районы, которыми ограничить запрос к Циану: названные клиентом; по типу района (спальный, престижный);
+    «строго в центре» — районы у центра. Для городов без геоданных — только названные районы."""
+    from .. import districts as D
+    if p.get("districts"):
+        return tuple(p["districts"])
+    kind = p.get("district_type")
+    if kind in ("sleeping", "prestige"):
+        names = D.for_type(p["city"], kind)
+        if names:
+            await s.say(D.describe(p["city"], kind, names))
+            return tuple(names)
+        await s.say("Для этого города пока не могу оценить тип района — ищу по всему городу и отмечу это на карточках.")
+    if p.get("center_required"):
+        names = D.for_type(p["city"], "center")
+        if names:
+            return tuple(names)
+    return ()
+
+
 @action("search_listings", 3,
         "Найти объявления по запросу: Циан (вторичка и/или новостройки) + база агента; названный район; удобства "
         "и «что рядом» — только подтверждённые. Показывает клиенту экран поиска со справедливой ценой. "
@@ -178,7 +199,8 @@ async def search_listings(s) -> dict:
         observed.update({x['id']:x for x in items})
         report_progress(s,list(observed.values()),'collect')
     deadline=time.monotonic()+settings.search_budget_s
-    listings, report = await sources.collect({**p,'_source_deadline':deadline},on_batch=batch)
+    area=await _search_area(s,p)
+    listings, report = await sources.collect({**p,'_source_deadline':deadline,'_search_districts':area},on_batch=batch)
     known = sources.stored(p, exclude={x["id"] for x in listings})
     if known:
         listings += known
@@ -188,7 +210,7 @@ async def search_listings(s) -> dict:
     pool = [x for x in listings if passes_hard_filters(x, p)]
     comps = list({x["id"]: x for x in [*sources.comparables(p), *listings]}.values())
     st = s.search = {"listings": listings, "pool": pool, "comps": comps, "report": report, "meta": {}, "pages": 1,
-                     "named": p.get("districts") or [], "strict": False, "map_ok": True,
+                     "named": p.get("districts") or list(area), "strict": False, "map_ok": True, "search_districts": area,
                      "shown_ids": set(p.get('_seen_listing_ids') or [x['id'] for x in s.shown]),
                      "map_deadline": time.monotonic() + settings.places_budget_s, "map_revision": s.client_revision,
                      'page_reports':[{**r,'page':1} for r in report if r.get('status')!='db'],'coverage_reasons':[],

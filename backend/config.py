@@ -19,6 +19,9 @@ def _bool(name: str, default: bool) -> bool:
 @dataclass(frozen=True)
 class Settings:
     llm_provider: str = os.getenv("LLM_PROVIDER", "gigachat").strip().lower()
+    # Разбор простых сообщений кодом (agent/rule_parser.py): off — всегда модель; shadow — модель, а разбор кодом
+    # только сравнивается с ней (журнал rule_parser, /api/metrics); on — простое сообщение без двух запросов к модели.
+    rule_parser: str = (os.getenv("RULE_PARSER") or "shadow").strip().lower()
 
     deepseek_api_key: str = os.getenv("DEEPSEEK_API_KEY", "")
     deepseek_base_url: str = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")

@@ -74,6 +74,8 @@ def distance_m(lat1: float, lng1: float, lat2: float, lng2: float) -> int:
 
 async def _overpass(query: str, timeout: float) -> list[dict]:
     """Запрос к Overpass: главный сервер, при ошибке — запасной."""
+    from .runtime import record
+    record("source_request", source="overpass")
     last: Exception | None = None
     for url in MIRRORS:
         try:
@@ -275,6 +277,7 @@ async def nearby(listings: list[dict], kinds: list[str], budget_s: float | None 
                 x.setdefault("nearby_evidence", {})[k] = {"source": "osm", "checked_at": None}
         if any(k not in (x.get("nearby") or {}) for k in kinds):
             todo.append(x)
+    _local(todo, kinds)
     if on_progress:on_progress()
 
     async def fill():
@@ -305,6 +308,31 @@ async def nearby(listings: list[dict], kinds: list[str], budget_s: float | None 
     from .telemetry import dependency
     dependency('map','available' if complete else 'degraded')
     return complete
+
+
+def _local(listings: list[dict], kinds: list[str]) -> int:
+    """Города-миллионники: что рядом — по своей выгрузке OpenStreetMap (backend/geodata), без внешних запросов.
+    Возвращает, сколько проверок сделано локально."""
+    from . import geodata
+    from .runtime import record
+    done = 0
+    for x in listings:
+        c = geodata.city(x.get("city"))
+        if not c:
+            continue
+        for k in kinds:
+            if k in (x.get("nearby") or {}):
+                continue
+            rows = geodata.poi_rows(x["city"], k)
+            if rows is None:
+                continue
+            x.setdefault("nearby", {})[k] = _nearest(x["lat"], x["lng"], rows)
+            x.setdefault("nearby_evidence", {})[k] = {"source": "osm_local", "checked_at": c["built_at"],
+                                                      "distance_kind": "edge" if k in AREAS else "straight_line", "radius": RADIUS}
+            done += 1
+    if done:
+        record("source_request", source="poi_local", checks=done)
+    return done
 
 
 def has_all(x: dict, kinds: list[str]) -> bool:

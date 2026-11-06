@@ -44,7 +44,7 @@ async def _collect_one(profile: dict, on_batch=None) -> tuple[list[dict], list[d
         try:
             remaining=profile.get('_source_deadline',time.monotonic()+settings.search_budget_s)-time.monotonic()
             if remaining<=0:raise asyncio.TimeoutError()
-            got, rep = await asyncio.wait_for(cian.search(profile.get("city"), profile["rooms"], profile["budget_max"], 1, profile.get("okrug"), new),remaining)
+            got, rep = await asyncio.wait_for(cian.search(profile.get("city"), profile["rooms"], profile["budget_max"], 1, profile.get("okrug"), new, tuple(profile.get("_search_districts") or ())),remaining)
         except asyncio.TimeoutError:
             got,stamp=cian.load_snapshot(profile['city'],profile['rooms'],new)
             if not got:
@@ -94,7 +94,7 @@ async def _more_one(profile: dict, page: int) -> list[dict]:
         try:
             remaining=profile.get('_source_deadline',time.monotonic()+settings.search_budget_s)-time.monotonic()
             if remaining<=0:raise asyncio.TimeoutError()
-            items, rep = await asyncio.wait_for(cian.search(profile.get("city"), profile["rooms"], profile["budget_max"], page, profile.get("okrug"), new),remaining)
+            items, rep = await asyncio.wait_for(cian.search(profile.get("city"), profile["rooms"], profile["budget_max"], page, profile.get("okrug"), new, tuple(profile.get("_search_districts") or ())),remaining)
         except asyncio.TimeoutError:
             reports.append({'source':cian.SOURCE_NAME,'status':'unavailable','count':0,'note':'Бюджет поиска исчерпан',
                             'reason':'search_budget_exhausted','city':profile['city'],'rooms':profile['rooms'],'new':new,'page':page})

@@ -147,6 +147,14 @@ def list_chats(db: Session, vid: str | None, user_id: int | None, limit: int = 5
     return [{"id": c.id, "title": c.title, "status": c.status, "updated_at": _iso(c.updated_at)} for c in rows]
 
 
+def listing_prices(db: Session, city: str, days: int = 120, limit: int = 30000) -> list[tuple[str | None, int, float | None]]:
+    """(район, цена, площадь) живых объявлений города за days дней — для медианы цены м² по районам."""
+    since = utcnow() - timedelta(days=days)
+    rows = db.execute(select(Listing.data, Listing.price).where(Listing.city == city, Listing.status == "active",
+                                                                Listing.last_seen_at >= since).limit(limit))
+    return [((d or {}).get("district"), price, (d or {}).get("area")) for d, price in rows]
+
+
 def _iso(t: datetime | None) -> str | None:
     return t.isoformat() + "Z" if t else None
 

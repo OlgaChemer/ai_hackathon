@@ -47,6 +47,8 @@ async def enrich(listings: list[dict], kinds: list[str], radius: int, on_progres
                     # Документированный поиск Places по категории/названию, без вымышленных rubric ID.
                     params.update(q=QUERIES[kind], type='branch')
                 try:
+                    from ..runtime import record
+                    record('source_request', source='twogis')  # замер: сколько запросов к 2ГИС
                     response = await client.get(URL, params=params)
                     response.raise_for_status()
                     data = response.json()

@@ -164,6 +164,9 @@ CITY_CENTERS = {
 
 def center_distance(x: dict) -> float | None:
     point = CITY_CENTERS.get(x.get("city"))
+    if point is None:  # миллионники без ручной точки центра — центр из геоданных OpenStreetMap
+        from .. import geodata
+        point = (geodata.city(x.get("city")) or {}).get("center")
     if not point or x.get("lat") is None or x.get("lng") is None:
         return None
     return round(km(x, {"lat": point[0], "lng": point[1]}), 1)

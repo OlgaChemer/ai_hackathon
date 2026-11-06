@@ -40,6 +40,12 @@ CHANGE_SCHEMA = {
             "type": "boolean",
             "description": "Желательно в центре или ближе к центру — учитывается при сравнении всех допустимых комнатностей",
         },
+        "district_type": {
+            "type": "string",
+            "enum": ["sleeping", "quiet", "prestige"],
+            "description": "Тип района, если клиент его назвал: спальный — sleeping, тихий — quiet, престижный/элитный — prestige. "
+                           "Код подберёт районы по данным (цены, застройка, дороги) и покажет их клиенту.",
+        },
         "budget_max": {
             "minimum": 1,
             "maximum": 1000000000,
@@ -147,6 +153,7 @@ CHANGE_SCHEMA = {
                     "prefer_center",
                     "districts",
                     "avoid_districts",
+                    "district_type",
                 ],
             },
             "description": "Полностью убрать только отменённые клиентом условия, сохранив остальные. Например «парк больше не нужен» -> [poi:park], «ремонт любой» -> [condition], «любой этаж» -> [not_first_floor,not_last_floor]. Удобства: feature:ключ. Снятие условия одновременно убирает его из желательных; удалять один soft_criteria недостаточно.",

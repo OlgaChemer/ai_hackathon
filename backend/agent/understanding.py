@@ -31,6 +31,7 @@ rooms_options — все допустимые числа комнат 1–5: о�
 Суммы в рублях; «пять с половиной лямов» 5500000. Наличка/за свои/без ипотеки -> payment cash.
 Вторичка -> housing secondary; новостройка -> new; оба -> both. Не пропускай названный рынок и оплату.
 «В центре» -> prefer_center true и center_required true; «желательно ближе» -> true/false.
+Спальный район -> fields district_type=sleeping; тихий район/тихое место -> quiet; престижный/элитный район -> prestige. Это поддержанное условие, не unsupported. Отмена — clear_criteria district_type.
 Не выдумывай обязательность мягких условий. Парк желателен -> poi:park preferred; не первый/последний этаж -> required.
 Площадь/кухня/год постройки — criteria. Произвольные проверяемые ограничения — верхний список filters.
 Для одного свойства используй ОДНО представление: именованный criterion ИЛИ filters, не оба.
@@ -273,6 +274,16 @@ async def _prepare(s):
         record('request_review',session=s.id,decision=s.request_review['decision'],intent='refine',
                changed_keys=list(answered),source='bound_card_choice')
         return s.request_review
+    fast=_rule_parse(s,inputs,base_profile)
+    if fast is not None and settings.rule_parser=='on':
+        # Простое сообщение («двушка в Казани до 9 млн») разобрано кодом — без двух запросов к модели.
+        s.request_review={'seq':version,'base_profile':base_profile,'intent':'refine' if (s.search or s.shown) else 'search',
+                          'decision':'apply','changes':fast,'question':'','options':[],'selection':None,'call_ids':None,
+                          'unsupported':[]}
+        record('rule_parser',session=s.id,outcome='accepted',changed_keys=list(fast))
+        record('request_review',session=s.id,decision='apply',intent=s.request_review['intent'],fields=len(fast),
+               changed_keys=list(fast),source='rules')
+        return s.request_review
     contract=input_frame.sparse_schema(CHANGE_SCHEMA, inputs)
     tools=semantic_tools(contract,inputs,s.profile.get('_unsupported_conditions') or [],bool(s.shown or s.search))
     extraction=input_frame.schema(CHANGE_SCHEMA,inputs)
@@ -403,6 +414,7 @@ async def _prepare(s):
             from .session import Superseded
             raise Superseded()
         s.request_review={'seq':version,'base_profile':base_profile,**result}
+        if fast is not None:_shadow_compare(s,fast,result)
         query=result.get('selection') or {}
         record('request_review',session=s.id,decision=result['decision'],intent=result['intent'],
                fields=len(result['changes']),changed_keys=list(result['changes']),
@@ -410,6 +422,40 @@ async def _prepare(s):
                ordering=query.get('sort'),count=query.get('limit'),requested_action=result.get('requested_action'),repaired=bool(attempt))
         return s.request_review
     raise UnderstandingError('Не удалось получить корректный структурированный ввод: '+str(error))
+
+
+def _rule_parse(s,inputs,base_profile):
+    """Разбор кодом одного нового сообщения без открытых карточек; None — пусть разбирает модель."""
+    if settings.rule_parser not in ('shadow','on') or len(inputs)!=1:
+        return None
+    if any(t.get('status')=='waiting' for t in s.pending_decisions.values()) or s.profile.get('_unsupported_conditions'):
+        return None
+    from . import rule_parser
+    try:
+        fast=rule_parser.parse(inputs[0]['text'],base_profile)
+        if fast is None:
+            record('rule_parser',session=s.id,outcome='declined')
+            return None
+        validation.validate(fast,CHANGE_SCHEMA)
+        if not guard.input_verdict(fast).ok:
+            return None
+        return fast
+    except Exception as exc:  # noqa: BLE001 — разбор кодом необязателен: при ошибке работает модель
+        record('rule_parser',session=s.id,outcome='error',problem=type(exc).__name__)
+        return None
+
+
+def _shadow_compare(s,fast,result):
+    """Теневой режим: совпал ли разбор кодом с моделью. Совпадение — те же значения и никаких лишних изменений."""
+    empty=lambda v:v in (None,[],'',False)  # noqa: E731
+    model={k:v for k,v in (result.get('changes') or {}).items() if not empty(v)}
+    fast={k:v for k,v in fast.items() if not empty(v)}
+    if 'rooms' in model and model.get('rooms_options',[model['rooms']])[:1]==[model['rooms']] and 'rooms' not in fast:
+        model.pop('rooms')  # «двушка» модель может записать и как rooms, и как rooms_options — это одно и то же
+    same=(result.get('decision')=='apply' and result.get('intent') in ('search','refine') and not result.get('selection')
+          and not result.get('unsupported') and set(model)==set(fast) and all(model[k]==fast[k] for k in fast))
+    record('rule_parser',session=s.id,outcome='shadow_agree' if same else 'shadow_disagree',
+           rules=fast,model={k:model.get(k) for k in set(model)|set(fast)},model_intent=result.get('intent'))
 
 
 async def ensure(s):

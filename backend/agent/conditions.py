@@ -1,6 +1,8 @@
 """Канонические условия. Старые поля профиля — входной адаптер для одной модели."""
 from copy import deepcopy
 
+THRESHOLD={'quiet_road_m':200,'quiet_rail_m':300}  # совпадает с agent/districts.THRESHOLDS
+
 ALIASES={'area_min':'area','kitchen_min':'kitchen','year_min':'year',
          'metro_max_minutes':'metro_minutes','center_required':'center_km',
          'condition':'condition','material':'material','not_first_floor':'floor',
@@ -40,6 +42,14 @@ def compile_profile(profile):
     for key in profile.get('poi') or []:add('nearby:'+key,'lte',[geo.RADIUS],'poi:'+key,geo.POI[key][0])
     if profile.get('center_required'):
         add('center_km','lte',[5],'center_required','центр: не дальше 5 км по прямой','required')
+    kind=profile.get('district_type')
+    if kind=='quiet':
+        # «Тихо» — свойство дома, а не района: расстояние до крупной дороги и железной дороги по OpenStreetMap
+        add('road_m','gte',[THRESHOLD['quiet_road_m']],'district_type','тихо: крупная дорога не ближе 200 м','preferred')
+        add('rail_m','gte',[THRESHOLD['quiet_rail_m']],'district_type','тихо: железная дорога не ближе 300 м','preferred')
+    elif kind in ('sleeping','prestige'):
+        label={'sleeping':'спальный район','prestige':'престижный район'}[kind]+' (оценка по ценам и застройке)'
+        add('district_type','has_label',[kind],'district_type',label,'preferred')
     for f in profile.get('filters') or []:
         if f['priority']=='remove':continue
         field=f['field']
@@ -81,6 +91,11 @@ def evaluate(condition,x):
         elif key not in nearby and key in C.POI_TEXT:
             claim,quote=C.text_evidence(x.get('description') or '',C.POI_TEXT[key])
             if claim is not None:source,note='cian_description',quote
+    elif op=='has_label':
+        from .districts import LABELS,of_listing
+        got=of_listing(x)
+        status=None if got is None else values[0] in got
+        source='osm+prices';note=', '.join(LABELS.get(v,v) for v in got) if got else None
     elif op=='condition_at_least':
         actual=x.get('condition');rank=C.CONDITION.get((actual or '').lower())
         status=rank>=C.NEED[values[0]] if rank is not None else None
@@ -98,7 +113,7 @@ def evaluate(condition,x):
         actual=Q.field_value(x,field)
         status=_compare(actual,op,values)
         note=actual
-        if field=='center_km':source='map'
+        if field in ('center_km','road_m','rail_m'):source='map'
     if field in (x.get('listed') or {}):source='seller_call'
     provenance=(x.get('fact_sources') or {}).get(field) or x.get('provenance') or {}
     if checked is None:checked=provenance.get('observed_at') or x.get('stored_at')
