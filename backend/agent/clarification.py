@@ -14,17 +14,22 @@ def _words(text):
     return {w[:5] for w in re.findall(r'[а-яё]+',text.casefold().replace('ё','е')) if len(w)>2}
 
 
-def ground_state(key,state,quote):
+def ground_state(key,state,quote,*,bound_field=None,question=''):
     """Закрытые статусы: отсутствие решения не означает разрешение всех значений."""
     text=quote.casefold().replace('ё','е')
+    subjects={'budget_max':r'бюджет|цен[ауы]|стоимост|лимит|сумм','rooms':r'комнат|студи|однуш|двуш|треш',
+              'districts':r'район|локаци|расположен','okrug':r'округ','housing':r'рынок|новостро|вторич|тип\w*\s+жиль'}
+    subject=subjects.get(key,re.escape(LABELS.get(key,key)))
+    if not re.search(subject,text) and bound_field!=key and not re.search(subject,question.casefold()):
+        if not re.search(r'(?:все|всё|всех)\s+ограничен',text):return None
     label=LABELS.get(key,'')
     clauses=[part for part in re.split(r'[,;.!?]',text) if label and label in part]
     if len(clauses)==1:text=clauses[0]
     unknown=bool(re.search(r'не\s+(?:зна\w*|определ\w*|решил\w*)',text))
-    unrestricted=bool(re.search(r'люб(?:ой|ая|ое|ые|ую)|не\s*важ\w*|(?:сними|убери|отмени)|без\s+(?:ограничен\w*|разницы)|не\s+принципиаль\w*',text))
+    unrestricted=bool(re.search(r'люб(?:ой|ая|ое|ые|ую)|не\s*важ\w*|(?:сними|убери|отмени)|без\s+(?:ограничен\w*|разницы|лимита)|неогранич\w*|все\s+равно|не\s+имеет\s+значения|не\s+принципиаль\w*',text))
     if unknown and not unrestricted:return 'unknown'
     if unrestricted and not unknown:return 'unrestricted'
-    return state
+    return state if unknown or unrestricted else None
 
 
 def choice(s,inputs):

@@ -131,6 +131,10 @@ def decode(patch,contract,inputs,aliases=None,*,provenance=None,profile=None):
     if patch.get('unsupported') is None:patch['unsupported']=[]
     if not isinstance(patch['unsupported'],list):raise ValueError('unsupported должен быть списком')
     texts=[r['text'].casefold() for r in inputs]
+    def mode_for(key,state,quote):
+        from .clarification import ground_state
+        context=next((row for row in reversed(inputs) if quote.casefold() in row['text'].casefold()),{})
+        return ground_state(key,state,quote,bound_field=context.get('question_field'),question=context.get('question',''))
     aliases=aliases or {}
     def alias_for(key):
         def canonical(k):return k.replace('poi:','nearby:',1) if k.startswith('poi:') else k
@@ -206,11 +210,11 @@ def decode(patch,contract,inputs,aliases=None,*,provenance=None,profile=None):
         for state in patch['states']:
             if not state['source'] or not any(state['source'].casefold() in text for text in texts):
                 raise ValueError('Статус поля требует буквальной цитаты нового ввода')
-            from .clarification import ground_state
-            mode=ground_state(state['key'],state['state'],state['source'])
+            mode=mode_for(state['key'],state['state'],state['source'])
+            if mode is None:continue
             if state['key'] in modes and modes[state['key']]!=mode:raise ValueError('Противоречащие статусы поля')
             modes[state['key']]=mode
-        frame['fields']['field_states']={'value':modes,'source':patch['states'][0]['source']}
+        if modes:frame['fields']['field_states']={'value':modes,'source':patch['states'][0]['source']}
     known=input_frame.basic_fields(CHANGE_SCHEMA)
     for rows in (patch['fields'],patch['criteria']):
         for row in rows:
@@ -264,8 +268,8 @@ def decode(patch,contract,inputs,aliases=None,*,provenance=None,profile=None):
                 kind=known[key]['type']
                 if key in ('budget_max','housing','okrug'):
                     old=(frame['fields'].get('field_states') or {}).get('value',{})
-                    from .clarification import ground_state
-                    mode=ground_state(key,'unrestricted',row['source'])
+                    mode=mode_for(key,'unrestricted',row['source'])
+                    if mode is None:continue
                     frame['fields']['field_states']={'value':{**old,key:mode},'source':row['source']}
                     continue
                 if kind not in ('boolean','array'):raise ValueError('Для изменения '+key+' нужно новое значение')

@@ -344,7 +344,8 @@ class Session:
         question = next((e for e in reversed(self.history)
                          if e.get("type") == "confirm" and e.get("kind") in self.pending), {})
         self.request_inputs.append({"seq": seq, "text": text, "question": question.get('text',''),
-                                    "options": question.get('chips') or []})
+                                    "options": question.get('chips') or [],
+                                    "question_field":((self.active_operation or {}).get('arguments') or {}).get('field')})
         self.request_review = None
 
     async def receive_text(self, text: str, marks: dict | None = None, command_id: str | None = None) -> str:

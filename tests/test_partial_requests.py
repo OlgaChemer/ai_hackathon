@@ -90,11 +90,13 @@ class PartialRequests(unittest.IsolatedAsyncioTestCase):
     def test_state_grounding_distinguishes_uncertainty_from_unrestricted_per_clause(self):
         from backend.agent.clarification import ground_state
         for key in ('budget_max','rooms','districts','housing'):
-            self.assertEqual(ground_state(key,'unrestricted','Пока не знаю, ещё не решил'),'unknown')
-            self.assertEqual(ground_state(key,'unknown','Неважно, убери ограничение'),'unrestricted')
+            self.assertEqual(ground_state(key,'unrestricted','Пока не знаю, ещё не решил',bound_field=key),'unknown')
+            self.assertEqual(ground_state(key,'unknown','Неважно, убери ограничение',bound_field=key),'unrestricted')
         text='Бюджет неважен, комнатность пока не знаю.'
         self.assertEqual(ground_state('budget_max','unknown',text),'unrestricted')
         self.assertEqual(ground_state('rooms','unrestricted',text),'unknown')
+        self.assertIsNone(ground_state('budget_max','unrestricted','Рассчитай личный доступный бюджет по моим доходам.'))
+        self.assertIsNone(ground_state('budget_max','unrestricted','Этаж неважен'))
 
     def test_spelled_numbers_do_not_conflict_with_digits_in_other_conditions(self):
         from backend.agent import input_frame
