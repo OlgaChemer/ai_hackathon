@@ -42,7 +42,10 @@ async def budget(base):
         assert step.get('kind') in ('selection','clarify','finance') or (step['type']=='message' and step.get('await_reply')),step
         await d.send('Нужны три комнаты.');step=await next_step(d)
         assert step.get('kind') in ('selection','clarify','finance') or (step['type']=='message' and step.get('await_reply')),step
-        await d.send('Не знаю, какой средний?');step=await next_step(d)
+        # Теперь широкий поиск разрешён до анкеты бюджета: предыдущая реплика
+        # уже про карточки. Называем предмет вопроса, чтобы не требовать угадать,
+        # имеется ли в виду средняя цена метра, квартиры или бюджет.
+        await d.send('Бюджет пока не знаю. Какова средняя цена таких квартир?');step=await next_step(d)
         m=d.profile.get('market');assert m and m.get('median'),(step,d.messages)
         assert d.profile['budget_max'] is None
         assert m['scope']['rooms']==[3] and m['scope']['center_radius_km']==5
