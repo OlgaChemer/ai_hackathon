@@ -162,8 +162,9 @@ def decode(frame, profile, payload, changes_schema):
                 matches=[old for old in known if label and (label in old.casefold() or old.casefold() in label)]
                 if len(matches)!=1:raise ValueError('Для отмены выбери точное прежнее условие из workflow.unsupported_conditions')
                 condition['text']=matches[0]
-    if operation in ('compare','analyze','more') and not any(x['action']=='add' for x in frame['unsupported']):
-        # Чтение найденных данных не имеет полномочий изменять профиль.
+    if operation in ('compare','analyze','more') and intent!='refine' and not any(x['action']=='add' for x in frame['unsupported']):
+        # Чистое чтение найденных данных не изменяет профиль. В составной
+        # команде refine новые условия проходят обычную проверку ниже.
         frame=deepcopy(frame)
         frame['fields']={k:None for k in frame['fields']}
         frame['criteria']={k:None for k in frame['criteria']}
