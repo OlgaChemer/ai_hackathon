@@ -145,6 +145,11 @@ class PartialRequests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(frame['criteria']['poi:park'],'required')
         generation=profile_patch.generation_schema(contract,inputs)
         self.assertNotIn('filters',generation['properties']['fields']['items']['properties']['key']['enum'])
+        uncertain=deepcopy(data)
+        for group in ('states','filters'):uncertain[group]=[]
+        uncertain['fields']=[{'key':'budget_max','action':'remove','value':'','source':'Бюджет пока не определил'}]
+        decoded=profile_patch.decode(uncertain,contract,[{'text':'Бюджет пока не определил'}])
+        self.assertEqual(decoded['fields']['field_states']['value']['budget_max'],'unknown')
         data['states'][0]['source']='выдуманная цитата'
         with self.assertRaises(ValueError):profile_patch.decode(data,contract,inputs)
 

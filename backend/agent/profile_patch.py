@@ -241,7 +241,9 @@ def decode(patch,contract,inputs,aliases=None,*,provenance=None):
                 kind=known[key]['type']
                 if key in ('budget_max','housing','okrug'):
                     old=(frame['fields'].get('field_states') or {}).get('value',{})
-                    frame['fields']['field_states']={'value':{**old,key:'unrestricted'},'source':row['source']}
+                    from .clarification import ground_state
+                    mode=ground_state(key,'unrestricted',row['source'])
+                    frame['fields']['field_states']={'value':{**old,key:mode},'source':row['source']}
                     continue
                 if kind not in ('boolean','array'):raise ValueError('Для изменения '+key+' нужно новое значение')
                 actual=False if kind=='boolean' else []
