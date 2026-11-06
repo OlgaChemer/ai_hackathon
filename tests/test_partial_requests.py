@@ -74,6 +74,19 @@ class PartialRequests(unittest.IsolatedAsyncioTestCase):
         data['fields'][0]['source']='Рассчитай личный бюджет'
         with self.assertRaises(ValueError):profile_patch.decode(data,contract,[{'text':'Рассчитай личный бюджет'}])
 
+    def test_withdrawing_an_unsupported_wish_selects_its_saved_identity(self):
+        from backend.agent import input_frame,profile_patch
+        from backend.agent.request_schema import CHANGE_SCHEMA
+        old='Хочу квартиру где внутри бассейн';text='Бассейн можно не проверять. Покажи три просторных.'
+        inputs=[{'text':text}];contract=profile_patch.schema(input_frame.schema(CHANGE_SCHEMA,inputs))
+        generated=profile_patch.generation_schema(contract,inputs,[old])
+        self.assertEqual(generated['properties']['withdraw_unsupported']['items']['properties']['text']['enum'],[old])
+        self.assertEqual(generated['properties']['unsupported']['items']['properties']['action']['enum'],['add'])
+        data={key:[] for key in contract['properties']}
+        data['withdraw_unsupported']=[{'text':old,'source':text}]
+        frame=profile_patch.decode(data,contract,inputs,profile={'_unsupported_conditions':[old]})
+        self.assertEqual(frame['unsupported'],[{'text':old,'source':text,'action':'remove'}])
+
     def test_wildcard_url_does_not_invent_rooms_or_price(self):
         url=sources.cian.build_url('Москва',None,None)
         self.assertNotIn('room',url);self.assertNotIn('maxprice',url)

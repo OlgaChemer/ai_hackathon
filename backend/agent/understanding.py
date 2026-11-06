@@ -53,7 +53,7 @@ pending_decisions и recent_dialogue поясняют, к какому свой�
 Название улицы без указания, какой именно, не считается центром города: сохрани буквальное неподдержанное условие в unsupported. Частичное имя города не достраивай, код уточнит его по каталогу.
 unsupported — только НОВОЕ условие вне доступных свойств, с буквальной цитатой; бассейн внутри квартиры не равен фитнесу рядом.
 Не подбирай ближайшее по смыслу свойство вместо отсутствующего: удобство ВНУТРИ квартиры и расстояние до внешнего объекта — разные условия. Не кодируй внутренний бассейн как nearby:fitness=0. Если точного свойства нет, запиши неизвестный ключ либо unsupported, не придумывай расстояние.
-При явной отмене неподдержанного условия: unsupported action=remove, text дословно из unsupported_conditions, source — цитата нового ввода. Совмести отмену с selection, если просят отбор.
+При явной отмене неподдержанного условия: withdraw_unsupported [{text: точный вариант из enum сохранённых пожеланий, source: целая новая реплика}]. Не перефразируй прежнее условие. unsupported оставляй только для новых добавлений. Совмести отмену с selection, если просят отбор.
 unsupported_properties связывает ключ неизвестного свойства с его прежним названием. Его можно удалить по этому ключу, как обычное свойство.
 Пример: 1–2 комнаты, вторичка, за свои -> fields [{key:rooms_options,value:"[1,2]",source:"1–2"},{key:housing,value:"secondary",source:"вторичка"},{key:payment,value:"cash",source:"за свои"}].
 requested_card — только ПРЯМАЯ просьба показать анкетную карточку: «сначала предложите выбор типа жилья через карточку Где искать» -> [ask_housing]. Это НЕ выбор рынка: housing НЕ добавляй, если клиент не назвал значение. Если клиент просто не назвал рынок, []. Это не карточки квартир.
@@ -347,7 +347,7 @@ async def _prepare(s):
                     contract_for_changes['required'].remove('selection')
                 prompt=PROFILE_SYSTEM+'\n'+guard.POLICY
                 if error:prompt+='\nОшибка прежнего разбора: '+error
-                strict_schema=profile_patch.generation_schema(contract_for_changes,inputs)
+                strict_schema=profile_patch.generation_schema(contract_for_changes,inputs,s.profile.get('_unsupported_conditions'))
                 data['output_schema']=strict_schema
                 from .clarification import INFORMATION_ACKS
                 information_ack=(response.tool_calls[0].name=='request_information' and len(inputs)==1

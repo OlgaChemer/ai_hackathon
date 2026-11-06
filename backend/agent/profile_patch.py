@@ -41,6 +41,9 @@ def schema(contract):
             'state':{'type':'string','enum':['unknown','unrestricted']},'source':deepcopy(source)})},
         'places':deepcopy(props['places']),
         'unsupported':deepcopy(props['unsupported']),
+        'withdraw_unsupported':{'type':'array','minItems':0,'maxItems':5,'items':obj({
+            'text':{'type':'string','maxLength':200,'description':'Точное сохранённое пожелание из предложенного enum, без перефразирования.'},
+            'source':deepcopy(source)})},
         'selection':{'type':'array','minItems':0,'maxItems':1,'items':reading,
                      'description':'[] если команды отбора нет. Иначе один запрос; limit0 — сохранить количество; group_by пусто — не группировать.'},
         'requested_card':{'type':'array','minItems':0,'maxItems':1,'items':{'type':'string','enum':QUESTIONNAIRES},
@@ -64,19 +67,24 @@ def value(text,spec):
     return parsed
 
 
-def generation_schema(contract,inputs):
+def generation_schema(contract,inputs,unsupported=None):
     """Нативный вывод выбирает цитату из нового ввода, а не склоняет её заново."""
     result=deepcopy(contract)
     # Целая новая реплика содержит и значение, и его предмет. Один предлог
     # из той же реплики формально буквален, но не доказывает город или сумму.
     quotes=list(dict.fromkeys(row['text'] for row in inputs))
-    for group in ('fields','criteria','unsupported','states','filters'):
+    for group in ('fields','criteria','unsupported','states','filters','withdraw_unsupported'):
         spec=result['properties'][group]['items']['properties']['source']
         spec['enum']=quotes
         spec['maxLength']=max([1000,*map(len,quotes)])
     for group in ('fields','criteria'):
         keys=result['properties'][group]['items']['properties']['key']['enum']
-        result['properties'][group]['items']['properties']['key']['enum']=[key for key in keys if key not in ('field_states','filters')]
+        result['properties'][group]['items']['properties']['key']['enum']=[key for key in keys if key not in ('field_states','filters','unsupported')]
+    known=list(dict.fromkeys(unsupported or []))
+    withdrawals=result['properties']['withdraw_unsupported']
+    withdrawals['maxItems']=min(5,len(known))
+    withdrawals['items']['properties']['text']['enum']=known or ['']
+    result['properties']['unsupported']['items']['properties']['action']['enum']=['add']
     return result
 
 
@@ -94,7 +102,8 @@ def decode(patch,contract,inputs,aliases=None,*,provenance=None,profile=None,rea
     patch=deepcopy(patch)
     patch.setdefault('states',[])
     patch.setdefault('filters',[])
-    for group in ('fields','criteria','filters','states'):
+    patch.setdefault('withdraw_unsupported',[])
+    for group in ('fields','criteria','filters','states','withdraw_unsupported'):
         rows=patch.get(group,[])
         if not isinstance(rows,list) or any(not isinstance(row,dict) for row in rows):
             raise ValueError(group+' должен быть списком объектов')
@@ -260,7 +269,11 @@ def decode(patch,contract,inputs,aliases=None,*,provenance=None,profile=None,rea
                 # Старое условие нельзя переносить на новую команду-альтернативу.
                 condition['text']=quote[:200]
     validation.validate(patch,contract)
-    frame={'fields':{},'criteria':{},'places':patch['places'],'unsupported':patch['unsupported']}
+    known=set((profile or {}).get('_unsupported_conditions') or [])|set(aliases.values())
+    for item in patch['withdraw_unsupported']:
+        if item['text'] not in known:raise ValueError('Для снятия выберите сохранённое неподдержанное пожелание')
+    frame={'fields':{},'criteria':{},'places':patch['places'],
+           'unsupported':[*patch['unsupported'],*[{**item,'action':'remove'} for item in patch['withdraw_unsupported']]]}
     if patch['states']:
         modes={}
         for state in patch['states']:
