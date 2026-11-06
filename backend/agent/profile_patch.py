@@ -95,6 +95,12 @@ def decode(patch,contract,inputs,aliases=None,*,provenance=None):
     # Декодер старых сохранённых результатов по-прежнему поддерживается.
     for item in patch['filters']:
         quote=item.get('source','')
+        if item.get('field','').startswith('nearby:') and item.get('op')=='exists' and item.get('priority')!='remove':
+            # «Рядом есть парк» использует объявленный продуктовый радиус,
+            # а не существование парка на произвольном расстоянии.
+            patch.setdefault('criteria',[]).append({'key':'poi:'+item['field'].split(':',1)[1],
+                'priority':item['priority'],'value':'true','source':quote})
+            continue
         patch.setdefault('fields',[]).append({'key':'filters','value':json.dumps([{k:v for k,v in item.items() if k!='source'}]),'source':quote})
     requested=patch.setdefault('requested_card',[])
     if requested is None:patch['requested_card']=[]
