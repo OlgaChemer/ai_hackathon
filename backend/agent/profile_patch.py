@@ -89,11 +89,24 @@ def unverifiable_distance(f):
     except (ValueError,TypeError):return False
 
 
-def decode(patch,contract,inputs,aliases=None,*,provenance=None,profile=None):
+def decode(patch,contract,inputs,aliases=None,*,provenance=None,profile=None,reading=None):
     if not isinstance(patch,dict):raise ValueError('Изменения должны быть JSON-объектом')
     patch=deepcopy(patch)
     patch.setdefault('states',[])
     patch.setdefault('filters',[])
+    if reading is not None:
+        from .clarification import names_property
+        def room_fact(row):
+            quote=row.get('source','')
+            context=next((r for r in reversed(inputs) if quote.casefold() in r['text'].casefold()),{})
+            return names_property('rooms',quote,bound_field=context.get('question_field'),question=context.get('question',''))
+        # Число в уже принятой команде выдачи не доказывает комнатность.
+        # Составная команда с явным упоминанием комнат или ответ на адресованный
+        # вопрос по-прежнему может изменить профиль вместе с выдачей.
+        for group in ('fields','criteria'):
+            patch[group]=[r for r in patch.get(group,[]) if r.get('key') not in ('rooms','rooms_options','studio_requested') or room_fact(r)]
+        patch['filters']=[r for r in patch['filters'] if r.get('field')!='rooms' or room_fact(r)]
+        patch['states']=[r for r in patch['states'] if r.get('key')!='rooms' or room_fact(r)]
     # Нативный контракт передаёт сравнения объектами, без JSON внутри строки.
     # Декодер старых сохранённых результатов по-прежнему поддерживается.
     for item in patch['filters']:

@@ -14,13 +14,18 @@ def _words(text):
     return {w[:5] for w in re.findall(r'[а-яё]+',text.casefold().replace('ё','е')) if len(w)>2}
 
 
-def ground_state(key,state,quote,*,bound_field=None,question=''):
-    """Закрытые статусы: отсутствие решения не означает разрешение всех значений."""
-    text=quote.casefold().replace('ё','е')
+def names_property(key,quote,*,bound_field=None,question=''):
     subjects={'budget_max':r'бюджет|цен[ауы]|стоимост|лимит|сумм','rooms':r'комнат|студи|однуш|двуш|треш',
               'districts':r'район|локаци|расположен','okrug':r'округ','housing':r'рынок|новостро|вторич|тип\w*\s+жиль'}
     subject=subjects.get(key,re.escape(LABELS.get(key,key)))
-    if not re.search(subject,text) and bound_field!=key and not re.search(subject,question.casefold()):
+    return bool(bound_field==key or re.search(subject,quote.casefold().replace('ё','е'))
+                or re.search(subject,question.casefold().replace('ё','е')))
+
+
+def ground_state(key,state,quote,*,bound_field=None,question=''):
+    """Закрытые статусы: отсутствие решения не означает разрешение всех значений."""
+    text=quote.casefold().replace('ё','е')
+    if not names_property(key,quote,bound_field=bound_field,question=question):
         if not re.search(r'(?:все|всё|всех)\s+ограничен',text):return None
     label=LABELS.get(key,'')
     clauses=[part for part in re.split(r'[,;.!?]',text) if label and label in part]

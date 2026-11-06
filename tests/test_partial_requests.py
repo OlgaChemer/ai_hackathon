@@ -92,6 +92,20 @@ class PartialRequests(unittest.IsolatedAsyncioTestCase):
             frame=profile_patch.decode(data,contract,inputs)
             self.assertEqual(frame['fields']['filters']['value'][0]['values'],[radius])
 
+    def test_reading_count_requires_separate_evidence_to_change_rooms(self):
+        from backend.agent import input_frame,profile_patch
+        from backend.agent.request_schema import CHANGE_SCHEMA
+        for text,expected in [('4 а не 3',False),('Теперь четыре комнаты, покажи четыре лучших',True)]:
+            inputs=[{'text':text}]
+            contract=profile_patch.schema(input_frame.schema(CHANGE_SCHEMA,inputs))
+            data={key:[] for key in contract['properties']}
+            data['fields']=[{'key':'rooms_options','value':'[4]','source':text}]
+            frame=profile_patch.decode(data,contract,inputs,reading={'limit':4})
+            self.assertEqual('rooms_options' in frame['fields'],expected)
+        inputs=[{'text':'4 а не 3','question_field':'rooms'}]
+        frame=profile_patch.decode(data|{'fields':[{'key':'rooms_options','value':'[4]','source':inputs[0]['text']}]},contract,inputs,reading={'limit':4})
+        self.assertEqual(frame['fields']['rooms_options']['value'],[4])
+
     def test_explicit_call_executes_verified_target_and_does_not_repeat_completed_call(self):
         s=self.agent({'city':'Москва','budget_max':20_000_000,'payment':'cash'})
         x=listing(id='verified-target',city='Москва')

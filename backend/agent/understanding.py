@@ -342,7 +342,8 @@ async def _prepare(s):
                         await s.llm.chat([{'role':'system','content':prompt},guard.data_message('profile_changes',data)],
                             json_mode=True,json_schema=strict_schema,tag='profile_extract',temperature=.01,max_tokens=3000))
                 changes=parse_json_loose(parsed.text)
-                changes=profile_patch.decode(changes,contract_for_changes,inputs,s.profile.get('_unsupported_keys'),provenance=condition_sources,profile=base_profile)
+                changes=profile_patch.decode(changes,contract_for_changes,inputs,s.profile.get('_unsupported_keys'),provenance=condition_sources,profile=base_profile,
+                                             reading=result.get('selection') if rank else None)
                 requested_action=changes.pop('_requested_action',None)
                 pure_read=(result.get('selection') or {}).get('operation') in ('compare','analyze','more')
                 if not pure_read and result['intent'] not in ('call','hold') and (any(v is not None for v in (changes.get('fields') or {}).values()) or
