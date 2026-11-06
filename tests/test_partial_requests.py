@@ -30,6 +30,7 @@ class PartialRequests(unittest.IsolatedAsyncioTestCase):
                 p=merge_profile({'city':'Москва','rooms':rooms,'budget_max':budget,'housing':market,
                     'poi':['park'] if park else [],'filters':[{'field':'floor','op':'gt','values':['10'],'priority':'required'}] if floor else []})
                 s=self.agent(p)
+                s.profile['field_states'].update({key:'unrestricted' for key,value in [('rooms',rooms),('budget_max',budget)] if value is None})
                 self.assertTrue(capabilities.decision(s,'search_listings')[0])
                 self.assertFalse(capabilities.decision(s,'call_seller')[0])
                 for r,price,level,dist in itertools.product((1,2),(15_000_000,30_000_000),(10,11),(500,1500)):
@@ -46,7 +47,7 @@ class PartialRequests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(s.profile['rooms']);self.assertIsNone(s.profile['budget_max'])
         self.assertEqual(s.profile['field_states']['rooms'],'unknown')
         self.assertEqual(s.profile['field_states']['budget_max'],'unrestricted')
-        self.assertEqual(workflow.next_search_action(s),'search_listings')
+        self.assertEqual(workflow.next_search_action(s),'market_prices')
         apply_request(s,{'rooms_options':[1,2],'budget_max':25_000_000})
         self.assertEqual(s.profile['rooms_options'],[1,2]);self.assertEqual(s.profile['field_states']['rooms'],'constrained')
         self.assertEqual(s.profile['field_states']['budget_max'],'constrained')
@@ -104,6 +105,7 @@ class PartialRequests(unittest.IsolatedAsyncioTestCase):
         s.profile['payment']='mortgage_saving'
         self.assertTrue(capabilities.decision(s,'savings_plan')[0])
         s=self.agent({'city':'Москва'})
+        s.requested_action='market_prices'
         self.assertTrue(capabilities.decision(s,'market_prices')[0])
         s.research_query={'respect_budget':True,'group_by':'rooms','aggregates':[]}
         self.assertFalse(capabilities.decision(s,'market_prices')[0])
@@ -250,7 +252,7 @@ class PartialRequests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(word_numbers('стоимость, вторичка, однако, триумф'),set())
 
     async def test_partial_search_executes_without_payment_or_agreements(self):
-        s=self.agent({'city':'Москва','filters':[{'field':'floor','op':'gt','values':['10'],'priority':'required'}],'poi':['park']})
+        s=self.agent({'city':'Москва','field_states':{'rooms':'unrestricted','budget_max':'unrestricted'},'filters':[{'field':'floor','op':'gt','values':['10'],'priority':'required'}],'poi':['park']})
         rows=[listing(id=f'p{i}',city='Москва',floor=11+i,rooms=1+i%3,nearby={'park':{'name':'Парк','dist':400}}) for i in range(15)]
         with patch.object(sources,'collect',AsyncMock(return_value=(rows,[]))),patch.object(sources,'stored',return_value=[]),\
              patch.object(sources,'comparables',return_value=[]),patch.object(geo,'nearby',AsyncMock(return_value=True)):
@@ -261,6 +263,7 @@ class PartialRequests(unittest.IsolatedAsyncioTestCase):
 
     async def test_research_groups_unknown_rooms_within_budget_and_checks_park(self):
         s=self.agent({'city':'Москва','budget_max':20_000_000,'housing':'secondary','poi':['park']})
+        s.requested_action='market_prices'
         s.research_query={'respect_budget':True,'group_by':'rooms','aggregates':[{'field':'price','function':'min'}]}
         rows=[listing(id=f'r{i}',city='Москва',rooms=1+i%2,price=10_000_000+i*500_000) for i in range(14)]
         async def nearby(items,kinds,**kwargs):

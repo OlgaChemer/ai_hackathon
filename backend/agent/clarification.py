@@ -31,6 +31,10 @@ def ground_state(key,state,quote,*,bound_field=None,question=''):
     clauses=[part for part in re.split(r'[,;.!?]',text) if label and label in part]
     if len(clauses)==1:text=clauses[0]
     unknown=bool(re.search(r'не\s+(?:зна\w*|определ\w*|решил\w*)',text))
+    # Не знать рыночные цены — не значит отказаться от названной суммы покупки.
+    if (key=='budget_max' and unknown and re.search(r'цен\w*|стоимост\w*|стоит|рын\w*',text)
+            and not re.search(r'бюджет|лимит|сумм|средств|денег',text)):
+        return None
     unrestricted=bool(re.search(r'люб(?:ой|ая|ое|ые|ую)|не\s*важ\w*|(?:сними|убери|отмени)|без\s+(?:ограничен\w*|разницы|лимита)|неогранич\w*|все\s+равно|не\s+имеет\s+значения|не\s+принципиаль\w*',text))
     if unknown and not unrestricted:return 'unknown'
     if unrestricted and not unknown:return 'unrestricted'
