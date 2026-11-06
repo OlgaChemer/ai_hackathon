@@ -120,6 +120,25 @@ class PartialRequests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result['aggregates'][0]['value'],80)
         with self.assertRaises(ValueError):research.query({'respect_budget':True,'group_by':None,'aggregates':[{'field':'address','function':'max'}]})
 
+    def test_native_predicates_and_states_need_no_embedded_json(self):
+        from backend.agent import input_frame,profile_patch
+        from backend.agent.request_schema import CHANGE_SCHEMA
+        text='Москва, выше 10 этажа у парка, бюджет неважен'
+        inputs=[{'text':text}]
+        contract=profile_patch.schema(input_frame.schema(CHANGE_SCHEMA,inputs))
+        data={'fields':[],'criteria':[],'places':[],'unsupported':[],'selection':[],'requested_card':[],
+              'states':[{'key':'budget_max','state':'unrestricted','source':text}],
+              'filters':[{'field':'floor','op':'gt','values':['10'],'priority':'required','source':text},
+                         {'field':'nearby:park','op':'exists','values':[],'priority':'required','source':text}]}
+        frame=profile_patch.decode(data,contract,inputs)
+        self.assertEqual(frame['fields']['field_states']['value'],{'budget_max':'unrestricted'})
+        self.assertEqual(frame['fields']['filters']['value'][0]['op'],'gt')
+        self.assertEqual(frame['criteria']['poi:park'],'required')
+        generation=profile_patch.generation_schema(contract,inputs)
+        self.assertNotIn('filters',generation['properties']['fields']['items']['properties']['key']['enum'])
+        data['states'][0]['source']='выдуманная цитата'
+        with self.assertRaises(ValueError):profile_patch.decode(data,contract,inputs)
+
     async def test_bound_any_choice_clears_only_addressed_property(self):
         for field in ('floor','area','budget_max','rooms'):
             with self.subTest(field=field):

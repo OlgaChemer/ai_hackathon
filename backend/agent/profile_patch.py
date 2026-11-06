@@ -66,7 +66,9 @@ def value(text,spec):
 def generation_schema(contract,inputs):
     """Нативный вывод выбирает цитату из нового ввода, а не склоняет её заново."""
     result=deepcopy(contract)
-    quotes=list(dict.fromkeys([*input_frame.source_words(inputs),*(row['text'] for row in inputs)]))
+    # Целая новая реплика содержит и значение, и его предмет. Один предлог
+    # из той же реплики формально буквален, но не доказывает город или сумму.
+    quotes=list(dict.fromkeys(row['text'] for row in inputs))
     for group in ('fields','criteria','unsupported','states','filters'):
         spec=result['properties'][group]['items']['properties']['source']
         spec['enum']=quotes
