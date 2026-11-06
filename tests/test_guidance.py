@@ -96,6 +96,38 @@ class GuidedIntake(unittest.IsolatedAsyncioTestCase):
         s.requested_action='market_prices';s.research_query={'respect_budget':True,'group_by':'rooms','aggregates':[]}
         self.assertEqual(workflow.next_search_action(s),'market_prices')
 
+    async def test_requested_research_finishes_with_help_question_instead_of_more_tools(self):
+        s=self.agent(city='Москва',budget_max=20_000_000)
+        s.requested_action='market_prices';s.request_intent='question'
+        s.research_query=guidance.research_query(s)
+        await self.help(s)
+        self.assertIsNone(s.requested_action)
+        self.assertEqual(workflow.next_search_action(s),'ask_client')
+        self.assertTrue(capabilities.decision(s,'ask_client')[0])
+        self.assertEqual(workflow.planned_call(s,'ask_client').arguments['field'],'rooms')
+
+    async def test_selection_count_and_order_are_understood_before_first_search(self):
+        import json
+        from backend.agent import understanding
+        from backend.llm import LLMResponse
+        s=self.agent(city='Москва',budget_max=20_000_000)
+        args={'operation':'rank','limit':3,'order_by':'area','direction':'desc','keep_order':False,
+              'scope':'all','group_by':None,'aggregates':[],
+              'update_conditions':False,'count_source':'три','scope_source':None}
+        async def chat(messages,**kw):
+            if kw.get('tag')=='profile_extract':
+                return LLMResponse(json.dumps({key:[] for key in ('fields','criteria','states','filters','places','unsupported','requested_card','withdraw_unsupported')}))
+            self.assertIn('read_selection',[t.name for t in kw['tools']])
+            return LLMResponse('',[ToolCall('read_selection',args)])
+        s.llm.chat=chat
+        s.request_review_seq=0
+        text='Покажи три самых просторных предложения в этом бюджете.'
+        e=s.push('message',role='user',text=text);s.accept_request(text,e['seq'])
+        r=await understanding.prepare(s)
+        self.assertEqual(r['selection']['limit'],3)
+        self.assertEqual(r['selection']['sort'],[{'field':'area','direction':'desc'}])
+        self.assertEqual(r['changes'],{})
+
     def test_current_selection_is_not_interviewed_again_and_new_city_changes_help_scope(self):
         s=self.agent()
         s.shown=[listing()];s.search={'pool':s.shown,'listings':s.shown}

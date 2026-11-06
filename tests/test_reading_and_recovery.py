@@ -311,11 +311,14 @@ class ReadingAndRecovery(unittest.IsolatedAsyncioTestCase):
         query,_=R.compile_request(result['selection'],previous)
         self.assertEqual(query['sort'],[{'field':'value_score','direction':'desc'}])
 
-    def test_initial_input_has_no_authority_to_read_missing_results(self):
+    def test_initial_input_can_plan_order_without_authority_to_read_missing_results(self):
+        from backend.agent import actions
         inputs=[{'text':'Ищу 1–2 комнаты','seq':1}]
         tools=U.semantic_tools(input_frame.sparse_schema(CHANGE_SCHEMA,inputs),inputs,[],False)
-        self.assertNotIn('read_selection',[t.name for t in tools])
+        self.assertIn('read_selection',[t.name for t in tools])
         self.assertIn('profile_change',[t.name for t in tools])
+        s=self.agent();s.search=None;s.shown=[]
+        self.assertFalse(actions.available(s,'show_selection'))
 
     async def test_pause_after_comparison_revokes_reading_as_well(self):
         from backend.agent import workflow

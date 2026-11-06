@@ -60,18 +60,16 @@ class BudgetDialogue(unittest.IsolatedAsyncioTestCase):
                 await self.wait(lambda:'clarify' in s.pending,s.task)
                 first_id=s.pending_ids['clarify']
                 self.assertEqual(await s.receive_text('Не знаю, какой средний?',command_id='average'),'answer')
-                await self.wait(lambda:any(e.get('text')=='Хотите ещё раз показать ориентиры?' for e in s.history),s.task)
+                await self.wait(lambda:'clarify' in s.pending and s.pending_ids['clarify']!=first_id,s.task)
                 self.assertEqual(fetch.await_count,1)
                 self.assertEqual(s.profile,original)
                 self.assertFalse(s.red_lines_ok)
-                self.assertNotIn('clarify',s.pending)
+                self.assertIn('С учётом этих ориентиров',s.pending_decisions['clarify']['text'])
                 self.assertTrue(any(e['type']=='resolved' and e.get('decision_id')==first_id for e in s.history))
                 self.assertTrue(any('40 000 000' in e.get('text','') for e in s.history))
-                self.assertEqual(await s.receive_text('Да',command_id='yes'),'message')
-                await self.wait(lambda:any(e.get('text')=='Какой лимит выберете?' for e in s.history),s.task)
-                self.assertEqual(fetch.await_count,1,'Повторный показ не должен заново читать Циан')
+                self.assertFalse(any(e.get('text')=='Хотите ещё раз показать ориентиры?' for e in s.history))
                 self.assertIsNone(s.profile['budget_max'])
-                self.assertEqual(len([o for o in s.operations.values() if o['name']=='market_prices']),2)
+                self.assertEqual(len([o for o in s.operations.values() if o['name']=='market_prices']),1)
             finally:
                 s.task.cancel();await asyncio.gather(s.task,return_exceptions=True)
 

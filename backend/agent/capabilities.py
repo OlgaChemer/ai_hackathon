@@ -84,7 +84,9 @@ def decision(s,name):
     work=s.request_intent in (None,'search','refine','selection','call','seller_questions','continue')
     tests={
         'new_input':not s.request_inputs or any(x['seq']>s.request_review_seq for x in s.request_inputs),
-        'can_clarify':(not ready or s.search is not None or guidance.next_step(s) is not None) and (s.request_intent!='question' or bool(s.requested_action)),
+        'can_clarify':(not ready or s.search is not None or guidance.next_step(s) is not None) and
+            (s.request_intent!='question' or bool(s.requested_action) or
+             bool(guidance.next_step(s) and guidance.next_step(s)[0]=='followup')),
         'city_rooms':bool(p.get('city') and p.get('rooms') is not None),
         'profile_ready':ready,'limit_needed':not s.red_lines_ok or s.requested_action=='confirm_red_lines',
         'payment_needed':not p.get('payment') or s.requested_action=='ask_payment',

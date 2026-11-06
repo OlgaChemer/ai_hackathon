@@ -67,6 +67,7 @@ async def dialogues(base):
         assert 'сумм' in e['text'].casefold(),e
         assert d.profile['rooms'] is None and d.profile['budget_max'] is None,d.profile
         await d.send('Бюджет 20 млн, на сколько комнат хватит?');e=await next_step(d)
+        assert e.get('kind')=='clarify' and 'комнат' in e['text'].casefold(),(e,d.messages[-3:])
         m=d.profile.get('market');assert m and m['scope']['budget_applied'],(e,d.messages[-3:])
         assert m['analysis']['groups'] and m['scope']['research']['group_by']=='rooms',m
         assert d.profile['rooms'] is None and d.profile['budget_max']==20_000_000,d.profile
