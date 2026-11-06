@@ -1,7 +1,7 @@
 """База данных: SQLAlchemy 2. По умолчанию SQLite (backend/data/app.db), в проде — PostgreSQL через DATABASE_URL.
 
-Схема — models.py, запросы — repo.py. Таблицы создаются при старте; новые колонки добавляются
-в существующие таблицы автоматически (для прототипа вместо Alembic).
+Схема — models.py, запросы — repo.py. Только явные версионированные миграции
+из migrations.py изменяют структуру. Изменение модели без миграции отклоняется.
 
 Работа синхронная. Критические изменения диалога используют required(): при ошибке
 записи успех не подтверждается. safe() предназначена для необязательного кэша и чтения.
@@ -31,13 +31,19 @@ class StateConflict(PersistenceError):
     """Другой владелец уже изменил сохранённый снимок."""
 
 
+class CommandCapacityError(RuntimeError):
+    """Команда не принята: очередь уже заполнена."""
+
+
 def required(fn: Callable[..., T], *args: Any, **kw: Any) -> T:
     try:
         with session() as connection:
             return fn(connection, *args, **kw)
-    except PersistenceError:
+    except (PersistenceError,CommandCapacityError):
         raise
     except Exception as exc:
+        from ..telemetry import count,dependency
+        count('persistence_failed');dependency('database','degraded')
         log.exception('critical database operation failed: %s', getattr(fn, '__name__', 'operation'))
         raise PersistenceError('Не удалось сохранить изменение. Успех не подтверждён; повторите отправку с тем же ID.') from exc
 
@@ -73,22 +79,10 @@ def configure(url: str | None = None) -> Engine:
             if not in_memory:
                 cur.execute("PRAGMA journal_mode=WAL")
             cur.close()
-    Base.metadata.create_all(engine)
-    _add_missing_columns(engine)
+    from .migrations import upgrade
+    upgrade(engine,Base.metadata)
     _engine, _factory = engine, sessionmaker(engine, expire_on_commit=False)
     return engine
-
-
-def _add_missing_columns(engine: Engine) -> None:
-    """Новые колонки моделей — в уже созданные таблицы (без Alembic; хватает для прототипа)."""
-    insp = inspect(engine)
-    with engine.begin() as conn:
-        for table in Base.metadata.sorted_tables:
-            have = {c["name"] for c in insp.get_columns(table.name)}
-            for col in table.columns:
-                if col.name not in have:
-                    conn.execute(text(f"ALTER TABLE {table.name} ADD COLUMN {col.name} {col.type.compile(engine.dialect)}"))
-                    log.info("база: добавлена колонка %s.%s", table.name, col.name)
 
 
 @contextmanager

@@ -4,11 +4,13 @@ from __future__ import annotations
 from ... import geo, sources
 from ..features import FEATURES
 from ..numbers import fmt
+from ..listing_query import FIELDS
 from ..profile import in_districts, merge_profile, missing_required, passes_hard_filters, profile_summary
 from . import ActionError, action
 
 LIST_KEYS = ("districts", "avoid_districts", "features", "poi", "wishes", "material", "soft_criteria", "rooms_options", "cities")
-CORE_KEYS = ("city", "rooms", "budget_max", "okrug", "housing", "rooms_options", "cities", "districts", "prefer_center", "center_required")
+from ..capabilities import CORE_FIELDS, FILTER_FIELDS
+CORE_KEYS = CORE_FIELDS
 PROPERTY_FIELDS={'area_min':'area','kitchen_min':'kitchen','year_min':'year',
                  'metro_max_minutes':'metro_minutes','prefer_center':'center_km',
                  'condition':'condition','material':'material'}
@@ -31,7 +33,7 @@ def profile_brief(p: dict) -> dict:
 
 def emit_profile(s) -> None:
     data = {**{k:v for k,v in s.profile.items() if not k.startswith("_")}, "market": s.market}
-    if not missing_required(s.profile):
+    if s.profile.get('city'):
         data["summary"] = profile_summary(s.profile)
     s.push("result", step=1, kind="profile", data=data)
 
@@ -73,7 +75,8 @@ def updated_profile(profile, changes):
         # одно свойство. Его явная отмена снимает оба представления.
         field=PROPERTY_FIELDS.get(key,key)
         if field.startswith('poi:'):field='nearby:'+field[4:]
-        p['filters']=[f for f in p.get('filters') or [] if f['field']!=field]
+        replacement=any(f['field']==field and f['priority']!='remove' for f in changes.get('filters') or [])
+        if not replacement:p['filters']=[f for f in p.get('filters') or [] if f['field']!=field]
         if key.startswith("poi:"):
             p["poi"] = [v for v in p["poi"] if v != key[4:]]
         elif key.startswith("feature:"):
@@ -111,6 +114,9 @@ def apply_request(s, changes, *, condition_sources=None):
     if not missing:
         p["summary"] = profile_summary(p)
     s.profile = p
+    from ...sources.market_estimate import current
+    from ..research import profile as research_profile
+    if s.market and not current(s.market,research_profile(s)):s.market=None
     changed_keys={k for k in old_profile.keys() | p.keys()
                   if not k.startswith('_') and k not in ('summary','market') and p.get(k)!=old_profile.get(k)}
     if p!=old_profile:s.profile_revision+=1
@@ -125,8 +131,7 @@ def apply_request(s, changes, *, condition_sources=None):
         s.invalidate_deal(keep_limit=not budget_changed)
         if p.get("city") != before["city"]:
             s.market = None
-    elif s.search and (changed_keys & {"features", "poi", "kitchen_min", "area_min", "not_first_floor", "not_last_floor",
-                                         "condition", "material", "year_min", "metro_max_minutes", "soft_criteria", "clear_criteria", "avoid_districts", "filters", "wishes"}):
+    elif s.search and (changed_keys & FILTER_FIELDS):
         # Возвращаем ранее отфильтрованные варианты при снятии жёсткого ограничения.
         # Рынок/город/комнаты не менялись: исходная выдача остаётся актуальным пулом.
         if "listings" in s.search:
@@ -135,11 +140,10 @@ def apply_request(s, changes, *, condition_sources=None):
         s.search["shown_ids"].clear()
         # Видимые карточки — последний успешный снимок, не рабочий пул.
         # Меняем их только после успешного вычисления следующей выдачи.
-        s.calls.clear()
-        s.agreed.clear()
-        s.chosen = s.current = None
-        s.journal.clear()
+        s.invalidate_decisions()
         notes.append("Пожелания учтены: при следующем показе подборки (show_selection) отфильтрую и пересортирую.")
+    elif changed_keys & {'payment','children','youngest_age','matcap'}:
+        s.invalidate_decisions(purchase=False,financial=True)
     if changed_keys-{'seller_questions'}:
         s.selection_profile_stale=True
         s.profile['_selection_stale']=True
@@ -150,27 +154,71 @@ def apply_request(s, changes, *, condition_sources=None):
 
 
 @action("market_prices", 1,
-        "Цены рынка по запросу (город, комнаты, округ, рынок) без учёта бюджета: квартили и минимум, руб. "
-        "Помогает клиенту выбрать бюджет; клиент видит их на экране.")
+        "Исследовать реальные объявления по проверенному запросу: цены, доступные комнаты/площадь и другие агрегаты. "
+        "Достаточно города. Проверенный исследовательский запрос определяет группировку и применение бюджета; неназванные условия не требуются.")
 async def market_prices(s) -> dict:
-    if not (s.profile.get("city") and s.profile.get("rooms") is not None):
-        raise ActionError("Сначала нужны город и число комнат (update_request).")
-    await s.say(f"Смотрю цены на Циане ({s.profile['city']}), чтобы подсказать бюджет…")
-    s.market = await sources.market(s.profile)
-    if not s.market:
-        raise ActionError("Циан сейчас не отдал цены — спроси бюджет без подсказки.")
+    if not s.profile.get("city"):
+        raise ActionError("Для исследования объявлений нужен город; комнаты и бюджет необязательны.")
+    if (s.research_query or {}).get('respect_budget') and s.profile.get('budget_max') is None:
+        raise ActionError('Чтобы посчитать доступные варианты в пределах бюджета, нужна сумма. Рыночные цены можно исследовать без неё.')
+    from ...sources.market_estimate import current
+    from ..research import profile as research_profile
+    if not current(s.market,research_profile(s)):
+        await s.say(f"Исследую объявления на Циане ({s.profile['city']}) по вашим условиям…")
+        try:
+            s.market = await sources.market(research_profile(s),on_progress=lambda count:s.signal('search_progress',on=True,
+                text=f'Проверяю ценовые ориентиры: получено {count} объявлений'))
+        finally:s.signal('search_progress',on=False)
+    if not s.market or s.market.get('error_kind'):
+        details=s.market or {};count=details.get('count',0)
+        message=(f"Для надёжного ценового ориентира нашлось только {count} объявлений с подтверждёнными условиями; нужно хотя бы 6. "
+                 if details.get('received') else "Циан сейчас не вернул объявления для ценового ориентира. ")
+        message+='Ваши условия сохранены. Можно попробовать позже, обсудить изменение условий или рассчитать бюджет по доходам.'
+        s.market=None
+        s.last_issue={'kind':details.get('error_kind','market_source_unavailable'),'message':message}
+        await s.say(message,await_reply=True)
+        return {'error_kind':s.last_issue['kind'],'error':message,'coverage':details}
     emit_profile(s)
     m = s.market
+    centre=' До 5 км по прямой от опорной точки центра.' if (m.get('scope') or {}).get('center_radius_km') else ''
+    if any(r.get('city')=='Москва' and r.get('query_okrug')=='ЦАО' for r in m.get('reports') or []):
+        centre+=' Для этой выборки просмотрены объявления ЦАО.'
+    markets='; '.join(('новостройки' if row['new'] else 'вторичка')+f": {row['count']}" for row in m.get('markets') or [])
+    if not markets:markets='рынок по запросу'
+    analysis=m.get('analysis') or {}
+    from ..listing_query import FIELDS
+    def facts(rows):
+        labels={'min':'минимум','max':'максимум','mean':'среднее','median':'медиана','count':'известных значений'}
+        return '; '.join(f"{labels[a['function']]} ({FIELDS[a['field']][1]}): "+
+                        (f"{a['value']:,.1f}".replace(',',' ').replace('.0','') if a.get('value') is not None else 'нет данных')
+                        +f" [данных: {a['known']}]" for a in rows)
+    grouped=analysis.get('groups') or []
+    research=m.get('scope',{}).get('research') or {}
+    findings=''
+    if grouped:
+        label=FIELDS[research['group_by']][1]
+        findings='\n'+'\n'.join(f"{label}: {g['value'] if g['value'] is not None else 'неизвестно'} — {g['count']} объявлений; {facts(g['aggregates'])}." for g in grouped[:12])
+        if len(grouped)>12:findings+=f'\nПоказаны 12 из {len(grouped)} групп.'
+    elif analysis.get('aggregates'):findings='\n'+facts(analysis['aggregates'])+'.'
+    budget_note=f" В пределах {fmt(s.profile['budget_max'])}." if m.get('scope',{}).get('budget_applied') else ' Бюджетный фильтр не применялся.'
+    await s.say(f"По полученной выборке: медиана {fmt(m['median'])}, средняя цена {fmt(m.get('mean',m['median']))}; "
+                f"средняя половина предложений — {fmt(m['p25'])}–{fmt(m['p75'])}. "
+                f"Проверено {m['count']} объявлений, {markets}.{centre} "
+                +('Часть данных из кэша или охват неполный. ' if m.get('reasons') else '')
+                +budget_note+findings+"\nЭто результат по полученной выборке, а не полный рынок. Условия и согласия не изменены.")
     return {"typical_from": m["p25"], "median": m["median"], "typical_to": m["p75"], "min": m["min"],
-            "per_m2": round(m["ppm2"], -3), "listings": m["count"]}
+            "mean":m.get('mean'),"per_m2": round(m["ppm2"], -3) if m.get('ppm2') is not None else None, "listings": m["count"],
+            'scope':m.get('scope'),'analysis':analysis,'coverage':{'reports':m.get('reports'),'reasons':m.get('reasons')}}
 
 
 @action("ask_client", 1,
         "Задать клиенту вопрос карточкой с вариантами ответа (кнопки). Клиент может ответить и своими словами. "
         "Возвращает ответ клиента. Для простого разговора без вариантов просто напиши клиенту текстом.",
         question={"type": "string", "description": "вопрос, 1–2 предложения"},
-        options={"type": "array", "items": {"type": "string"}, "description": "2–5 коротких вариантов ответа"})
-async def ask_client(s, question: str, options: list[str] | None = None) -> dict:
+        options={"type": "array", "items": {"type": "string"}, "description": "2–5 коротких вариантов ответа"},
+        field={"type":"string","enum":["budget_max","housing","okrug","districts",*FIELDS],
+               "description":"Одно свойство, о котором вопрос, если применимо. Позволяет связать краткое «Любой» с нужным полем. Для общего вопроса можно не передавать."})
+async def ask_client(s, question: str, options: list[str] | None = None, field: str | None = None) -> dict:
     r = await s.ask("clarify", "Уточнение", question, chips=[str(o)[:60] for o in (options or [])][:5], market=s.market)
     return {"answer": r["data"].get("text", "")}
 
@@ -182,8 +230,8 @@ async def confirm_red_lines(s) -> dict:
     p = s.profile
     if s.red_lines_ok and s.requested_action!='confirm_red_lines':
         return {"approved": True, "budget_max": p["budget_max"], "already_confirmed": True}
-    if missing_required(p):
-        raise ActionError(f"Не хватает: {', '.join(missing_required(p))} — сначала узнай у клиента и запиши (update_request).")
+    if p.get('budget_max') is None:
+        raise ActionError('Для подтверждения лимита нужна конкретная сумма. Поиск без лимита разрешён.')
     emit_profile(s)
     r = await s.ask(
         "red_lines", "Красные линии",

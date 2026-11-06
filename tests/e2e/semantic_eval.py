@@ -7,6 +7,9 @@
 import argparse
 import asyncio
 import json
+import time
+from pathlib import Path
+from backend.release import manifest, fingerprint
 
 from backend import db
 from backend.llm import get_llm
@@ -50,17 +53,35 @@ CASES=[
 ]
 
 
-async def run(cases):
+# Отложенный набор хранится отдельно от текста промптов и выбирается явно.
+HELDOUT=[
+ ('rank','Оставь ровно четыре квартиры с минимальной общей ценой.',4,'price','asc','all'),
+ ('rank','Покажи шесть наиболее просторных вариантов.',6,'area','desc','all'),
+ ('rank','Мои избранные выстрой начиная с самой просторной.',None,'area','desc','liked'),
+ ('compare','В какой из показанных квартир квадратный метр стоит меньше остальных?',None,'price_per_m2','asc','shown'),
+ ('compare','Среди этих вариантов где максимальная площадь?',None,'area','desc','shown'),
+ ('more','Дай следующую порцию новых квартир с учётом моих отметок.',None,None,None,'all'),
+ ('analyze','Какая средняя стоимость квадратного метра у показанных квартир?',None,None,None,'shown'),
+ ('question','Объясни, почему ты считаешь условие непроверенным.',None,None,None,None),
+ ('unsupported','Нужен личный теннисный корт внутри квартиры.',None,None,None,None),
+ ('rooms','Нужна однушка либо двушка в Нижнем Новгороде, никаких студий.',None,None,None,None),
+]
+
+
+async def run(cases,provider=None,repeats=1,report_path=None,dataset="regression"):
     db.configure('sqlite://')
-    llm=get_llm()
-    assert llm.name=='gigachat'
-    failures=[]
+    from backend.llm.factory import build_llm
+    llm=build_llm(provider) if provider else get_llm()
+    failures=[];outcomes=[];resolved_models=set()
+    cases=cases*repeats
+    versions=manifest(llm);versions['dataset_version']=fingerprint(cases);versions['dataset']=dataset
     for i,(kind,text,limit,field,direction,scope) in enumerate(cases):
         s=session.create_session('',llm)
         calls=[]
         class Trace:
             async def chat(self,*args,**kwargs):
                 reply=await llm.chat(*args,**kwargs)
+                if reply.model:resolved_models.add(reply.model)
                 calls.extend({'name':c.name,'arguments':c.arguments} for c in reply.tool_calls)
                 if kwargs.get('tag')=='profile_extract':
                     try:calls.append({'tag':'profile_extract','frame':json.loads(reply.text)})
@@ -79,6 +100,7 @@ async def run(cases):
         if kind in ('clarify','rooms','studio','mixed','full_profile','full_profile_nizhny'):s.profile=merge_profile({});s.search=None;s.shown=[]
         s.messages=[{'role':'user','content':'Покажи два самых больших варианта'}] if s.shown else []
         e=s.push('message',role='user',text=text);s.accept_request(text,e['seq'])
+        started=time.monotonic()
         try:
             r=await U.prepare(s)
             if kind in ('rank','compare','more','analyze'):
@@ -113,15 +135,24 @@ async def run(cases):
                 p=merge_profile(r['changes'])
                 expected={'rooms':[1,2],'studio':[0],'mixed':[0,1]}[kind]
                 assert p['rooms_options']==expected,(p,r)
+            outcomes.append({'case':i+1,'kind':kind,'ok':True,'duration_ms':round((time.monotonic()-started)*1000)})
             print(json.dumps({'case':i+1,'input':text,'ok':True},ensure_ascii=False),flush=True)
         except Exception as exc:
             failures.append(i+1)
+            outcomes.append({"case":i+1,"kind":kind,"ok":False,"error_type":type(exc).__name__,"duration_ms":round((time.monotonic()-started)*1000)})
             print(json.dumps({'case':i+1,'input':text,'ok':False,'error':str(exc)[:1200],'calls':calls},ensure_ascii=False),flush=True)
         finally:session.SESSIONS.pop(s.id,None)
     print(json.dumps({'passed':len(cases)-len(failures),'total':len(cases),'failed_cases':failures}),flush=True)
+    if report_path:
+        Path(report_path).write_text(json.dumps({'manifest':versions,'resolved_models':sorted(resolved_models),
+            'passed':len(cases)-len(failures),'total':len(cases),'failed_cases':failures,'cases':outcomes},ensure_ascii=False,indent=2))
     return bool(failures)
 
 
 if __name__=='__main__':
-    p=argparse.ArgumentParser();p.add_argument('--case',type=int);args=p.parse_args()
-    raise SystemExit(asyncio.run(run([CASES[args.case-1]] if args.case else CASES)))
+    p=argparse.ArgumentParser();p.add_argument('--case',type=int)
+    p.add_argument('--dataset',choices=['regression','heldout'],default='regression')
+    p.add_argument('--repeat',type=int,default=1);p.add_argument('--report');p.add_argument('--provider',choices=['gigachat','deepseek'])
+    args=p.parse_args();cases=HELDOUT if args.dataset=='heldout' else CASES
+    if not 1<=args.repeat<=5:p.error('repeat must be 1..5')
+    raise SystemExit(asyncio.run(run([cases[args.case-1]] if args.case else cases,args.provider,args.repeat,args.report,args.dataset)))

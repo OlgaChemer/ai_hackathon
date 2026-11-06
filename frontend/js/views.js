@@ -15,7 +15,8 @@ function marketBlock(p) {
   const x = (v) => Math.max(0, Math.min(100, ((v - lo) / (hi - lo)) * 100));
   return html`
     <div class="market">
-      <h3 class="sub">Цены рынка по запросу (${m.count} свежих объявлений Циана)</h3>
+      <h3 class="sub">Ориентиры по выборке: ${m.count} объявлений Циана</h3>
+      <p>${m.scope?.center_radius_km ? `До ${m.scope.center_radius_km} км по прямой от опорной точки центра. ` : ''}${m.scope?.markets?.length === 2 ? 'Новостройки и вторичка. ' : ''}${m.reasons?.length ? 'Часть проверок или источников неполна; возможны данные из кэша. ' : ''}Это полученная выборка, а не весь рынок.</p>
       <div class="market-scale" aria-label="Обычно от ${mln(m.p25)} до ${mln(m.p75)}, середина ${mln(m.median)}">
         <div class="track"></div>
         <div class="band" style="left:${x(m.p25)}%;width:${x(m.p75) - x(m.p25)}%"></div>
@@ -27,7 +28,7 @@ function marketBlock(p) {
 }
 
 export function profile(p) {
-  const rooms = p.rooms_options?.length > 1 ? p.rooms_options.join("–") : p.rooms === 0 ? "студия" : p.rooms ?? "уточню";
+  const rooms = p.rooms_options?.length > 1 ? p.rooms_options.join(" / ") : p.rooms === 0 ? "студия" : p.rooms ?? (p.field_states?.rooms==='unrestricted' ? "любые" : "не заданы · поиск без ограничения");
   return html`
   <section class="panel">
     <h2 class="panel-title">Задача понята</h2>
@@ -35,11 +36,11 @@ export function profile(p) {
     <dl class="facts">
       <div><dt>Город</dt><dd>${[p.city, ...(p.cities || []).filter(c => c !== p.city)].filter(Boolean).join(", ") || "уточню"}${p.okrug ? `, ${p.okrug}` : ""}</dd></div>
       <div><dt>Комнат</dt><dd>${rooms}</dd></div>
-      <div><dt>Бюджет до</dt><dd class="num">${p.budget_max ? rub(p.budget_max) : "уточню"}${html.raw(p.budget_source ? html`<small class="dd-note">${p.budget_source}</small>` : "")}</dd></div>
+      <div><dt>Бюджет до</dt><dd class="num">${p.budget_max ? rub(p.budget_max) : p.field_states?.budget_max==='unrestricted' ? "без ограничения" : "не задан · поиск без ограничения"}${html.raw(p.budget_source ? html`<small class="dd-note">${p.budget_source}</small>` : "")}</dd></div>
       <div><dt>Районы</dt><dd>${p.districts?.length ? p.districts.join(", ") : "любые"}</dd></div>
       <div><dt>Расположение</dt><dd>${p.prefer_center ? "желательно ближе к центру" : "по вашим пожеланиям"}</dd></div>
       <div><dt>Кухня</dt><dd>${p.kitchen_min ? `от ${p.kitchen_min} м²` : "любая"}</dd></div>
-      <div><dt>Рынок</dt><dd>${{ new: "новостройки", both: "новостройки и вторичка", secondary: "вторичный" }[p.housing] || "уточню"}</dd></div>
+      <div><dt>Рынок</dt><dd>${{ new: "новостройки", both: "новостройки и вторичка", secondary: "вторичный" }[p.housing] || "новостройки и вторичка · без фильтра"}</dd></div>
     </dl>
     ${html.raw(p.wishes?.length ? html`<p class="hint">Ещё учту: ${p.wishes.join("; ")}.</p>` : "")}
     ${html.raw(p.market ? marketBlock(p) : "")}
@@ -286,6 +287,13 @@ export function selection(d, marks) {
       </div>
     </div>
     ${html.raw(unverified ? html`<p class="hint" data-verification-summary>Обязательные условия подтверждены у ${confirmed}. Требуют проверки: ${unverified}. Непроверенные варианты помечены на карточках и не считаются подтверждёнными совпадениями.</p>` : "")}
+    ${html.raw(d.coverage ? html`<details class="ranking-explanation" data-search-coverage><summary>Охват и проверка данных</summary>
+      <p>${d.coverage.summary}</p>
+      <p>Проверки условий: подтверждено ${d.coverage.checks?.confirmed || 0}, не выполнено ${d.coverage.checks?.refuted || 0}, нет данных ${d.coverage.checks?.unknown || 0}.</p>
+      <p>${d.coverage.reasons?.some(r => ['source_unavailable','page_unavailable'].includes(r)) ? 'Часть страниц источника недоступна. Это не означает, что подходящих квартир на рынке нет.' : 'Результат относится к полученным объявлениям, не ко всему рынку.'}
+      ${d.coverage.reasons?.some(r => r.startsWith('map_')) ? 'Часть инфраструктуры не успели проверить.' : ''}</p>
+      <p>Свежесть известна у ${d.coverage.freshness?.known || 0} объявлений; неизвестна у ${d.coverage.freshness?.unknown || 0}.</p>
+    </details>` : '')}
     ${html.raw(d.learned?.length ? html`<div class="learned"><span>Учёл:</span>${html.raw(d.learned.map((l) => html`<span class="chip">${l}</span>`).join(""))}</div>` : "")}
     ${html.raw(d.cards.some((c) => c.lat && c.lng) ? mapBlock(d.cards) : "")}
     ${html.raw(d.aggregates?.length ? html`<p class="hint">Расчёт по ${d.total} вариантам: ${d.aggregates.map(a => `${a.function}(${a.field}) = ${a.value == null ? 'нет данных' : Number(a.value).toLocaleString('ru-RU', {maximumFractionDigits:2})}${a.unknown ? `; нет данных у ${a.unknown}` : ''}`).join(' · ')}</p>` : '')}

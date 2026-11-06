@@ -64,10 +64,10 @@ class GigaChatStateTest(unittest.TestCase):
         self.assertEqual([m['role'] for m in result], ['assistant', 'function', 'assistant', 'function'])
         self.assertEqual([m['name'] for m in result if m['role'] == 'function'], ['first', 'second'])
 
-    def test_search_is_offered_after_initial_limit_confirmation(self):
+    def test_search_is_available_without_purchase_confirmation(self):
         s = session.create_session('Квартира', ScriptedLLM())
         s.profile = {'city': 'Казань', 'rooms': 2, 'budget_max': 9_000_000, 'payment': 'cash'}
-        self.assertNotIn('search_listings', [t.name for t in actions.tools(s)])
+        self.assertIn('search_listings', [t.name for t in actions.tools(s)])
         self.assertNotIn('call_seller', [t.name for t in actions.tools(s)])
         self.assertIn('confirm_red_lines', [t.name for t in actions.tools(s)])
         s.red_lines_ok = True

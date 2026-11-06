@@ -14,12 +14,15 @@ from typing import Any, Awaitable, Callable
 from ...llm import Tool, ToolCall
 from .. import guard, validation
 from ..workflow import available, programs_current
+from ..capabilities import decision, POLICIES, catalog, argument_denial
 
 log = logging.getLogger(__name__)
 
 
 class ActionError(Exception):
     """Действие нельзя выполнить сейчас — текст уходит модели как результат."""
+    def __init__(self,message,kind='action_unavailable'):
+        super().__init__(message);self.kind=kind
 
 
 @dataclass(frozen=True)
@@ -37,15 +40,23 @@ REGISTRY: dict[str, Action] = {}
 def action(name: str, step: int | None, description: str, **properties: dict) -> Callable:
     """Регистрирует действие: @action("search_listings", 3, "что делает", more_pages={"type": "integer", ...})."""
     def wrap(fn: Callable[..., Awaitable[dict]]) -> Callable[..., Awaitable[dict]]:
-        REGISTRY[name] = Action(name, step, description,
-                                {"type": "object", "properties": properties, "additionalProperties": False}, fn)
+        required=[key for key,param in inspect.signature(fn).parameters.items()
+                  if key!='s' and param.default is inspect.Parameter.empty]
+        policy=POLICIES.get(name)
+        schema_properties=properties
+        if policy:
+            schema_properties={k:{**v,**({'description':v.get('description','')+' Единица: '+dict(policy.units)[k]+'.'}
+                         if k in dict(policy.units) else {})} for k,v in properties.items()}
+        schema={"type":"object","properties":schema_properties,"additionalProperties":False,"required":required}
+        REGISTRY[name] = Action(name, step, description, schema, fn)
         return fn
     return wrap
 
 
 def tools(s=None) -> list[Tool]:
     _load()
-    return [Tool(a.name, a.description, a.parameters) for a in REGISTRY.values() if s is None or available(s, a.name)]
+    return [Tool(a.name, a.description, a.parameters) for a in REGISTRY.values()
+            if a.name in POLICIES and (s is None or available(s, a.name))]
 
 
 async def execute(s, call: ToolCall) -> dict:
@@ -78,9 +89,7 @@ async def _execute(s, call: ToolCall) -> dict:
         return {'error':'Сначала выполните явно запрошенную карточку: '+s.requested_action}
     if not replay and not available(s, call.name):
         names = ", ".join(a.name for a in REGISTRY.values() if available(s, a.name))
-        hint = ""
-        if call.name == "search_listings":
-            hint = "Для поиска нужны город, комнаты и бюджет (update_request), confirm_red_lines и способ покупки (ask_payment). "
+        hint = (decision(s,call.name)[1] or "")+" "
         return {"error_kind":"action_unavailable","error": f"{hint}Действие недоступно в текущем состоянии. Доступны: {names}"}
     args = call.arguments
     try:
@@ -88,6 +97,8 @@ async def _execute(s, call: ToolCall) -> dict:
         inspect.signature(a.run).bind(s, **args)
     except (ValueError, TypeError):
         return {"error_kind":"model_arguments","error": "Неверные параметры действия: проверь типы, диапазоны и обязательные поля."}
+    denial=argument_denial(s,call.name,args)
+    if denial:return {'error_kind':'action_unavailable','error':denial}
     verdict = guard.input_verdict(args)
     if not verdict.ok or guard.output(args, limit=False) != args:
         guard.note(s, "tool", verdict.category or "unsafe_output", "")
@@ -97,14 +108,14 @@ async def _execute(s, call: ToolCall) -> dict:
         await worker.step(a.step)
     try:
         result=await a.run(worker, **args)
-        worker.flush(result=result)
-        if s.requested_action==call.name:
-            s.requested_action=None
-            s.profile.pop('_requested_action',None)
-            s.remember()
-        return result
     except ActionError as exc:
-        return {"error_kind":"action_unavailable","error": str(exc)}
+        result={"error_kind":exc.kind,"error":str(exc)}
+    worker.flush(result=result)
+    if s.requested_action==call.name:
+        s.requested_action=None
+        s.profile.pop('_requested_action',None)
+        s.remember()
+    return result
 
 
 def _load() -> None:

@@ -301,7 +301,10 @@ async def nearby(listings: list[dict], kinds: list[str], budget_s: float | None 
                           "coords": [x['lat'], x['lng']]}
                 rows.append((x['id'], f"poi:{k}", record, "map"))
     db.safe(repo.save_features, rows)
-    return all(all(k in (x.get("nearby") or {}) for k in kinds) for x in listings)
+    complete=all(all(k in (x.get("nearby") or {}) for k in kinds) for x in listings)
+    from .telemetry import dependency
+    dependency('map','available' if complete else 'degraded')
+    return complete
 
 
 def has_all(x: dict, kinds: list[str]) -> bool:

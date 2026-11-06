@@ -91,8 +91,59 @@ async def scenario(browser,base,width):
     assert 'перепланировки' in text and 'звукоизоляцией' in text
     await page.locator('[data-seller-questions]').fill(text+'\nКогда освободите квартиру?')
     assert 'Когда освободите' in await page.locator('[data-seller-questions]').input_value()
+    # Зависшая озвучка переговоров не задерживает новую подборку и её решения.
+    await page.evaluate("""async () => {
+      const {state,chatLog}=await import('/js/state.js');
+      const {voice}=await import('/js/voice.js');
+      const {createCall,renderCall}=await import('/js/call.js');
+      const listing=state.results[4].cards[0];
+      state.call=createCall({listing,fair:listing.fair,authority:listing.price});
+      chatLog.append(renderCall(state.call,()=>{}));
+      window.audioPending=true;
+      voice.speak=()=>new Promise(resolve=>{window.finishTestSpeech=()=>{window.audioPending=false;resolve();};});
+      const emit=ev=>state.es.onmessage(new MessageEvent('message',{data:JSON.stringify(ev)}));
+      emit({type:'turn',speaker:'agent',text:'Проверяю детали квартиры'});
+      emit({type:'result',step:4,kind:'selection',data:{...state.results[4],cards:[listing]}});
+      emit({type:'confirm',kind:'selection',decision_id:'audio-independent',title:'Обновлённый выбор',text:'Выберите квартиру'});
+    }""")
+    await page.wait_for_function("document.querySelectorAll('.offer').length===1 && !document.querySelector('[data-selection=more]').disabled")
+    assert await page.evaluate('window.audioPending'), 'Проверка не застала ожидающую озвучку'
+    await page.evaluate('window.finishTestSpeech()')
+    # Новые условия отзывают старый план и его кнопку, сохраняя историческую переписку.
+    await page.evaluate("""async () => {
+      const {state}=await import('/js/state.js');
+      const {api}=await import('/js/api.js');
+      const {confirmCard}=await import('/js/cards.js');
+      state.results[8]={oldPlan:true};state.results[9]={oldSummary:true};
+      confirmCard({kind:'sign',title:'Прежний план',text:'Старое решение',decision_id:'old-plan'});
+      api.decisions.sign='old-plan';
+      state.es.onmessage(new MessageEvent('message',{data:JSON.stringify({type:'purchase_reset',clear_steps:[8,9],
+        kinds:['sign'],text:'Условия изменились: прежний план нужно пересмотреть.'})}));
+    }""")
+    await page.wait_for_function("import('/js/state.js').then(m=>!m.state.results[8] && !m.state.results[9])")
+    assert await page.locator('.confirm').filter(has_text='Прежний план').evaluate('(node)=>node.classList.contains("is-done")')
+    assert await page.locator('.offer').count()==1
     assert not errors,errors
     await page.screenshot(path=f'/tmp/flexible-ui-{width}.png',full_page=False)
+    await context.close()
+
+
+async def partial(browser,base,width):
+    context=await browser.new_context(viewport={'width':width,'height':1000})
+    page=await context.new_page();errors=[]
+    page.on('pageerror',lambda error:errors.append(str(error)))
+    await page.add_init_script("localStorage.setItem('voice','0');localStorage.setItem('cookieNotice','1')")
+    await page.route('https://tile.openstreetmap.org/**',lambda route:route.fulfill(body=PIXEL,content_type='image/png'))
+    await page.goto(base)
+    await page.fill('#welcomeQuery','Москва')
+    await page.locator('#welcomeQuery').press('Enter')
+    await page.wait_for_function("document.querySelectorAll('.offer').length===10")
+    await page.wait_for_function("!document.querySelector('[data-selection=more]').disabled")
+    text=await page.locator('#chatLog').inner_text()
+    assert 'не заданы · поиск без ограничения' in text,text
+    assert 'не задан · поиск без ограничения' in text,text
+    assert await page.get_by_role('button',name='Подтвердить рамки',exact=True).count()==0
+    assert not errors,errors
     await context.close()
 
 
@@ -102,6 +153,8 @@ async def main(base):
         for width in (1440,390):
             await scenario(browser,base,width)
             print(f'PASS {width}px: more/likes, decision order, stale ID, HTTP/SSE race, seller questions')
+            await partial(browser,base,width)
+            print(f'PASS {width}px: city-only search, no invented rooms/budget or payment gate')
         await browser.close()
 
 

@@ -19,11 +19,16 @@ def commit(s, events=(), command=None):
         if s._durable_snapshot:state.restore(s,s._durable_snapshot)
         raise
     s.state_version=version
+    from ..telemetry import dependency
+    dependency('database','available')
     s._durable_snapshot=saved
     for ev in events:
         s.seq=ev['seq']
         s.history.append(ev)
-        for queue in list(s.subscribers):queue.put_nowait(ev)
+        from ..events import deliver
+        deliver(s,ev)
+    from ..config import settings
+    del s.history[:-settings.history_memory_events]
 
 
 def push(s, type_, payload):

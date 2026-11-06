@@ -27,12 +27,18 @@ def build_context(s) -> dict:
     ctx['проверяемые параметры'] = [*(value[1] for value in FIELDS.values()),
                                    *(value[0] for value in FEATURES.values()),
                                    *(value[0] for value in geo.POI.values())]
+    from .capabilities import catalog
+    ctx['доступные действия']=[{k:r[k] for k in ('name','description','allowed','reason')} for r in catalog(s)]
     ctx['непроверяемые пожелания'] = p.get('_unsupported_conditions') or []
     ctx['последняя ошибка обработки'] = s.last_issue
     if p.get("city"):
-        ctx["запрос"] = p.get("summary") or {k: p.get(k) for k in ("city", "rooms", "budget_max")}
+        ctx["запрос"] = {k:v for k,v in p.items() if not k.startswith('_') and k not in ('summary','market') and v not in (None,[],"")}
         ctx["способ оплаты"] = {"cash": "наличные", "mortgage_ready": "ипотека, взнос есть",
                                 "mortgage_saving": "ипотека, взнос копит"}.get(p.get("payment"), "не выяснен")
+    from .understanding import dialogue_context
+    ctx['последние реплики']=dialogue_context(s)
+    ctx['ожидаемые решения']=[{'kind':t['kind'],'text':t['text']} for t in s.pending_decisions.values() if t['status']=='waiting']
+    if s.market:ctx['рыночные ориентиры']=s.market
     if s.mortgage:
         chosen = next(c for c in s.mortgage["programs"] if c["key"] == s.mortgage["chosen"])
         ctx["ипотека"] = {"считаем по": chosen["title"], "ставка": f"{chosen['rate'] * 100:.1f}%".replace(".", ","),
@@ -44,6 +50,8 @@ def build_context(s) -> dict:
         ctx["накопления"] = {"нужно на взнос и сделку": fmt(f["need"]), "доступно сейчас": fmt(f["available"]),
                              "не хватает": fmt(f["gap"]), "откладывать в месяц": fmt(f["monthly"]), "вывод": f["verdict"]}
     if s.shown:
+        from .coverage import report
+        ctx['охват и полнота подбора']=report(s)
         ctx["подборка"] = [{"адрес": x.get("address"), "цена": fmt(x["price"]), "справедливая": fmt(x["fair"]["fair"]),
                             "коридор": f"{fmt(x['fair']['low'])}–{fmt(x['fair']['high'])}", "площадь": x.get("area"),
                             "основа оценки": x["fair"]["basis"], "что_рядом": x.get("nearby", []),

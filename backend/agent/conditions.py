@@ -100,6 +100,11 @@ def evaluate(condition,x):
         note=actual
         if field=='center_km':source='map'
     if field in (x.get('listed') or {}):source='seller_call'
+    provenance=(x.get('fact_sources') or {}).get(field) or x.get('provenance') or {}
+    if checked is None:checked=provenance.get('observed_at') or x.get('stored_at')
+    if source in ('cian','seller_call'):
+        source=provenance.get('source') or source
+        checked=provenance.get('observed_at') or x.get('stored_at') or checked
     return {'key':condition['key'],'condition_id':field,'label':condition['label'],'status':status,
             'required':condition['priority']=='required','source':source,
             'evidence':str(note) if note is not None else None,'checked_at':checked}
@@ -138,5 +143,6 @@ def reconcile(profile,changes):
         if field=='center_km':profile['center_required']=False
     for key in changes.get('clear_criteria') or []:
         field=property_id(key)
-        profile['filters']=[f for f in profile.get('filters') or [] if f['field']!=field]
+        replacement=any(f['field']==field and f['priority']!='remove' for f in changes.get('filters') or [])
+        if not replacement:profile['filters']=[f for f in profile.get('filters') or [] if f['field']!=field]
     return normalize(profile)

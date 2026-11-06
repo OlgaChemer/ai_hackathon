@@ -51,7 +51,7 @@ async def _post(path: str, body: dict, timeout: float = 20) -> dict:
     except httpx.HTTPError as exc:  # сеть до api.exolve.ru — понятная ошибка, а не 500
         raise PhoneError(f"Нет связи с Exolve ({type(exc).__name__}). Проверьте интернет и попробуйте ещё раз.") from exc
     if r.status_code != 200:
-        raise PhoneError(f"Exolve {path}: HTTP {r.status_code} {r.text[:200]}")
+        raise PhoneError(f"Exolve {path}: HTTP {r.status_code}")
     return r.json()
 
 
@@ -163,12 +163,13 @@ async def synthesize(text: str, voice: int | None = None) -> bytes:
 
 
 def status() -> dict:
-    return {"configured": configured(), "seller_phone": settings.seller_phone, "pin": bool(settings.phone_pin)}
+    return {"configured":configured(),'ready':configured() and bool(settings.phone_pin),
+            'mode':'restricted_operator','pin':bool(settings.phone_pin),'per_operation_grant':True}
 
 
 def allowed(pin: str | None) -> bool:
     """Звонок и синтез — только с PIN, если он задан (PHONE_PIN в .env)."""
-    return not settings.phone_pin or secrets.compare_digest(pin or "", settings.phone_pin)
+    return bool(settings.phone_pin) and secrets.compare_digest(pin or "",settings.phone_pin)
 
 
 if __name__ == "__main__":

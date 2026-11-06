@@ -39,6 +39,16 @@ class Settings:
     gigachat_queue_size: int = max(0, int(os.getenv("GIGACHAT_QUEUE_SIZE") or 6))
     gigachat_queue_timeout_s: float = max(.1, float(os.getenv("GIGACHAT_QUEUE_TIMEOUT_S") or 25))
     llm_call_timeout_s: float = max(1, float(os.getenv("LLM_CALL_TIMEOUT_S") or 60))
+    sse_queue_capacity: int = max(8,int(os.getenv('SSE_QUEUE_CAPACITY') or 128))
+    command_queue_capacity: int = max(2,int(os.getenv('COMMAND_QUEUE_CAPACITY') or 64))
+    question_queue_capacity: int = max(2,int(os.getenv('QUESTION_QUEUE_CAPACITY') or 16))
+    history_memory_events: int = max(80,int(os.getenv('HISTORY_MEMORY_EVENTS') or 512))
+    max_active_dialogues: int = max(1,int(os.getenv('MAX_ACTIVE_DIALOGUES') or 32))
+    max_cached_dialogues: int = max(max_active_dialogues+8,int(os.getenv('MAX_CACHED_DIALOGUES') or 64))
+    max_dialogue_subscribers: int = max(1,int(os.getenv('MAX_DIALOGUE_SUBSCRIBERS') or 4))
+    phone_tts_char_limit: int = max(500,int(os.getenv('PHONE_TTS_CHAR_LIMIT') or 12000))
+    phone_calls_per_hour: int = max(1,int(os.getenv('PHONE_CALLS_PER_HOUR') or 5))
+    phone_call_max_seconds: int = max(30,min(900,int(os.getenv('PHONE_CALL_MAX_SECONDS') or 300)))
 
     # МТС Exolve: настоящий звонок продавцу (синтез речи + SIP через WebRTC)
     exolve_api_key: str = os.getenv("EXOLVE_API_KEY", "")
@@ -55,6 +65,7 @@ class Settings:
     # 2GIS: каталог инфраструктуры и растровая подложка. Без ключа — OpenStreetMap.
     twogis_api_key: str = os.getenv("TWOGIS_API_KEY", "").strip()
     places_budget_s: float = max(0.1, float(os.getenv("PLACES_BUDGET_S") or 12))
+    search_budget_s: float = max(1,float(os.getenv('SEARCH_BUDGET_S') or 45))
 
     # Ночной обход объявлений: время (ЧЧ:ММ, пусто — выключен), сколько страниц выдачи на поиск,
     # сколько пропавших объявлений проверить за раз

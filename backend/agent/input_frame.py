@@ -46,6 +46,18 @@ def source_words(messages):
         for word in message['text'].split() if word.strip(punctuation)))
 
 
+def quoted_words(quote,messages):
+    """Полные исходные слова, пересекающие буквальную цитату, включая её окончания."""
+    words=[]
+    for message in messages:
+        text=message['text']
+        spans=list(re.finditer(re.escape(quote),text,re.IGNORECASE))
+        for token in re.finditer(r'[^\s.,!?…:;()\[\]{}«»"]+',text):
+            if any(token.start()<span.end() and token.end()>span.start() for span in spans):
+                words.append(token.group())
+    return list(dict.fromkeys(words))
+
+
 def place_lemmas(source,words):
     """Привязка сущности к словарю, не разбор команды/намерения пользователя."""
     raw=source.casefold().replace('ё','е')
@@ -150,8 +162,9 @@ def decode(frame, profile, payload, changes_schema):
                 matches=[old for old in known if label and (label in old.casefold() or old.casefold() in label)]
                 if len(matches)!=1:raise ValueError('Для отмены выбери точное прежнее условие из workflow.unsupported_conditions')
                 condition['text']=matches[0]
-    if operation in ('compare','analyze','more') and not any(x['action']=='add' for x in frame['unsupported']):
-        # Чтение найденных данных не имеет полномочий изменять профиль.
+    if operation in ('compare','analyze','more') and intent!='refine' and not any(x['action']=='add' for x in frame['unsupported']):
+        # Чистое чтение найденных данных не изменяет профиль. В составной
+        # команде refine новые условия проходят обычную проверку ниже.
         frame=deepcopy(frame)
         frame['fields']={k:None for k in frame['fields']}
         frame['criteria']={k:None for k in frame['criteria']}
@@ -207,6 +220,8 @@ def decode(frame, profile, payload, changes_schema):
         literals=[float(n.replace(' ','').replace('\u00a0','').replace(',','.'))
                   for text in input_texts for n in re.findall(r'(?<!\d)[+-]?\d+(?:[ \u00a0]\d{3})*(?:[.,]\d+)?',text)]
         if literals:
+            from .numbers import word_numbers
+            literals+=list(set().union(*(word_numbers(text) for text in input_texts)))
             supported={n*scale for n in literals for scale in (1,1000,1_000_000,1_000_000_000)}
             for item in changes.get('filters',[]):
                 if item['priority']=='remove':

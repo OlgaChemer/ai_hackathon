@@ -13,9 +13,9 @@ SCHEMA = {
     'required':['operation','scope','limit','sort','aggregates','group_by'],
     'properties':{
         'operation':{'type':'string','enum':['rank','compare','more','analyze'],
-                     'description':'rank — отобрать/пересортировать; compare — ответить, какая из квартир лучше по показателю, сохранив карточки; more — новые варианты; analyze — расчёт без изменения карточек'},
+                     'description':'rank — команда отобрать/пересортировать карточки; compare — вопрос о победителе: какая самая просторная, у какой дешевле метр. Сохраняет карточки; more — новые варианты; analyze — расчёт без изменения карточек'},
         'scope':{**deepcopy(Q.QUERY_SCHEMA['properties']['scope']),
-                 'description':'liked — только понравившиеся/избранные, даже если отметок пока нет; shown — эти/показанные; all — весь найденный пул. Не расширяй явно заданную область.'},
+                 'description':'liked — только понравившиеся/избранные, даже если отметок пока нет; shown — эти/показанные/из них (ссылка на текущие карточки); all — весь найденный пул. Не расширяй заданную область.'},
         'limit':{'type':['integer','null'],'minimum':1,'maximum':30,
                  'description':'Количество предложений. null — сохранить размер выдачи. Это не комнатность и не порог цены.'},
         'sort':{**deepcopy(Q.QUERY_SCHEMA['properties']['sort']),'type':['array','null'],

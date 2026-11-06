@@ -1,79 +1,40 @@
 """Допуски инструментов и безопасное продолжение поиска из одного состояния."""
 
-from . import finance
-from .profile import missing_required
 from .criteria import selectable
-
-
-def programs_current(s):
-    return s.programs_result is not None and s.programs_key == finance.programs_key(
-        s.profile
-    )
+from .profile import missing_search,missing_required
+from .capabilities import programs_current, decision
 
 
 def available(s, name: str) -> bool:
-    """Модель выбирает действия среди разрешённых текущим состоянием, порядок не диктуется."""
-    p = s.profile
-    if s.request_intent == "hold" and name != "update_request":
-        return False
-    if name=='show_selection' and s.selection_operation in ('compare','analyze'):
-        return bool(s.shown) if s.selection_query.get('scope')=='shown' else s.search is not None
-    if s.request_intent == 'call' and s.call_targets and not s.calls and not s.selection_profile_stale and name not in ('update_request','call_seller'):
-        # Выбор уже сделан клиентом: новая подборка не должна молча стирать
-        # прямую просьбу звонить по номеру текущей карточки.
-        return False
-    work_intent = s.request_intent in (None, "search", "refine", "selection", "call", "seller_questions", "continue")
-    ready = not missing_required(p)
-    finance_ready = p.get("payment") == "cash" or (
-        s.mortgage is not None
-        and (p.get("payment") != "mortgage_saving" or s.finance is not None)
-    )
-    search_ready = ready and s.red_lines_ok and bool(p.get("payment")) and work_intent
-    rules = {
-        "update_request": not s.request_inputs
-        or any(x["seq"] > s.request_review_seq for x in s.request_inputs),
-        # Подтверждение рамок завершает вводную анкету. Если поиск ничего не даст,
-        # снова разрешаем обсудить изменение условий.
-        "ask_client": not ready or s.search is not None,
-        "confirm_red_lines": ready and (not s.red_lines_ok or s.requested_action=='confirm_red_lines'),
-        "market_prices": bool(p.get("city") and p.get("rooms") is not None),
-        "ask_payment": not p.get("payment") or s.requested_action=='ask_payment',
-        "ask_housing": not p.get("housing") or s.requested_action=='ask_housing',
-        "ask_family": (p.get("children") is None and p.get("payment") != "cash") or s.requested_action=='ask_family',
-        "mortgage_programs": not programs_current(s)
-        and ready
-        and bool(p.get("payment"))
-        and (p.get("payment") == "cash" or p.get("children") is not None),
-        "savings_plan": ready and p.get("payment") == "mortgage_saving",
-        "search_listings": search_ready,
-        "show_selection": s.search is not None,
-        "offer_search_alternatives": s.search is not None,
-        "probe_budget": s.search is not None,
-        "call_seller": s.search is not None and search_ready and bool(s.shown) and bool(s.call_targets) and not s.selection_profile_stale,
-        "confirm_price": bool(s.calls) and s.red_lines_ok,
-        "plan_viewing": bool(s.agreed) and s.red_lines_ok,
-        "prepare_deal": bool(s.chosen)
-        and s.red_lines_ok
-        and finance_ready
-        and s.status.get(8) != "done",
-    }
-    return bool(rules.get(name, True))
+    return decision(s,name)[0]
+
+
+def pending_calls(s):
+    attempted={op.get('arguments',{}).get('listing_id') for op in s.operations.values()
+               if op.get('name')=='call_seller' and op.get('request_seq')==s.request_review_seq
+               and op.get('status') in ('completed','needs_review','external_started','external_completed')}
+    return [lid for lid in s.call_targets if lid not in s.calls and lid not in attempted]
 
 
 def next_search_action(s):
     """Только явное рабочее намерение разрешает продолжение без нового ответа клиента."""
     if s.requested_action and available(s,s.requested_action):return s.requested_action
+    if s.request_intent=='call':
+        for name in ('confirm_red_lines','ask_payment'):
+            if available(s,name):return name
+        if available(s,'call_seller') and pending_calls(s):return 'call_seller'
+        return None
     if s.request_intent=='selection' and s.selection_operation in ('compare','analyze'):
         if s.selection_query.get('scope')!='shown' and s.search is None:
             return 'search_listings' if available(s,'search_listings') else None
         return 'show_selection' if s.selection_dirty and available(s,'show_selection') else None
-    if s.request_intent not in ("search", "refine", "selection", "continue") or missing_required(
+    if s.request_intent not in ("search", "refine", "selection", "continue") or missing_search(
         s.profile
     ):
         return None
-    for name in ("confirm_red_lines", "ask_payment"):
-        if available(s, name):
-            return name
+    # Для уже полностью сформулированной покупки сохраняем начальную карточку
+    # лимита. Исследования и широкий поиск не требуют заполнить этот профиль.
+    if not missing_required(s.profile) and available(s,'confirm_red_lines'):return 'confirm_red_lines'
     if s.search is None:
         return "search_listings" if available(s, "search_listings") else None
     if not s.shown or s.selection_dirty:
@@ -83,3 +44,12 @@ def next_search_action(s):
             else "offer_search_alternatives"
         )
     return None
+
+
+def planned_call(s,name):
+    """Аргументы принудительного продолжения берутся только из проверенного состояния."""
+    import uuid
+    from ..llm import ToolCall
+    args={}
+    if name=='call_seller':args['listing_id']=pending_calls(s)[0]
+    return ToolCall(name,args,f'progress_{uuid.uuid4().hex[:8]}')

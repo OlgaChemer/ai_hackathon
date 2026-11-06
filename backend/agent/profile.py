@@ -44,6 +44,7 @@ EMPTY_PROFILE = {
     "features": [],           # удобства, которые нужны обязательно (features.FEATURES)
     "poi": [],                # что должно быть в 1 км (geo.POI)
     "wishes": [],
+    "field_states": {},  # unknown / unrestricted / constrained; отсутствие не равно ответу «любой»
 }
 
 
@@ -80,6 +81,7 @@ def merge_profile(raw: dict, base: dict | None = None) -> dict:
     p["rooms_options"] = sorted(set(int(n) for n in p.get("rooms_options") or [] if type(n) is int and 0 <= n <= 5))
     if p["rooms_options"]:
         p["rooms"] = p["rooms_options"][0]
+    elif raw.get('rooms_options')==[] and 'rooms' not in raw:p['rooms']=None
     p["cities"] = list(dict.fromkeys(normalize_city(c) or c for c in p.get("cities") or []))[:3]
     p["city"] = normalize_city(p["city"]) or p["city"]
     for key, cast in (("rooms", int), ("budget_max", int), ("kitchen_min", float), ("area_min", float), ("metro_max_minutes", int),
@@ -108,6 +110,14 @@ def merge_profile(raw: dict, base: dict | None = None) -> dict:
     from .criteria import CRITERIA_KEYS
     p["soft_criteria"] = [k for k in p.get("soft_criteria") or [] if k in CRITERIA_KEYS]
     p["wishes"] = [str(w) for w in (p.get("wishes") or [])][:6]
+    states={**(base or {}).get('field_states',{}),**(raw.get('field_states') or {})}
+    for key in ('budget_max','rooms','districts','okrug','housing'):
+        concrete='rooms_options' if key=='rooms' and raw.get('rooms_options') else key
+        if raw.get(concrete) not in (None,'',[]):states[key]='constrained'
+        if (raw.get('field_states') or {}).get(key) in ('unknown','unrestricted'):
+            p[key]=[] if key=='districts' else None
+            if key=='rooms':p['rooms_options']=[]
+    p['field_states']=states
     return p
 
 
@@ -115,12 +125,18 @@ def missing_required(p: dict) -> list[str]:
     return [k for k in REQUIRED if p.get(k) in (None, "")]
 
 
+def missing_search(p: dict) -> list[str]:
+    """Область поиска нужна; неназванные комнаты и цена не ограничивают чтение."""
+    return [] if p.get('city') else ['city']
+
+
 def rooms_text(rooms: int | None) -> str:
+    if rooms is None:return 'любая комнатность'
     return "студия" if rooms == 0 else f"{rooms}-комнатные"
 
 
 def profile_summary(p: dict) -> str:
-    rooms = "студию" if p["rooms"] == 0 else f"{p['rooms']}-комнатную квартиру"
+    rooms = "квартиру без ограничения комнат" if p['rooms'] is None else "студию" if p["rooms"] == 0 else f"{p['rooms']}-комнатную квартиру"
     if len(p.get("rooms_options") or []) > 1:
         rooms = "/".join(map(str, p["rooms_options"])) + "-комнатную квартиру"
     where = ", ".join([p["city"], *(c for c in p.get("cities") or [] if c != p["city"])]) + (f", {p['okrug']}" if p.get("okrug") else "")
@@ -157,7 +173,8 @@ def profile_summary(p: dict) -> str:
         extra.append("желательно, не обязательно: " + ", ".join(labels[k] for k in p["soft_criteria"]))
     tail = (", " + ", ".join(extra)) if extra else ""
     market = {"new": " в новостройке", "both": " в новостройке или на вторичке", "secondary": " на вторичном рынке"}.get(p.get("housing"), "")
-    return f"Ищу {rooms}{market} в {where} до {fmt(p['budget_max'])}{tail}."
+    budget=f"до {fmt(p['budget_max'])}" if p.get('budget_max') else 'без ограничения цены'
+    return f"Ищу {rooms}{market} в {where} {budget}{tail}."
 
 
 def _stem(name: str) -> str:
@@ -175,7 +192,7 @@ def passes_hard_filters(x: dict, p: dict) -> bool:
         return False
     if p.get("rooms") is not None and x["rooms"] not in (p.get("rooms_options") or [p["rooms"]]):
         return False
-    if x["price"] > p["budget_max"] * 1.05:  # чуть дороже бюджета оставляем: можно сторговать
+    if p.get('budget_max') is not None and x["price"] > p["budget_max"] * 1.05:
         return False
     if p.get("not_first_floor") and "not_first_floor" not in p.get("soft_criteria", []) and x.get("floor") == 1:
         return False

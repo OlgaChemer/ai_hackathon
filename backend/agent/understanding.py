@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import json
 
-from ..llm import LLMError,Tool,parse_json_loose
+from ..llm import LLMError,Tool,ToolCall,LLMResponse,parse_json_loose
 from ..llm.base import StructuredOutputError
 from ..runtime import Turn, record
 from ..config import settings
@@ -17,8 +18,9 @@ profile — прежние условия для сохранения неназ
 messages идут по времени: последнее уточнение заменяет прежнюю неоднозначность. «Новгород» затем «Великий Новгород, не Нижний» -> только Великий Новгород, без отдельного прежнего Новгорода.
 reading_command — уже принятая команда отбора, если есть. Её количество и показатель НЕ условия квартиры.
 «Три самых выгодных», «две большие», «4 а не3», «по моим параметрам» не задают новые условия: fields=[], criteria=[], places=[], unsupported=[].
+Сортировка не создаёт filters: «3 самых выгодных за квадратный метр» -> filters=[]; это порядок price_per_m2 asc, а не порог цены метра. Не добавляй технические проверки положительности, наличия или валидности данных (>0, exists): их делает исполнитель, они не пожелания клиента. Порог извлекай только из явно названного ограничения.
 Если рядом есть ЯВНОЕ новое условие («сдача2027, покажи три просторных»), извлеки delivery_year; число3 — только команда отбора.
-fields — СПИСОК только изменённых фактов [{key,value,source: буквальная цитата НОВОГО ввода}]; неназванных полей в списке нет.
+fields — СПИСОК только изменённых фактов [{key,value,source: целая НОВАЯ реплика из enum source}]; неназванных полей в списке нет. Для fields/criteria/filters/states не выбирай отдельное случайное слово, цитируй целую новую реплику; places.words по-прежнему использует исходные слова названия.
 value строкового поля — строка без дополнительных кавычек: cash/new. Для массива/числа/boolean — JSON в строке: [1,2], 30000000, true.
 allowed_fields и allowed_criteria задают типы и коды значений. Если есть enum, верни код из enum, а не его перевод или описание.
 criteria — СПИСОК [{key,priority:required/preferred/remove,value,source}]; пустой при отсутствии новых условий. Для poi/feature value=true; для remove пусто.
@@ -30,7 +32,7 @@ rooms_options — все допустимые числа комнат 1–5: о�
 Вторичка -> housing secondary; новостройка -> new; оба -> both. Не пропускай названный рынок и оплату.
 «В центре» -> prefer_center true и center_required true; «желательно ближе» -> true/false.
 Не выдумывай обязательность мягких условий. Парк желателен -> poi:park preferred; не первый/последний этаж -> required.
-Площадь/кухня/год постройки — criteria. Произвольные проверяемые ограничения — fields.filters.
+Площадь/кухня/год постройки — criteria. Произвольные проверяемые ограничения — верхний список filters.
 Для одного свойства используй ОДНО представление: именованный criterion ИЛИ filters, не оба.
 При отмене свойства снимай его существующее представление из profile: filters с priority remove, values []; именованный criterion с priority remove.
 Отмени ограничение площади -> criteria [{key:area_min,priority:remove,value:"",source:"Отмени ограничение площади"}]. Не оставляй прежнюю area_min. Для отмены именованного поля можно также fields с action:remove; null означает удаление, не отсутствие изменения.
@@ -42,10 +44,16 @@ selection — [] если команды нет, либо массив с одн
 Цена метра: price_per_m2 asc; самые большие: area desc; выгодные: value_score desc. selection не содержит порогов.
 При одном изменении условия selection=[]. При отмене площади и «покажи две большие» передай И отмену, И selection rank2 area desc.
 Несколько разрешённых комнатностей не требуют выбора ОДНОЙ: сохрани все варианты.
+Не знаю/помоги определить поле — states [{key:имя,state:unknown,source:цитата}]. Любой/неважно/сними ограничение — state=unrestricted. Поддержаны budget_max, rooms, districts, okrug, housing. Это не новое конкретное значение; неназванное сохраняется. Если вместе с вопросом дан конкретный бюджет, сохрани сумму, не помечай его unknown.
+Явное «бюджет неважен» обязательно запиши: states [{key:budget_max,state:unrestricted,source:'бюджет неважен'}]. «Комнатность не знаю» -> key=rooms,state=unknown. Несколько статусов — несколько элементов states. Это поддерживаемые данные, не unsupported и не отсутствие изменений; не записывай вложенный JSON статусов строкой в fields.
+Не определил / ещё не решил / пока не знаю — unknown, а не unrestricted. Временное отсутствие решения не означает, что свойство неважно. Оба статуса допускают исследование без фильтра, но имеют разный смысл для следующего ответа клиенту.
+Строгость числовых сравнений сохраняй: выше/больше/более/позже -> gt; ниже/меньше/раньше -> lt. «Не ниже/не менее/от» -> gte; «не выше/не более» -> lte. «Выше 10» исключает 10, это не gte.
+Числовые и прочие универсальные сравнения передавай в верхнем filters: [{field:floor,op:gt,values:["10"],priority:required,source:цитата}]. Не записывай JSON фильтров строкой в fields. states и filters — типизированные данные, остальные поля по-прежнему в fields/criteria.
+pending_decisions и recent_dialogue поясняют, к какому свойству относится краткий ответ («Любой», «Заехать сразу»). Значение толкуй с этим контекстом, но source всегда буквально из НОВОГО messages. Снятие запрета этажа — criteria not_first_floor/remove и not_last_floor/remove, общий filters floor/remove. Не снимай другие свойства из-за слова «любой».
 Название улицы без указания, какой именно, не считается центром города: сохрани буквальное неподдержанное условие в unsupported. Частичное имя города не достраивай, код уточнит его по каталогу.
 unsupported — только НОВОЕ условие вне доступных свойств, с буквальной цитатой; бассейн внутри квартиры не равен фитнесу рядом.
 Не подбирай ближайшее по смыслу свойство вместо отсутствующего: удобство ВНУТРИ квартиры и расстояние до внешнего объекта — разные условия. Не кодируй внутренний бассейн как nearby:fitness=0. Если точного свойства нет, запиши неизвестный ключ либо unsupported, не придумывай расстояние.
-При явной отмене неподдержанного условия: unsupported action=remove, text дословно из unsupported_conditions, source — цитата нового ввода. Совмести отмену с selection, если просят отбор.
+При явной отмене неподдержанного условия: withdraw_unsupported [{text: точный вариант из enum сохранённых пожеланий, source: целая новая реплика}]. Не перефразируй прежнее условие. unsupported оставляй только для новых добавлений. Совмести отмену с selection, если просят отбор.
 unsupported_properties связывает ключ неизвестного свойства с его прежним названием. Его можно удалить по этому ключу, как обычное свойство.
 Пример: 1–2 комнаты, вторичка, за свои -> fields [{key:rooms_options,value:"[1,2]",source:"1–2"},{key:housing,value:"secondary",source:"вторичка"},{key:payment,value:"cash",source:"за свои"}].
 requested_card — только ПРЯМАЯ просьба показать анкетную карточку: «сначала предложите выбор типа жилья через карточку Где искать» -> [ask_housing]. Это НЕ выбор рынка: housing НЕ добавляй, если клиент не назвал значение. Если клиент просто не назвал рынок, []. Это не карточки квартир.
@@ -65,14 +73,22 @@ read_selection — чтение/отбор по УЖЕ найденным дан
 «Ищу1–2 комнаты» — параметры квартиры, не количество карточек: profile_change.
 «В центре Москвы» — параметры; «школы рядом» — параметры; школа/центр/новостройка НЕ города.
 Если есть только новые условия без команды выдачи, выбери profile_change.
-informational_question — вопрос об устройстве, предложении, предыдущей ошибке: «что сломалось/что надо уточнить».
+informational_question — ОБЪЯСНИТЬ смысл показателя, устройство, предложение или предыдущую ошибку: «что означает цена по аналогам», «что означает непроверенное пожелание», «что сломалось/что надо уточнить». У этой функции нет аргументов, она не запускает расчёты.
+request_information — ПОЛУЧИТЬ новые данные или выполнить расчёт. Выбери action: средние/типичные цены, «не знаю бюджет, какой средний?» -> market_prices; расчёт бюджета по доходам -> affordable_budget; расчёт ипотеки -> mortgage_programs; накопления -> savings_plan.
+Исследование объявлений не требует заранее выбранных комнат или бюджета. «Бюджет 20 млн, на сколько комнат хватит?» -> market_prices, update_conditions=true, research respect_budget=true, group_by=rooms, aggregates по price min/median. «Какая площадь доступна за эту сумму?» -> respect_budget=true, group_by=null, aggregates area min/max/median. Средняя цена без бюджетного ограничения -> respect_budget=false. Это запрос данных, не повод просить выбрать исследуемое свойство. Если нового бюджета/параметров нет, update_conditions=false.
+«Не знаю, какой средний?» спрашивает ЦЕНУ КВАРТИР: market_prices, даже если сейчас открыта форма финансов. affordable_budget считает, сколько МОЖЕТ ПОЗВОЛИТЬ СЕБЕ конкретный человек, не среднюю рыночную цену. Для него нужна просьба оценить личные доходы/расходы/накопления или явное согласие на такой расчёт. Не выбирай его из-за одного отсутствующего бюджета.
+Если в таком вопросе есть новые условия (город, комнаты, рынок и т.п.), выбери action и update_conditions=true: эти условия извлечёт отдельный шаг. Не теряй параметры составного вопроса.
+Короткое «да/покажи/давай» относится к последнему предложению в recent_dialogue. Если агент предложил показать цены/сделать расчёт — это request_information с соответствующим action. Не придумывай бюджет или согласие на звонок/сделку из такого ответа.
+Для чтения цен отдельное разрешение не нужно. Если спрашивают о смысле показателя и расчёт не требуется — informational_question без аргументов. Прежняя карточка бюджета не запрещает получить ориентиры.
+Статистика «по этим/найденным квартирам» выполняется read_selection analyze/compare, а не market_prices: область текущей подборки сохраняется.
 call_intent — только ЯВНО позвонить; listing_ids из показанных ID; [] — по понравившимся.
 Вопросы продавцу/условия не разрешают звонок. pause_request — явная пауза/пока не звони, даже с новыми вопросами.
 Новое неизвестное свойство без других изменений («внутри бассейн/сауна») — unsupported_request. Составной ввод с базовыми параметрами — profile_change с явным unsupported. Не подменяй удобство внутри квартиры фитнесом рядом.
 Неоднозначный город/улица — profile_change: условия извлечёт отдельный шаг, уточнение сформирует код. Диапазон комнат 1–2 — обе комнатности, не вопрос выбора одной.
 continue_input — продолжить без изменений; other_input — остальное.
-Чтение: operation rank — выбрать N/сортировать, compare — ответить какая из показанных лучше по показателю, analyze — статистика, more — ЕЩЁ/НОВЫЕ.
-scope all по умолчанию; shown — при явном «из этих/показанных»; liked — по понравившимся.
+Чтение: operation rank — команда изменить карточки (выбрать N/сортировать), compare — вопрос, какой объект лучше по показателю, analyze — статистика, more — ЕЩЁ/НОВЫЕ.
+Вопрос о победителе («какая самая просторная», «у какой ниже цена») — compare даже без слова «сравни». Ответь по данным, сохрани карточки. Не наследуй operation=rank и limit из предыдущей команды показа.
+scope all по умолчанию для нового отбора; shown — при отсылке к текущим карточкам («из этих/показанных/из них»); liked — по понравившимся.
 «Понравившиеся/избранные отсортируй» -> scope liked, даже если liked сейчас пустой. Не расширяй область до all молча: исполнитель объяснит отсутствие отмеченных. Указанная область важнее значения по умолчанию.
 «Среди этих двух какая выгоднее за кв м» -> compare/shown/price_per_m2/asc, limit=null. Двух — группа, не порог цены и не новый размер карточек.
 «Где из этих двух больше площадь?» -> compare/shown/area/desc.
@@ -123,6 +139,11 @@ def dialogue_context(s):
     rows=[{'role':e['role'],'text':e['text']} for e in s.history
           if e.get('type')=='message' and e.get('role') in ('user','agent')]
     if sum(row['role']=='user' for row in rows)<2:
+        if s.durable:
+            from .. import db
+            from ..db import repo
+            saved=db.required(repo.recent_messages,s.id,12)
+            if saved:return saved
         # После перезапуска история событий ещё не загружена в Session,
         # но сохранённый разговор уже есть. Он нужен для коротких исправлений.
         memory=[{'role':'agent' if m['role']=='assistant' else 'user','text':m['content']}
@@ -132,7 +153,10 @@ def dialogue_context(s):
 
 
 def semantic_tools(contract,inputs,unsupported,has_results=True):
+    from .capabilities import POLICIES
+    information_actions=[name for name,policy in POLICIES.items() if policy.information]
     from .selection_request import SCHEMA
+    from .research import SCHEMA as RESEARCH_SCHEMA
     def obj(props,required=()):return {'type':'object','additionalProperties':False,'properties':props,'required':list(required)}
     quotes=list(dict.fromkeys([*input_frame.source_words(inputs),*(row['text'] for row in inputs),*unsupported]))
     read_schema=deepcopy(SCHEMA)
@@ -152,18 +176,28 @@ def semantic_tools(contract,inputs,unsupported,has_results=True):
         'maxLength':1000,
         'description':'Буквальная цитата НОВОЙ реплики, откуда взято количество limit. При limit=null — null. «4 а не 3» -> limit4, count_source:4. Не цитируй прежнюю выдачу.'}
     read_schema['required'].append('count_source')
+    global_words={'все','всех','весь','вся','всю','всей','всего','всем','целиком','полностью','пула','пулу','пуле','базы'}
+    global_quotes=[row['text'] for row in inputs if any(word.casefold().replace('ё','е') in global_words
+                    for word in input_frame.source_words([row]))]
+    read_schema['properties']['scope_source']={'type':['string','null'],'enum':[None,*global_quotes],
+        'description':'Только для compare/all: исходная просьба сравнивать весь найденный пул. Без прямой просьбы шире показанных используй compare/shown. Для rank/analyze не требуется.'}
     tools=[
         Tool('read_selection','Прочитать найденные данные: отобрать N, отсортировать, сравнить показанные, посчитать статистику или получить ещё варианты. Условия профиля не меняет. Новое количество только из новой реплики, при отсутствии limit=null.',read_schema),
         Tool('profile_change','Клиент меняет условия квартиры/города/бюджета, снимает ограничение либо добавляет вопросы продавцу. Включая составную просьбу изменить условия и отобрать N. Параметры извлечёт отдельный структурированный разбор. Для одного лишь отбора без изменения условий — read_selection.',obj({})),
         Tool('unsupported_request','Новое пожелание вне проверяемых свойств: удобство внутри квартиры не заменяется внешней инфраструктурой. Это явный запрос клиента, а не ошибка формата и не неизвестные данные объявления. Только распознать ограничение возможности, ничего не исполнять.',obj({
             'quote':{'type':'string','minLength':1,'maxLength':1000,
                      'description':'Дословная новая реплика, содержащая неподдерживаемое пожелание.'}},['quote'])),
-        Tool('informational_question','Клиент задаёт информационный вопрос и не меняет условия/не выбирает действие. Включая вопрос о предыдущем сбое.',obj({})),
+        Tool('informational_question','Объяснить смысл, устройство, показатель, прежнюю ошибку. «Что означает цена по аналогам/непроверенное пожелание?» — объяснение, без новой оценки рынка. Не изменяет условия и не выбирает инструмент.',obj({})),
+        Tool('request_information','Получить данные или выполнить расчёт. Включая вопрос «на сколько комнат хватит бюджета»: исследовать объявления, respect_budget=true, group_by=rooms. Не требует заранее выбрать неизвестное свойство. Использует существующий инструмент.',obj({
+            'action':{'type':'string','enum':information_actions,
+                      'description':'market_prices — исследовать объявления: цены, доступную комнатность/площадь/этаж по известным условиям; affordable_budget — личная платёжеспособность по доходам/накоплениям; mortgage_programs — ипотека; savings_plan — накопления.'},
+            'research':RESEARCH_SCHEMA,
+            'update_conditions':{'type':'boolean','description':'true — вместе с вопросом названы/изменены условия. Отдельный шаг проверит их перед исполнением.'}},['action','research','update_conditions'])),
         Tool('call_intent','Клиент явно просит звонить. Сам ничего не исполняет. Без явной просьбы запрещён; для вопросов продавцу используй profile_change.',obj({
             'listing_ids':{'type':'array','maxItems':10,'items':{'type':'string'},'description':'ID показанных объектов; пусто — по понравившимся'}},['listing_ids'])),
         Tool('pause_request','Клиент просит остановиться/пока не искать/пока не звонить. Можно сохранить явно добавленные вопросы и условия без действий.',obj({})),
         Tool('continue_input','Клиент просит продолжить без изменения условий.',obj({})),
-        Tool('other_input','Прочая реплика без изменения параметров и без команды выдачи.',obj({})),
+        Tool('other_input','Разговорная или неясная реплика без изменения параметров и команды. Ответить с контекстом текущего вопроса/ошибки, не возобновлять бизнес-действия.',obj({})),
     ]
     return tools if has_results else [tool for tool in tools if tool.name!='read_selection']
 
@@ -174,6 +208,12 @@ def frame_from_call(call,tools,inputs):
     validation.validate(call.arguments,tool.parameters)
     a=deepcopy(call.arguments)
     if call.name=='read_selection':
+        scope_source=a.pop('scope_source',None)
+        if a['operation']=='compare' and a['scope']=='all' and not scope_source:
+            raise ValueError('compare/all требует прямой просьбы сравнивать весь найденный пул. Отсылка к текущим карточкам — compare/shown, без расширения области.')
+        if a['operation']=='compare':
+            # Сравниваются объекты; группировка имеет смысл только для analyze.
+            a['group_by']=None
         quote=a.pop('count_source')
         keep=a.pop('keep_order')
         update=a.pop('update_conditions')
@@ -195,8 +235,14 @@ def frame_from_call(call,tools,inputs):
         return {'intent':'refine','unsupported':[{'text':a['quote'][:200],'source':a['quote'],'action':'add'}]}
     if call.name=='pause_request':return {'intent':'hold','needs_extraction':True}
     if call.name=='informational_question':return {'intent':'question'}
+    if call.name=='request_information':
+        from .research import query
+        research=query(a.get('research'))[0]
+        return {'intent':'refine' if a.get('update_conditions') else 'question',**({'requested_action':a['action']} if a.get('action') else {}),
+                'research':research,
+                **({'needs_extraction':True} if a.get('update_conditions') else {})}
     if call.name=='call_intent':return {'intent':'call','call_ids':a['listing_ids']}
-    return {'intent':'continue' if call.name=='continue_input' else 'other'}
+    return {'intent':'continue' if call.name=='continue_input' else 'question'}
 
 
 async def prepare(s):
@@ -218,6 +264,15 @@ async def _prepare(s):
         return s.request_review
     from .. import sources
     base_profile=deepcopy(s.profile)
+    from .clarification import choice
+    answered=choice(s,inputs)
+    if answered is not None:
+        validation.validate(answered,CHANGE_SCHEMA)
+        s.request_review={'seq':version,'base_profile':base_profile,'intent':'refine',
+            'decision':'apply' if answered else 'unchanged','changes':answered,'question':'','options':[]}
+        record('request_review',session=s.id,decision=s.request_review['decision'],intent='refine',
+               changed_keys=list(answered),source='bound_card_choice')
+        return s.request_review
     contract=input_frame.sparse_schema(CHANGE_SCHEMA, inputs)
     tools=semantic_tools(contract,inputs,s.profile.get('_unsupported_conditions') or [],bool(s.shown or s.search))
     extraction=input_frame.schema(CHANGE_SCHEMA,inputs)
@@ -232,12 +287,20 @@ async def _prepare(s):
              'messages':inputs,'profile':{k:v for k,v in base_profile.items() if not k.startswith('_')},
              'listing_fields':{key: {'type':v[0],'label':v[1]} for key,v in FIELDS.items()},
              'recent_dialogue':dialogue_context(s),
+             'pending_decisions':[{'kind':t['kind'],'text':t['text'],'options':t.get('payload',{}).get('chips',[])}
+                                  for t in s.pending_decisions.values() if t.get('status')=='waiting'],
              'workflow':{'has_search':s.search is not None,'has_selection':bool(s.shown),'has_calls':bool(s.calls),'chosen':bool(s.chosen),
                          'selection_query':s.selection_query or s.profile.get('_selection_query'),
                          'unsupported_conditions':s.profile.get('_unsupported_conditions') or [],
                          'selection':[{'id':x['id'],'number':i+1,'address':x.get('address')} for i,x in enumerate(s.shown)],
                          'liked':s.prefs.liked,'last_issue':s.last_issue}}
     revision=s.client_revision
+    # Буквальный выбор из открытой уточняющей карточки уже имеет адресата.
+    # Не просим роутер заново угадывать, является ли «Любой» продолжением.
+    waiting=s.pending_decisions.get('clarify') or {}
+    card_answer=((s.active_operation or {}).get('name')=='ask_client' and waiting.get('status')=='waiting'
+                 and inputs[-1]['text'].strip().casefold() in
+                 {str(option).strip().casefold() for option in waiting.get('payload',{}).get('chips') or []})
     error=None
     for attempt in range(2):
         instruction=ROUTER_SYSTEM+'\n'+guard.POLICY
@@ -246,42 +309,85 @@ async def _prepare(s):
         try:
             requested_action=None
             condition_sources={}
-            response=await s.llm.chat(messages,tools=tools,
-                                      tag='request_review',temperature=.01,max_tokens=2500)
+            original_intent=None
+            response=(LLMResponse('',[ToolCall('profile_change',{})]) if card_answer else
+                      await s.llm.chat(messages,tools=tools,tag='request_review',temperature=.01,max_tokens=2500))
             if response.tool_calls:
                 if len(response.tool_calls)!=1:raise ValueError('Ожидался один смысловой результат')
                 result=frame_from_call(response.tool_calls[0],tools,inputs)
-                extract=result.pop('needs_extraction',False)
+                original_intent=result['intent']
+                result.pop('needs_extraction',None)
                 rank=(result.get('selection') or {}).get('operation')=='rank'
-                if extract:
-                    data={k:payload[k] for k in ('messages','profile','supported_cities','ambiguous_catalog_names','listing_fields')}
-                    data['unsupported_conditions']=s.profile.get('_unsupported_conditions') or []
-                    data['unsupported_properties']=s.profile.get('_unsupported_keys') or {}
-                    data['allowed_fields']=input_frame.basic_fields(CHANGE_SCHEMA)
-                    from .criteria import CRITERIA_KEYS
-                    data['allowed_criteria']={key:input_frame.criterion_value(key,CHANGE_SCHEMA) for key in CRITERIA_KEYS}
-                    contract_for_changes=deepcopy(extraction)
-                    if rank:
-                        data['reading_command']=result['selection']
-                        contract_for_changes['properties'].pop('selection')
-                        contract_for_changes['required'].remove('selection')
-                    prompt=PROFILE_SYSTEM+'\n'+guard.POLICY
-                    if error:prompt+='\nОшибка прежнего разбора: '+error
-                    data['output_schema']=contract_for_changes
-                    parsed=await s.llm.chat([{'role':'system','content':prompt},guard.data_message('profile_changes',data)],
-                        json_mode=True,tag='profile_extract',temperature=.01,max_tokens=3000)
-                    changes=parse_json_loose(parsed.text)
-                    changes=profile_patch.decode(changes,contract_for_changes,inputs,s.profile.get('_unsupported_keys'),provenance=condition_sources)
-                    requested_action=changes.pop('_requested_action',None)
-                    if rank and (any(v is not None for v in (changes.get('fields') or {}).values()) or
-                                 any(v is not None for v in (changes.get('criteria') or {}).values()) or
-                                 changes.get('places') or changes.get('unsupported')):
-                        result['intent']='refine'
-                    result={**changes,**result}
+                # Маршрутизатор может выбрать отбор и пропустить новые условия
+                # в той же фразе. Каждый новый ввод проверяется независимо от
+                # предложенного update_conditions; это один раз на новый ввод.
+                data={k:payload[k] for k in ('messages','profile','supported_cities','ambiguous_catalog_names','listing_fields','pending_decisions')}
+                data['unsupported_conditions']=s.profile.get('_unsupported_conditions') or []
+                data['unsupported_properties']=s.profile.get('_unsupported_keys') or {}
+                data['allowed_fields']=input_frame.basic_fields(CHANGE_SCHEMA)
+                from .criteria import CRITERIA_KEYS
+                data['allowed_criteria']={key:input_frame.criterion_value(key,CHANGE_SCHEMA) for key in CRITERIA_KEYS}
+                contract_for_changes=deepcopy(extraction)
+                unsupported_route=response.tool_calls[0].name=='unsupported_request'
+                if unsupported_route:
+                    # Неподдержанное удобство нельзя переинтерпретировать как
+                    # разрешённую инфраструктуру. До решения клиента можно
+                    # сохранить лишь ещё неизвестные базовые параметры.
+                    basics={'city','cities','rooms_options','studio_requested','budget_max','payment','housing'}
+                    if base_profile.get('city'):basics-={'city','cities'}
+                    if base_profile.get('rooms') is not None:basics-={'rooms_options','studio_requested'}
+                    basics-={key for key in ('budget_max','payment','housing') if base_profile.get(key) is not None}
+                    for group in ('criteria','filters','states','selection','requested_card'):
+                        contract_for_changes['properties'][group]['maxItems']=0
+                    if not basics:contract_for_changes['properties']['fields']['maxItems']=0
+                    else:contract_for_changes['properties']['fields']['items']['properties']['key']['enum']=sorted(basics)
+                    if 'city' not in basics:contract_for_changes['properties']['places']['maxItems']=0
+                if response.tool_calls[0].name!='profile_change':
+                    if result.get('selection') is not None:data['reading_command']=result['selection']
+                    elif response.tool_calls[0].name=='call_intent':data['message_purpose']='Просьба звонить. Номер квартиры — ссылка на объект, не количество карточек или комнат. Извлеки только явно новые условия; selection запрещён.'
+                    contract_for_changes['properties'].pop('selection')
+                    contract_for_changes['required'].remove('selection')
+                prompt=PROFILE_SYSTEM+'\n'+guard.POLICY
+                if error:prompt+='\nОшибка прежнего разбора: '+error
+                strict_schema=profile_patch.generation_schema(contract_for_changes,inputs,s.profile.get('_unsupported_conditions'))
+                data['output_schema']=strict_schema
+                from .clarification import INFORMATION_ACKS
+                information_ack=(response.tool_calls[0].name=='request_information' and len(inputs)==1
+                                 and inputs[0]['text'].strip().casefold() in INFORMATION_ACKS)
+                read_only=(response.tool_calls[0].name in ('informational_question','other_input') or
+                           (response.tool_calls[0].name=='read_selection' and result['intent']=='selection'
+                            and (result.get('selection') or {}).get('operation') in ('compare','analyze','more')))
+                no_facts=read_only or (unsupported_route and not basics)
+                parsed=(LLMResponse(json.dumps({key:[] for key in strict_schema['properties']})) if information_ack or no_facts else
+                        await s.llm.chat([{'role':'system','content':prompt},guard.data_message('profile_changes',data)],
+                            json_mode=True,json_schema=strict_schema,tag='profile_extract',temperature=.01,max_tokens=3000))
+                changes=parse_json_loose(parsed.text)
+                changes=profile_patch.decode(changes,contract_for_changes,inputs,s.profile.get('_unsupported_keys'),provenance=condition_sources,profile=base_profile,
+                                             reading=result.get('selection') if rank else None)
+                requested_action=changes.pop('_requested_action',None)
+                pure_read=(result.get('selection') or {}).get('operation') in ('compare','analyze','more')
+                if not pure_read and result['intent'] not in ('call','hold') and (any(v is not None for v in (changes.get('fields') or {}).values()) or
+                             any(v is not None for v in (changes.get('criteria') or {}).values()) or
+                             changes.get('places') or changes.get('unsupported')):
+                    result['intent']='refine'
+                result={**changes,**result}
             else:result=parse_json_loose(response.text)
+            research_request=result.pop('research',None)
+            information_action=result.pop('requested_action',None)
+            if information_action:
+                from .capabilities import POLICIES
+                if information_action not in POLICIES or not POLICIES[information_action].information:
+                    raise ValueError('Информационный запрос не разрешает это действие')
+            requested_action=information_action or requested_action
             result=input_frame.complete_frame(result,CHANGE_SCHEMA)
             result = input_frame.decode(result, payload['profile'], payload, CHANGE_SCHEMA)
+            if (original_intent is not None and not result['changes'] and not result.get('unsupported')
+                    and result['decision']!='clarify'):
+                # Повтор уже известного факта не превращает информационный
+                # вопрос в изменение профиля и ответ на ожидающую карточку.
+                result['intent']=original_intent
             if requested_action:result['requested_action']=requested_action
+            if research_request is not None:result['research']=research_request
             if condition_sources:result['condition_sources']=condition_sources
             validation.validate(result['changes'], CHANGE_SCHEMA)
             if not guard.input_verdict(result['changes']).ok or guard.output(result['changes'], limit=False) != result['changes']:
@@ -301,7 +407,7 @@ async def _prepare(s):
         record('request_review',session=s.id,decision=result['decision'],intent=result['intent'],
                fields=len(result['changes']),changed_keys=list(result['changes']),
                operation=result.get('selection_operation'),scope=query.get('scope'),
-               ordering=query.get('sort'),count=query.get('limit'),repaired=bool(attempt))
+               ordering=query.get('sort'),count=query.get('limit'),requested_action=result.get('requested_action'),repaired=bool(attempt))
         return s.request_review
     raise UnderstandingError('Не удалось получить корректный структурированный ввод: '+str(error))
 
@@ -373,7 +479,15 @@ async def ensure(s):
                              chips=['Самые выгодные','Самые просторные','Оставить подборку'])
         return {'needs_clarification':True,'question':explanation,
                 'client_said':answer['data'].get('text','')}
-    s.requested_action=review.get('requested_action') if review['intent']!='hold' else None
+    from .capabilities import POLICIES
+    previous=s.requested_action
+    requested=review.get('requested_action')
+    if requested=='market_prices':s.research_query=review.get('research')
+    if not requested and previous in POLICIES and POLICIES[previous].information and review['intent'] not in ('hold','call','selection'):
+        requested=previous
+    s.requested_action=requested if review['intent']!='hold' else None
+    if s.requested_action in POLICIES and POLICIES[s.requested_action].information:
+        s.request_intent='question'  # изменения применены, цель хода — ответ исследования
     if s.requested_action:s.profile['_requested_action']=s.requested_action
     else:s.profile.pop('_requested_action',None)
     if review['intent'] not in ('seller_questions','question'):

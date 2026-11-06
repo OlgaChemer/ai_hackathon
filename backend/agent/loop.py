@@ -21,7 +21,7 @@ from . import actions, guard, prompts, understanding
 from .features import FEATURES
 from .numbers import fmt
 from .profile import missing_required
-from .workflow import next_search_action,available
+from .workflow import next_search_action,available,planned_call
 from .session import close_dangling_calls
 from .session import Superseded
 
@@ -39,11 +39,14 @@ def state_brief(s) -> str:
         if known.get("poi"):
             known["poi"] = [geo.POI[k][0] for k in known["poi"]]
         lines.append("Запрос: " + json.dumps(known, ensure_ascii=False))
-        missing = missing_required(p)
+        from .profile import missing_search
+        missing = missing_search(p)
         lines.append("Не хватает для поиска: " + (", ".join(missing) if missing else "ничего"))
     else:
         lines.append("Запрос ещё не записан.")
     lines.append("Рамки клиентом " + ("подтверждены." if s.red_lines_ok else "НЕ подтверждены."))
+    if s.market:
+        lines.append('Ценовые ориентиры уже показаны: '+json.dumps(s.market,ensure_ascii=False))
     if s.mortgage:
         chosen = next(c for c in s.mortgage["programs"] if c["key"] == s.mortgage["chosen"])
         lines.append(f"Ипотека посчитана: {chosen['title']}, {chosen['rate'] * 100:.1f}%, платёж {fmt(chosen['monthly'])}.")
@@ -51,6 +54,9 @@ def state_brief(s) -> str:
         lines.append(f"План накоплений: не хватает {fmt(s.finance['gap'])}, срок {s.finance['months']} мес.")
     if s.search:
         lines.append(f"Поиск: найдено {len(s.search['listings'])}, в бюджете {len(s.search['pool'])}.")
+        from .coverage import report
+        coverage=report(s)
+        lines.append('Охват: '+coverage['summary']+' Причины неполноты: '+', '.join(coverage['reasons']))
     if s.shown:
         cards = "; ".join(f"{i + 1}) {x['id']} — {x.get('address')}, {fmt(x['price'])}" for i, x in enumerate(s.shown))
         lines.append(f"Последняя подборка: {cards}. Нравятся: {', '.join(s.prefs.liked) or 'ничего'}.")
@@ -59,6 +65,9 @@ def state_brief(s) -> str:
                      + (", цену подтвердил клиент" if lid in s.agreed else "") + (", квартира выбрана" if s.chosen == lid else ""))
     if s.request_intent:
         lines.append("Проверенное намерение клиента: " + s.request_intent + ".")
+    if s.requested_action:
+        from .capabilities import decision
+        lines.append('Запрошено действие: '+s.requested_action+'. '+(decision(s,s.requested_action)[1] or 'Выполнить сейчас.'))
     if s.call_targets:
         lines.append('Клиент просил звонить только по ID: ' + ', '.join(s.call_targets))
     if s.selection_query:
@@ -133,13 +142,14 @@ async def run(s) -> None:
                                        {"role":"user","content":checked['client_said']}])
                     s.remember()
                     continue
-            if s.requested_action and not available(s,s.requested_action):
+            from .capabilities import POLICIES
+            if s.requested_action and not available(s,s.requested_action) and not (POLICIES.get(s.requested_action) and POLICIES[s.requested_action].information):
                 s.requested_action=None;s.profile.pop('_requested_action',None);s.remember()
             intake = next_search_action(s)
-            if not isinstance(forced,ToolCall) and (intake in ("confirm_red_lines", "ask_payment") or (intake and intake==s.requested_action)):
+            if not forced and intake:
                 forced = intake
             if forced:
-                recovered=forced if isinstance(forced,ToolCall) else ToolCall(forced, {}, f"progress_{uuid.uuid4().hex[:8]}")
+                recovered=forced if isinstance(forced,ToolCall) else planned_call(s,forced)
                 resp = LLMResponse('',[recovered])
                 record('search_recovery',session=s.id,action=recovered.name)
                 forced = None

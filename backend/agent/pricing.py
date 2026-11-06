@@ -145,7 +145,7 @@ def score_listing(x: dict, p: dict, fp: dict) -> float:
     if p.get("metro_max_minutes") and minutes is not None and minutes > p["metro_max_minutes"]:
         s -= 6
     s += max(0, min(5, (x["area"] - 40) / 3))
-    if x["price"] > p["budget_max"]:
+    if p.get('budget_max') is not None and x["price"] > p["budget_max"]:
         s -= 8
     if x.get("is_apartments"):
         s -= 10

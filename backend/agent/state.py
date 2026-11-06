@@ -6,7 +6,7 @@ FIELDS = ('profile','messages','status','voice_mode','red_lines_ok','market','fi
           'programs_key','programs_result','search','shown','selection_query','selection_scope_ids',
           'selection_dirty','selection_operation','selection_profile_stale','last_issue','call_targets',
           'calls','agreed','chosen','current','journal','opened','map_warned','stage',
-          'request_inputs','request_review_seq','request_review','request_intent','requested_action',
+          'request_inputs','request_review_seq','request_review','request_intent','requested_action','research_query',
           'client_revision','profile_revision','selection_revision','pending_decisions','operations',
           'active_operation','qa_pending','started','query')
 SET_FIELDS = ('districts_plus','explicit_avoids','districts_minus','conditions_plus')
@@ -26,6 +26,7 @@ def snapshot(s):
     if data['search']:
         data['search'].pop('map_deadline',None)
         data['search'].pop('map_revision',None)
+        data['search'].pop('source_deadline',None)
     return {'format':1,'data':data}
 
 

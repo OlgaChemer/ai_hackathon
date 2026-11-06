@@ -195,6 +195,23 @@ class CrawlRun(Base):
 # ================================================================ безопасность
 
 
+class PhoneGrant(Base):
+    """Одно разрешение оператора на один объект; SIP-пароли здесь не хранятся."""
+    __tablename__='phone_grants'
+    __table_args__=(UniqueConstraint('chat_id','decision_id'),)
+    id: Mapped[str]=mapped_column(String(40),primary_key=True)
+    chat_id: Mapped[str]=mapped_column(ForeignKey('chats.id',ondelete='CASCADE'),index=True)
+    actor: Mapped[str]=mapped_column(String(64),index=True)
+    operation_id: Mapped[str]=mapped_column(String(80))
+    listing_id: Mapped[str]=mapped_column(String(80))
+    decision_id: Mapped[str]=mapped_column(String(40))
+    token_hash: Mapped[str]=mapped_column(String(64))
+    status: Mapped[str]=mapped_column(String(20))
+    tts_chars: Mapped[int]=mapped_column(Integer,default=0)
+    created_at: Mapped[datetime]=mapped_column(DateTime,default=utcnow)
+    expires_at: Mapped[datetime]=mapped_column(DateTime)
+
+
 class SecurityEvent(Base):
     """Попытка промпт-инъекции, утечки или злоупотребления (agent/guard.py): что, где, кто. Исходный текст не хранится: sample содержит только SHA-256 и длину."""
     __tablename__ = "security_events"

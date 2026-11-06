@@ -16,6 +16,7 @@ from typing import Any
 from copy import copy, deepcopy
 
 from .. import db
+from ..config import settings
 from ..runtime import TurnStopped, human_wait
 from ..db import repo
 from ..llm import LLMClient
@@ -49,6 +50,7 @@ class Session:
     request_review: dict | None = None
     request_intent: str | None = None
     requested_action: str | None = None
+    research_query: dict | None = None
     client_revision: int = 0  # только принятые сообщения/решения клиента
     seq: int = 0                      # номер последнего события диалога
     history: list[dict] = field(default_factory=list)  # события этого запуска (если база недоступна)
@@ -58,7 +60,7 @@ class Session:
     pending_ids: dict[str, str] = field(default_factory=dict)
     input_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     activity: str = 'working'
-    inbox: asyncio.Queue = field(default_factory=asyncio.Queue)       # сообщения клиента агенту
+    inbox: asyncio.Queue = field(default_factory=lambda:asyncio.Queue(maxsize=settings.command_queue_capacity))
     seller_queue: asyncio.Queue = field(default_factory=asyncio.Queue)  # реплики живого продавца
     task: asyncio.Task | None = None
     messages: list[dict] = field(default_factory=list)  # память: разговор агента с моделью (формат OpenAI)
@@ -111,7 +113,7 @@ class Session:
     _command: dict | None = None
     _fork_revision: int = 0
     _fork_base: dict | None = None
-    command_queue: asyncio.Queue = field(default_factory=asyncio.Queue)
+    command_queue: asyncio.Queue = field(default_factory=lambda:asyncio.Queue(maxsize=settings.command_queue_capacity))
     command_futures: dict = field(default_factory=dict)
     command_task: asyncio.Task | None = None
     review_task: asyncio.Task | None = None
@@ -156,6 +158,7 @@ class Session:
             if result is not None and owner.active_operation:
                 operation=owner.active_operation
                 owner.operations[operation['id']]={**operation,'status':'completed','result':deepcopy(result)}
+                if len(owner.operations)>100:owner.operations=dict(list(owner.operations.items())[-100:])
                 owner.active_operation=None
                 owner.pending_decisions={k:t for k,t in owner.pending_decisions.items() if t.get('status')!='consumed'}
             for ev in self._event_buffer:
@@ -183,18 +186,31 @@ class Session:
         """Согласия относятся к прежним условиям и не могут разрешать новую сделку."""
         if not keep_limit:
             self.red_lines_ok = False
-        if self.programs_key != F.programs_key(self.profile):
+        financial=self.programs_key != F.programs_key(self.profile)
+        self.search = None
+        self.invalidate_decisions(financial=financial)
+
+    def invalidate_decisions(self, *, purchase=True, financial=False):
+        """Смена условий отзывает прежний выбор/план, но сохраняет историю процесса."""
+        had_purchase=bool(self.calls or self.agreed or self.chosen or self.current or self.journal or self.status.get(8)=='done')
+        had_finance=bool(self.programs_result or self.mortgage or self.finance or self.status.get(2))
+        if financial:
             self.programs_key = self.programs_result = None
             self.profile.pop('_programs_cache',None)
             self.mortgage = self.finance = None
-        self.search = None
-        self.calls.clear()
-        self.agreed.clear()
-        self.chosen = self.current = None
-        # Последняя видимая подборка остаётся до успешного нового результата.
-        # Допуски действий проверяют новый профиль и search, а не факт показа.
-        self.call_targets = []
-        self.journal.clear()
+            self.status.pop(2,None)
+        if purchase:
+            self.calls.clear();self.agreed.clear();self.chosen=self.current=None
+            self.call_targets=[];self.journal.clear()
+        first=3 if purchase else 8
+        self.status={k:v for k,v in self.status.items() if k<first}
+        kinds=('call','price','object','sign') if purchase else ('sign',)
+        self.pending_decisions={k:t for k,t in self.pending_decisions.items() if k not in kinds}
+        self.stage='Запрос' if purchase else 'Финансы'
+        if had_purchase or (financial and had_finance):
+            self.push('purchase_reset',clear_steps=([2] if financial else [])+list(range(5 if purchase else 8,10)),
+                      kinds=list(kinds),text='Условия изменились: прежние решения по объекту и план нужно пересмотреть.' if purchase and had_purchase
+                      else 'Финансирование изменилось: прежний план покупки нужно пересчитать.')
 
     # ------------------------------------------------------------- лента событий
     def push(self, type_: str, **payload: Any) -> dict:
@@ -213,8 +229,8 @@ class Session:
             return
         if type_ == 'typing':
             self.activity = 'working' if payload.get('on') else ('awaiting_user' if self.pending else 'idle')
-        for q in list(self.subscribers):
-            q.put_nowait({"type": type_, **payload, "seq": 0})
+        from ..events import deliver
+        deliver(self,{"type":type_,**payload,"seq":0})
 
     async def emit(self, type_: str, **payload: Any) -> None:
         self.push(type_, **payload)
@@ -299,6 +315,11 @@ class Session:
             validation.confirmation(kind, data)
         except ValueError as exc:
             raise guard.InputRejected(str(exc)) from exc
+        if kind=='call' and approved and data.get('mode')=='phone':
+            from .. import phone_access
+            if not db.required(phone_access.confirmation,data.get('phone_grant_id'),self.id,
+                    (self.active_operation or {}).get('id'),current_id):
+                raise guard.InputRejected('Телефонное разрешение не относится к текущей квартире или уже использовано.')
         if self.refuse(data, "confirmation"):
             raise guard.InputRejected("Ответ отклонён. Карточка остаётся открытой — измените текст.")
         if data.get("text") and (approved is None or kind == "clarify"):
@@ -323,7 +344,8 @@ class Session:
         question = next((e for e in reversed(self.history)
                          if e.get("type") == "confirm" and e.get("kind") in self.pending), {})
         self.request_inputs.append({"seq": seq, "text": text, "question": question.get('text',''),
-                                    "options": question.get('chips') or []})
+                                    "options": question.get('chips') or [],
+                                    "question_field":((self.active_operation or {}).get('arguments') or {}).get('field')})
         self.request_review = None
 
     async def receive_text(self, text: str, marks: dict | None = None, command_id: str | None = None) -> str:
@@ -347,7 +369,7 @@ class Session:
                 self.client_revision+=1
             elif not any(x['seq']==progress['message_seq'] for x in self.request_inputs):
                 self.accept_request(text,progress['message_seq'])
-        if self.pending or any(t['status']=='waiting' for t in self.pending_decisions.values()) or self.last_issue is not None:
+        if self.request_inputs:
             from . import understanding
             from ..llm import LLMError
             try:
@@ -355,14 +377,20 @@ class Session:
             except Superseded:
                 # Новая команда уже в состоянии. Это отмена старой работы,
                 # а не ошибка клиента; failed_input не должен удалить новый ввод.
-                self.inbox.put_nowait(text)
+                if not self.inbox.full():self.inbox.put_nowait(text)
                 return 'message'
             except (LLMError, TurnStopped) as exc:
                 await self.say(understanding.failed_input(self,exc), await_reply=True)
                 return "unresolved"
-            if review and review['intent'] == 'question' and review['decision'] != 'clarify':
+            if review and review['intent'] == 'question' and review['decision'] != 'clarify' and not review.get('requested_action'):
                 self.request_review_seq = review['seq']
                 from .commands import start_questions
+                if len(self.qa_pending)>=settings.question_queue_capacity:
+                    with persistence.atomic(self):
+                        self.push('message',role='agent',text='В очереди уже много вопросов. Этот вопрос не принят к обработке; повторите его после ответа на предыдущие.',
+                                  in_reply_to=(self._command or {}).get('id'),outcome='capacity')
+                        if self._command:self._command['result']={'handled_as':'unresolved'}
+                    return 'unresolved'
                 self.qa_pending.append({'id':(self._command or {}).get('id') or uuid.uuid4().hex,'text':text})
                 if self._command:self._command['result']={'handled_as':'question'}
                 self.remember()
@@ -377,7 +405,7 @@ class Session:
                 if self.resolve(kind, None, data):
                     return "answer"
         self.client_revision += 1
-        self.inbox.put_nowait(text)
+        if not self.inbox.full():self.inbox.put_nowait(text)
         return "message"
 
     async def open_product(self, product: str, amount: int) -> None:
@@ -411,17 +439,28 @@ class Session:
 SESSIONS: dict[str, Session] = {}
 
 
+def cache_session(s):
+    if s.id not in SESSIONS and len(SESSIONS)>=settings.max_cached_dialogues:
+        idle=[old for old in SESSIONS.values() if not running(old) and not old.subscribers
+              and (old.command_task is None or old.command_task.done()) and (old.qa_task is None or old.qa_task.done())]
+        if not idle:raise db.CommandCapacityError('Обработчики заняты. История сохранена; повторите позже.')
+        SESSIONS.pop(min(idle,key=lambda old:old.idle_since).id,None)
+    SESSIONS[s.id]=s
+
+
 def create_session(query: str, llm: LLMClient, visitor_id: str | None = None, user_id: int | None = None) -> Session:
     s = Session(id=uuid.uuid4().hex[:12], query=query.strip(), llm=llm, visitor_id=visitor_id, user_id=user_id)
-    SESSIONS[s.id] = s
     db.required(repo.create_chat, s.id, guard.output(s.query), visitor_id, user_id)
     s.durable=True
     s.remember()
+    cache_session(s)
     return s
 
 
 def restore_session(chat_id: str, text: str, llm: LLMClient) -> Session:
     """Продолжить диалог, агент которого остановлен (перезапуск сервера, долгая пауза): та же лента и память."""
+    from ..telemetry import count
+    count('restored')
     row=db.required(repo.get_chat,chat_id)
     info=(row.profile,row.memory,row.visitor_id,row.user_id,row.last_seq) if row else None
     profile, memory, vid, uid, last_seq = info or (None, None, None, None, 0)
@@ -439,7 +478,7 @@ def restore_session(chat_id: str, text: str, llm: LLMClient) -> Session:
             s.profile.pop('_programs_cache',None)
         if text.strip():s.query=text.strip();s.started=False
         s._durable_snapshot=durable_state.snapshot(s)
-        SESSIONS[chat_id]=s
+        cache_session(s)
         return s
     s.profile = dict(profile or {})
     s.last_issue=s.profile.get('_last_issue')
@@ -478,7 +517,7 @@ def restore_session(chat_id: str, text: str, llm: LLMClient) -> Session:
         if tuple(cache['key'])==F.programs_key(s.profile):
             s.programs_key,s.programs_result=tuple(cache['key']),cache['result']
     s.prefs.sync(s.profile)
-    SESSIONS[chat_id] = s
+    cache_session(s)
     db.safe(repo.update_chat, chat_id, status="running")
     return s
 

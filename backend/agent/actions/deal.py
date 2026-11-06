@@ -1,7 +1,7 @@
 """Действия сделки: звонок продавцу (с рамками торга в коде), подтверждение цены, просмотр, план сделки и подписание."""
 from __future__ import annotations
 
-from datetime import date
+from datetime import date,datetime,timezone
 
 from ... import economics, sources
 from ...calculation_policy import POLICY, metadata
@@ -44,6 +44,8 @@ async def apply_corrections(s, listing: dict, corrections: dict, persist: bool) 
     Слова ИИ-продавца (симуляция) действуют только в этом диалоге."""
     said = []
     for key, value in corrections.items():
+        listing.setdefault('fact_sources',{})[key]={'source':'seller_call' if persist else 'seller_simulation',
+            'observed_at':datetime.now(timezone.utc).isoformat(timespec='seconds')}
         if key in CORRECTION_LABELS:
             label, unit = CORRECTION_LABELS[key]
             was = listing.get(key)
@@ -236,8 +238,8 @@ async def plan_viewing(s, listing_id: str) -> dict:
 
 
 @action("prepare_deal", 8,
-        "План сделки по датам (ипотека по подходящей программе или без неё, страхование, СБР или ДДУ с эскроу, "
-        "регистрация) и карточка подписания договора. После подписания — итог: экономия клиента и что получает Сбер. "
+        "Демонстрационный план покупки по датам, финансирование, затраты и экономия. "
+        "Покупатель подтверждает только демо-план; юридическое подписание и банковские операции не выполняются. "
         "Только для квартиры, которую клиент выбрал (plan_viewing).", **ID)
 async def prepare_deal(s, listing_id: str) -> dict:
     if not s.red_lines_ok:
@@ -258,7 +260,7 @@ async def prepare_deal(s, listing_id: str) -> dict:
     else:
         await s.say(f"Собрал план сделки: {plan['program'].lower()} {fmt(plan['loan'])}, платёж {fmt(plan['monthly'])} в месяц "
                     f"(на {fmt(plan['monthly_saved'])} меньше благодаря торгу).")
-    r = await s.ask("sign", "Подписание договора", f"Подписать {contract} электронной подписью?")
+    r = await s.ask("sign", "Демонстрационный план покупки", "Подтвердить демонстрационный план покупки? Юридическое подписание и банковские операции здесь не выполняются.")
     if not r["approved"]:
         return {"signed": False, "client_said": r["data"].get("text")}
     await s.finish_step(8)
@@ -279,6 +281,6 @@ async def prepare_deal(s, listing_id: str) -> dict:
     await s.step(9)
     s.push("result", step=9, kind="summary", data=summary)
     await s.finish_step(9)
-    s.push("done", status="completed")
-    return {"signed": True, "savings": savings, "agent_fee": summary["fee"], "client_keeps": summary["net"],
+    s.push("done", status="completed",demo=True,legal_signed=False)
+    return {"signed": True,'demo':True,'legal_signed':False, "savings": savings, "agent_fee": summary["fee"], "client_keeps": summary["net"],
             "monthly_payment": plan["monthly"] or None}

@@ -211,6 +211,8 @@ class ReadingAndRecovery(unittest.IsolatedAsyncioTestCase):
         contract=profile_patch.schema(input_frame.schema(CHANGE_SCHEMA,inputs))
         for bad in ([],{'fields':['pool'],'criteria':[],'places':[],'unsupported':[],'selection':[]}):
             with self.assertRaises(ValueError):profile_patch.decode(bad,contract,inputs)
+        for field in ({'key':None,'source':'Хочу бассейн'}, {'key':'center_required','value':'true','source':None}):
+            with self.assertRaises(ValueError):profile_patch.decode({'fields':[field]},contract,inputs)
         with self.assertRaises(ValueError):
             profile_patch.decode({'fields':[{'key':'city','value':[{'name':'Москва'}],'source':'бассейн'}],
                 'criteria':[],'places':[],'unsupported':[],'selection':[]},contract,inputs)

@@ -37,7 +37,7 @@ class FlexibleSearchTest(unittest.IsolatedAsyncioTestCase):
         await drive(s, until=lambda ev: ev['type'] == 'confirm' and ev['kind'] == 'selection')
         self.assertTrue(s.shown)
         self.assertTrue(s.red_lines_ok)  # отдельная карточка принята тестовым клиентом до поиска
-        self.assertIsNotNone(s.profile['payment'])
+        self.assertIsNone(s.profile['payment'])  # чтение объявлений не требует анкеты оплаты
         self.collect_mock.assert_awaited_once()
         messages = [e.get('text', '') for e in s.history if e['type'] == 'message']
         self.assertNotIn('Сейчас начну поиск подходящих квартир.', messages)
@@ -66,7 +66,7 @@ class FlexibleSearchTest(unittest.IsolatedAsyncioTestCase):
     async def test_finances_are_required_for_deal_preparation_but_not_for_search(self):
         s = self.agent()
         s.chosen, s.red_lines_ok = 'cian-1', True
-        self.assertFalse(actions.available(s, 'search_listings'))
+        self.assertTrue(actions.available(s, 'search_listings'))
         self.assertFalse(actions.available(s, 'prepare_deal'))
         s.profile['payment'] = 'cash'
         self.assertTrue(actions.available(s, 'search_listings'))

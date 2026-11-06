@@ -64,10 +64,17 @@ def commit_dialogue(db: Session, chat_id: str, expected_version: int, state: dic
         fields['last_seq'] = events[-1]['seq']
     for ev in events:
         if ev['type'] == 'done':fields['status'] = ev.get('status', 'completed')
+        if ev['type'] == 'purchase_reset':fields['status']='running'
     changed = db.execute(update(Chat).where(Chat.id == chat_id,
         func.coalesce(Chat.state_version, 0) == expected_version).values(**fields))
     if changed.rowcount != 1:raise StateConflict('Состояние диалога изменилось. Требуется загрузить актуальную версию.')
     for ev in events:db.add(ChatEvent(chat_id=chat_id, seq=ev['seq'], type=ev['type'], payload=ev))
+    ticket=(state.get('data',{}).get('pending_decisions') or {}).get('call') or {}
+    answer=ticket.get('answer') or {};details=answer.get('data') or {}
+    if ticket.get('status')=='answered' and answer.get('approved') and details.get('mode')=='phone':
+        from .models import PhoneGrant
+        grant=db.get(PhoneGrant,details.get('phone_grant_id'))
+        if grant and grant.chat_id==chat_id:grant.status='connected'
     if command:
         row = db.scalar(select(ChatCommand).where(ChatCommand.chat_id==chat_id, ChatCommand.command_id==command['id']))
         if row is not None:
@@ -78,10 +85,13 @@ def commit_dialogue(db: Session, chat_id: str, expected_version: int, state: dic
     return version
 
 
-def accept_command(db: Session, chat_id: str, command_id: str, kind: str, fingerprint: str, payload: dict) -> dict:
+def accept_command(db: Session, chat_id: str, command_id: str, kind: str, fingerprint: str, payload: dict, capacity: int = 64) -> dict:
     from ..db import StateConflict
     row = db.scalar(select(ChatCommand).where(ChatCommand.chat_id==chat_id, ChatCommand.command_id==command_id))
     if row is None:
+        from ..db import CommandCapacityError
+        pending=db.scalar(select(func.count()).select_from(ChatCommand).where(ChatCommand.chat_id==chat_id,ChatCommand.status=='accepted'))
+        if pending>=capacity:raise CommandCapacityError('Очередь диалога заполнена. Команда не принята; повторите позже.')
         row=ChatCommand(chat_id=chat_id, command_id=command_id, kind=kind, fingerprint=fingerprint,
                         payload=payload, status='accepted', progress={})
         db.add(row);db.flush()
@@ -101,6 +111,13 @@ def chat_events(db: Session, chat_id: str, after: int = 0) -> list[dict]:
     rows = db.scalars(select(ChatEvent).where(ChatEvent.chat_id == chat_id, ChatEvent.seq > after)
                       .order_by(ChatEvent.seq))
     return [r.payload for r in rows]
+
+
+def recent_messages(db: Session, chat_id: str, limit: int = 12) -> list[dict]:
+    rows=list(db.scalars(select(ChatEvent).where(ChatEvent.chat_id==chat_id,ChatEvent.type=='message')
+                        .order_by(ChatEvent.seq.desc()).limit(limit)))
+    return [{'role':row.payload['role'],'text':row.payload['text']} for row in reversed(rows)
+            if row.payload.get('role') in ('user','agent') and row.payload.get('text')]
 
 
 def last_nonempty_selection(db: Session, chat_id: str) -> dict | None:
@@ -203,8 +220,9 @@ def find_listings(db: Session, city: str, rooms: int, budget_max: int | None, ok
                   is_new: bool = False, seen_days: float = 7, exclude: set[str] | frozenset = frozenset(),
                   limit: int = 400) -> list[tuple[dict, datetime]]:
     """Объявления, которые агент видел на площадке за последние seen_days: [(объявление, когда видели)]."""
-    q = select(Listing).where(Listing.city == city, Listing.rooms == rooms, Listing.is_new == is_new,
+    q = select(Listing).where(Listing.city == city, Listing.is_new == is_new,
                               Listing.status == "active", Listing.last_seen_at >= utcnow() - timedelta(days=seen_days))
+    if rooms is not None:q=q.where(Listing.rooms==rooms)
     if budget_max:
         q = q.where(Listing.price <= budget_max)
     if okrug:
@@ -215,11 +233,12 @@ def find_listings(db: Session, city: str, rooms: int, budget_max: int | None, ok
 
 def listing_stats(db: Session, city: str, rooms: int) -> dict:
     """Сколько квартир по запросу в базе и у скольких уже проверено по карте, что рядом."""
-    total = db.scalar(select(func.count()).select_from(Listing)
-                      .where(Listing.city == city, Listing.rooms == rooms, Listing.status == "active")) or 0
+    scope=[Listing.city==city,Listing.status=='active']
+    if rooms is not None:scope.append(Listing.rooms==rooms)
+    total = db.scalar(select(func.count()).select_from(Listing).where(*scope)) or 0
     mapped = db.scalar(select(func.count(func.distinct(ListingFeature.listing_id))).select_from(ListingFeature)
                        .join(Listing, Listing.id == ListingFeature.listing_id)
-                       .where(Listing.city == city, Listing.rooms == rooms, ListingFeature.source == "map")) or 0
+                       .where(*scope,ListingFeature.source == "map")) or 0
     return {"total": total, "mapped": mapped}
 
 
