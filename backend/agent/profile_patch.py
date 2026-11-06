@@ -22,7 +22,8 @@ def schema(contract):
     key={'type':'string','enum':keys,
          'description':'Точный известный ключ либо unsupported для отсутствующего свойства. Не заменяй неизвестное ближайшим известным.'}
     result=obj({
-        'filters':{'type':'array','minItems':0,'maxItems':20,'items':{
+        'filters':{'type':'array','minItems':0,'maxItems':20,
+            'description':'Только явно добавленные/снятые ограничения квартиры. Для сортировки, количества и сравнения — []. Не добавлять проверки качества данных: price/area/price_per_m2 > 0, exists. Число карточек не порог свойства.', 'items':{
             **deepcopy(CHANGE_SCHEMA['properties']['filters']['items']),
             'properties':{**deepcopy(CHANGE_SCHEMA['properties']['filters']['items']['properties']),'source':deepcopy(source)},
             'required':[*CHANGE_SCHEMA['properties']['filters']['items']['required'],'source']}},
