@@ -87,10 +87,27 @@ class PartialRequests(unittest.IsolatedAsyncioTestCase):
         frame=profile_patch.decode(data,contract,inputs)
         self.assertEqual(frame['fields']['center_required']['value'],True)
         self.assertNotIn('filters',frame['fields'])
+        data['fields']=[]
+        data['criteria']=[{'key':'center_required','value':'true','priority':'required','source':text}]
+        frame=profile_patch.decode(data,contract,inputs)
+        self.assertNotIn('filters',frame['fields'])
         for radius in ('3','7'):
             data['filters']=[{**predicate,'values':[radius]}]
             frame=profile_patch.decode(data,contract,inputs)
             self.assertEqual(frame['fields']['filters']['value'][0]['values'],[radius])
+
+    def test_policy_poi_radius_is_deduplicated_for_all_named_places(self):
+        from backend.agent import input_frame,profile_patch
+        from backend.agent.request_schema import CHANGE_SCHEMA
+        text='Рядом нужен детский сад, школа и парк, до 30 млн.'
+        inputs=[{'text':text}];contract=profile_patch.schema(input_frame.schema(CHANGE_SCHEMA,inputs))
+        for kind in geo.POI:
+            data={key:[] for key in contract['properties']}
+            data['criteria']=[{'key':'poi:'+kind,'priority':'required','value':'true','source':text}]
+            data['filters']=[{'field':'nearby:'+kind,'op':'lte','values':[str(geo.RADIUS)],'priority':'required','source':text}]
+            frame=profile_patch.decode(data,contract,inputs)
+            self.assertNotIn('filters',frame['fields'])
+            self.assertEqual(frame['criteria']['poi:'+kind],'required')
 
     def test_reading_count_requires_separate_evidence_to_change_rooms(self):
         from backend.agent import input_frame,profile_patch

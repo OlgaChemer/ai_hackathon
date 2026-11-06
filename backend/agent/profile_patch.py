@@ -107,17 +107,33 @@ def decode(patch,contract,inputs,aliases=None,*,provenance=None,profile=None,rea
             patch[group]=[r for r in patch.get(group,[]) if r.get('key') not in ('rooms','rooms_options','studio_requested') or room_fact(r)]
         patch['filters']=[r for r in patch['filters'] if r.get('field')!='rooms' or room_fact(r)]
         patch['states']=[r for r in patch['states'] if r.get('key')!='rooms' or room_fact(r)]
+    from .conditions import ALIASES,compile_profile
+    from .listing_query import _typed
+    known=input_frame.basic_fields(CHANGE_SCHEMA)
+    named=[]
+    for row in [*patch.get('fields',[]),*patch.get('criteria',[])]:
+        key=row.get('key','')
+        if key not in ALIASES and not key.startswith(('poi:','feature:')):continue
+        if row.get('action')=='remove' or row.get('priority')=='remove':continue
+        raw=row.get('value')
+        if raw in (None,'','null'):continue
+        spec=known.get(key) or input_frame.criterion_value(key,CHANGE_SCHEMA)
+        actual=value(raw if isinstance(raw,str) else json.dumps(raw),spec)
+        if actual in (None,False,[]):continue
+        p={'soft_criteria':[key] if row.get('priority')=='preferred' else []}
+        if key.startswith(('poi:','feature:')):
+            p['poi' if key.startswith('poi:') else 'features']=[key.split(':',1)[1]]
+        else:p[key]=actual
+        named.extend((row.get('source'),c) for c in compile_profile(p))
     # Нативный контракт передаёт сравнения объектами, без JSON внутри строки.
     # Декодер старых сохранённых результатов по-прежнему поддерживается.
     for item in patch['filters']:
         quote=item.get('source','')
-        if (item.get('field')=='center_km' and item.get('op')=='lte'
-                and item.get('priority')=='required' and item.get('values')==['5']
-                and any(row.get('key')=='center_required' and row.get('value') in ('true',True)
-                        and row.get('source')==quote for row in patch.get('fields',[]))):
-            # Эквивалент уже извлечённого именованного условия. Пять километров
-            # здесь — продуктовая политика центра, а не новое число клиента.
-            # Другой радиус остаётся самостоятельным проверяемым ограничением.
+        if any(source==quote and all(item.get(k)==c[k] for k in ('field','op','priority'))
+               and [_typed(v,item['field']) for v in item['values']]==c['values'] for source,c in named):
+            # Тот же смысл уже пришёл именованным условием. Радиусы центра и
+            # инфраструктуры берутся из общей политики, а не из новой цитаты.
+            # Отличающийся порог остаётся самостоятельным ограничением.
             continue
         if item.get('field')=='price' and item.get('op')=='lte' and item.get('priority')=='required' and len(item['values'])==1:
             amount=float(item['values'][0])
