@@ -32,6 +32,9 @@ def next_search_action(s):
         s.profile
     ):
         return None
+    from . import guidance
+    step=guidance.next_step(s)
+    if step:return 'market_prices' if step[0]=='help' else 'ask_client'
     # Для уже полностью сформулированной покупки сохраняем начальную карточку
     # лимита. Исследования и широкий поиск не требуют заполнить этот профиль.
     if not missing_required(s.profile) and available(s,'confirm_red_lines'):return 'confirm_red_lines'
@@ -52,4 +55,7 @@ def planned_call(s,name):
     from ..llm import ToolCall
     args={}
     if name=='call_seller':args['listing_id']=pending_calls(s)[0]
+    elif name=='ask_client':
+        from . import guidance
+        args=guidance.question(s) or {}
     return ToolCall(name,args,f'progress_{uuid.uuid4().hex[:8]}')

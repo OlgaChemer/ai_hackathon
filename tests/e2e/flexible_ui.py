@@ -137,11 +137,15 @@ async def partial(browser,base,width):
     await page.goto(base)
     await page.fill('#welcomeQuery','Москва')
     await page.locator('#welcomeQuery').press('Enter')
+    await page.get_by_text('На какую сумму покупки ориентируемся?',exact=False).wait_for()
+    assert await page.locator('.offer').count()==0
+    await page.get_by_role('button',name='Пока не знаю',exact=True).click()
+    await page.get_by_text('С учётом этих ориентиров',exact=False).wait_for()
+    assert 'медиана' in await page.locator('#chatLog').inner_text()
+    await page.get_by_role('button',name='Без ограничений',exact=True).last.click()
+    await page.get_by_text('Сколько комнат вам хотелось бы?',exact=False).wait_for()
+    await page.get_by_role('button',name='Любые',exact=True).last.click()
     await page.wait_for_function("document.querySelectorAll('.offer').length===10")
-    await page.wait_for_function("!document.querySelector('[data-selection=more]').disabled")
-    text=await page.locator('#chatLog').inner_text()
-    assert 'не заданы · поиск без ограничения' in text,text
-    assert 'не задан · поиск без ограничения' in text,text
     assert await page.get_by_role('button',name='Подтвердить рамки',exact=True).count()==0
     assert not errors,errors
     await context.close()
@@ -154,7 +158,7 @@ async def main(base):
             await scenario(browser,base,width)
             print(f'PASS {width}px: more/likes, decision order, stale ID, HTTP/SSE race, seller questions')
             await partial(browser,base,width)
-            print(f'PASS {width}px: city-only search, no invented rooms/budget or payment gate')
+            print(f'PASS {width}px: budget/rooms consultation, real price guidance, explicit broad search')
         await browser.close()
 
 

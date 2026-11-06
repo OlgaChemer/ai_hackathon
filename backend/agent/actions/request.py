@@ -157,10 +157,13 @@ def apply_request(s, changes, *, condition_sources=None):
         "Исследовать реальные объявления по проверенному запросу: цены, доступные комнаты/площадь и другие агрегаты. "
         "Достаточно города. Проверенный исследовательский запрос определяет группировку и применение бюджета; неназванные условия не требуются.")
 async def market_prices(s) -> dict:
+    from .. import guidance
+    if not s.requested_action and guidance.help_field(s):s.research_query=guidance.research_query(s)
     if not s.profile.get("city"):
         raise ActionError("Для исследования объявлений нужен город; комнаты и бюджет необязательны.")
     if (s.research_query or {}).get('respect_budget') and s.profile.get('budget_max') is None:
         raise ActionError('Чтобы посчитать доступные варианты в пределах бюджета, нужна сумма. Рыночные цены можно исследовать без неё.')
+    helping=guidance.help_field(s) is not None
     from ...sources.market_estimate import current
     from ..research import profile as research_profile
     if not current(s.market,research_profile(s)):
@@ -170,14 +173,16 @@ async def market_prices(s) -> dict:
                 text=f'Проверяю ценовые ориентиры: получено {count} объявлений'))
         finally:s.signal('search_progress',on=False)
     if not s.market or s.market.get('error_kind'):
+        guidance.record_market(s,success=False)
         details=s.market or {};count=details.get('count',0)
         message=(f"Для надёжного ценового ориентира нашлось только {count} объявлений с подтверждёнными условиями; нужно хотя бы 6. "
                  if details.get('received') else "Циан сейчас не вернул объявления для ценового ориентира. ")
         message+='Ваши условия сохранены. Можно попробовать позже, обсудить изменение условий или рассчитать бюджет по доходам.'
         s.market=None
         s.last_issue={'kind':details.get('error_kind','market_source_unavailable'),'message':message}
-        await s.say(message,await_reply=True)
+        await s.say(message,await_reply=not helping)
         return {'error_kind':s.last_issue['kind'],'error':message,'coverage':details}
+    guidance.record_market(s)
     emit_profile(s)
     m = s.market
     centre=' До 5 км по прямой от опорной точки центра.' if (m.get('scope') or {}).get('center_radius_km') else ''

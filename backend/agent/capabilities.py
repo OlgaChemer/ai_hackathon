@@ -29,7 +29,7 @@ POLICIES={
     'mortgage_programs':Policy(('programs_needed','budget_known','payment','family_or_cash'),information=True),
     'savings_plan':Policy(('budget_known','saving_payment'),information=True),
     'affordable_budget':Policy(('affordability_requested',),information=True),
-    'search_listings':Policy(('search_ready',),('selection',)),
+    'search_listings':Policy(('search_ready','guided_search'),('selection',)),
     'show_selection':Policy(('selection_source',)),
     'offer_search_alternatives':Policy(('search',)),
     'probe_budget':Policy(('search','budget_known'),units=(('budget_max','RUB'),)),
@@ -41,6 +41,7 @@ POLICIES={
 
 REASONS={
     'search_scope':'Для поиска нужен город.', 'budget_known':'Для этого действия нужен конкретный лимит покупки.',
+    'guided_search':'Сначала обсудите бюджет и комнатность. Ответ «не знаю» требует помощи с ориентирами, а не обязательного числа.',
     'research_budget':'Чтобы определить, на что хватит средств, нужна сумма. Можно отдельно изучить цены без ограничения бюджета.',
     'new_input':'Нет новых условий для применения.', 'can_clarify':'Исходных данных достаточно; переходите к подбору.',
     'city_rooms':'Нужны город и число комнат.', 'profile_ready':'Нужны город, комнаты и бюджет.',
@@ -72,11 +73,18 @@ def decision(s,name):
             and name not in ('update_request','call_seller','confirm_red_lines','ask_client','ask_payment')):
         return False,'Сначала выполните явную просьбу о звонке по выбранному объекту.'
     p=s.profile;ready=not missing_required(p)
+    from . import guidance
+    if (not s.requested_action and s.request_intent in (None,'search','refine','selection','continue')
+            and guidance.next_step(s) and name in ('ask_payment','ask_family','ask_housing','confirm_red_lines')):
+        return False,'Сначала помогите определиться с бюджетом и комнатностью; дополнительные вопросы задавайте по ситуации.'
+    if (not s.requested_action and s.request_intent in (None,'search','refine','selection','continue')
+            and guidance.next_step(s) and guidance.next_step(s)[0]!='help' and name=='market_prices'):
+        return False,'Сначала задайте короткий вопрос о потребностях; исследуйте цены по просьбе клиента или для помощи с ответом «не знаю».'
     finance_ready=p.get('payment')=='cash' or (s.mortgage is not None and (p.get('payment')!='mortgage_saving' or s.finance is not None))
     work=s.request_intent in (None,'search','refine','selection','call','seller_questions','continue')
     tests={
         'new_input':not s.request_inputs or any(x['seq']>s.request_review_seq for x in s.request_inputs),
-        'can_clarify':(not ready or s.search is not None) and (s.request_intent!='question' or bool(s.requested_action)),
+        'can_clarify':(not ready or s.search is not None or guidance.next_step(s) is not None) and (s.request_intent!='question' or bool(s.requested_action)),
         'city_rooms':bool(p.get('city') and p.get('rooms') is not None),
         'profile_ready':ready,'limit_needed':not s.red_lines_ok or s.requested_action=='confirm_red_lines',
         'payment_needed':not p.get('payment') or s.requested_action=='ask_payment',
@@ -86,8 +94,9 @@ def decision(s,name):
         'family_or_cash':p.get('payment')=='cash' or p.get('children') is not None,
         'saving_payment':p.get('payment')=='mortgage_saving',
         'search_scope':not missing_search(p),'budget_known':p.get('budget_max') is not None,
-        'research_budget':not (s.research_query or {}).get('respect_budget') or p.get('budget_max') is not None,
+        'research_budget':not (s.research_query or {}).get('respect_budget') or p.get('budget_max') is not None or (not s.requested_action and guidance.help_field(s)=='budget_max'),
         'search_ready':not missing_search(p) and work,
+        'guided_search':guidance.search_ready(s),
         'selection_source':(bool(s.shown) if s.selection_query.get('scope')=='shown' else s.search is not None)
             if s.selection_operation in ('compare','analyze') else s.search is not None,
         'search':s.search is not None,'shown':bool(s.shown),'call_consent':bool(s.call_targets),
@@ -116,6 +125,11 @@ def catalog(s=None):
 
 def argument_denial(s,name,arguments):
     """Ограничения конкретного объекта — та же политика при исполнении."""
+    if name=='ask_client' and not s.requested_action and s.request_intent in ('search','refine','selection','continue'):
+        from . import guidance
+        question=guidance.question(s)
+        if question and arguments.get('field')!=question['field']:
+            return 'Сначала помогите определить '+question['field']+': '+question['question']
     policy=POLICIES.get(name)
     if policy is None:return 'Для инструмента не определена политика.'
     if dict(policy.units).get('listing_id')!='listing_id':return None
