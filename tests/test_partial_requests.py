@@ -64,6 +64,15 @@ class PartialRequests(unittest.IsolatedAsyncioTestCase):
         s.profile['payment']='mortgage_saving'
         self.assertTrue(capabilities.decision(s,'savings_plan')[0])
 
+    def test_state_grounding_distinguishes_uncertainty_from_unrestricted_per_clause(self):
+        from backend.agent.clarification import ground_state
+        for key in ('budget_max','rooms','districts','housing'):
+            self.assertEqual(ground_state(key,'unrestricted','Пока не знаю, ещё не решил'),'unknown')
+            self.assertEqual(ground_state(key,'unknown','Неважно, убери ограничение'),'unrestricted')
+        text='Бюджет неважен, комнатность пока не знаю.'
+        self.assertEqual(ground_state('budget_max','unknown',text),'unrestricted')
+        self.assertEqual(ground_state('rooms','unrestricted',text),'unknown')
+
     async def test_partial_search_executes_without_payment_or_agreements(self):
         s=self.agent({'city':'Москва','filters':[{'field':'floor','op':'gt','values':['10'],'priority':'required'}],'poi':['park']})
         rows=[listing(id=f'p{i}',city='Москва',floor=11+i,rooms=1+i%3,nearby={'park':{'name':'Парк','dist':400}}) for i in range(15)]

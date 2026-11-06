@@ -185,8 +185,10 @@ def decode(patch,contract,inputs,aliases=None,*,provenance=None):
         for state in patch['states']:
             if not state['source'] or not any(state['source'].casefold() in text for text in texts):
                 raise ValueError('Статус поля требует буквальной цитаты нового ввода')
-            if state['key'] in modes and modes[state['key']]!=state['state']:raise ValueError('Противоречащие статусы поля')
-            modes[state['key']]=state['state']
+            from .clarification import ground_state
+            mode=ground_state(state['key'],state['state'],state['source'])
+            if state['key'] in modes and modes[state['key']]!=mode:raise ValueError('Противоречащие статусы поля')
+            modes[state['key']]=mode
         frame['fields']['field_states']={'value':modes,'source':patch['states'][0]['source']}
     known=input_frame.basic_fields(CHANGE_SCHEMA)
     for rows in (patch['fields'],patch['criteria']):

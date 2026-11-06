@@ -4,13 +4,26 @@ from .conditions import ALIASES
 from .listing_query import FIELDS
 
 LABELS={**{key:value[1].split(',')[0] for key,value in FIELDS.items()},
-        'budget_max':'бюджет','rooms':'комнат','city':'город'}
+        'budget_max':'бюджет','rooms':'комнат','city':'город','districts':'район','housing':'рынок'}
 ANY={'любой','любая','любое','любые','неважно','не важно','без ограничений'}
 UNKNOWN={'не знаю','пока не знаю','не определился','не определилась'}
 
 
 def _words(text):
     return {w[:5] for w in re.findall(r'[а-яё]+',text.casefold().replace('ё','е')) if len(w)>2}
+
+
+def ground_state(key,state,quote):
+    """Закрытые статусы: отсутствие решения не означает разрешение всех значений."""
+    text=quote.casefold().replace('ё','е')
+    label=LABELS.get(key,'')
+    clauses=[part for part in re.split(r'[,;.!?]',text) if label and label in part]
+    if len(clauses)==1:text=clauses[0]
+    unknown=bool(re.search(r'не\s+(?:зна\w*|определ\w*|решил\w*)',text))
+    unrestricted=bool(re.search(r'люб(?:ой|ая|ое|ые|ую)|не\s*важ\w*|(?:сними|убери|отмени)|без\s+(?:ограничен\w*|разницы)|не\s+принципиаль\w*',text))
+    if unknown and not unrestricted:return 'unknown'
+    if unrestricted and not unknown:return 'unrestricted'
+    return state
 
 
 def choice(s,inputs):
