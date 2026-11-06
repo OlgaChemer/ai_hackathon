@@ -56,6 +56,10 @@ class PartialRequests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('room',url);self.assertNotIn('maxprice',url)
         self.assertIn('room2=1',sources.cian.build_url('Москва',2,None))
         self.assertEqual([q['rooms'] for q in sources.queries(merge_profile({'city':'Москва','rooms_options':[1,2]}))],[1,2])
+        named=merge_profile({'city':'Москва','center_required':True,'prefer_center':True})
+        generic=merge_profile({'city':'Москва','prefer_center':True,'filters':[
+            {'field':'center_km','op':'lte','values':['5'],'priority':'required'}]})
+        self.assertEqual(market_estimate.key(named),market_estimate.key(generic))
 
     def test_financial_reading_needs_money_inputs_not_location_or_rooms(self):
         s=self.agent({'budget_max':20_000_000,'payment':'cash'})
@@ -176,6 +180,11 @@ class PartialRequests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(frame['fields']['field_states']['value'],{'budget_max':'unrestricted'})
         self.assertEqual(frame['fields']['filters']['value'][0]['op'],'gt')
         self.assertEqual(frame['criteria']['poi:park'],'required')
+        markets=deepcopy(data)
+        markets['filters']=[{'field':'is_new','op':'in','values':['true','false'],'priority':'required','source':text}]
+        parsed=profile_patch.decode(markets,contract,inputs)
+        self.assertEqual(parsed['fields']['housing']['value'],'both')
+        self.assertNotIn('filters',parsed['fields'])
         generation=profile_patch.generation_schema(contract,inputs)
         self.assertNotIn('filters',generation['properties']['fields']['items']['properties']['key']['enum'])
         uncertain=deepcopy(data)

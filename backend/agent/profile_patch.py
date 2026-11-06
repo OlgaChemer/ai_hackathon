@@ -97,6 +97,12 @@ def decode(patch,contract,inputs,aliases=None,*,provenance=None):
     # Декодер старых сохранённых результатов по-прежнему поддерживается.
     for item in patch['filters']:
         quote=item.get('source','')
+        if item.get('field')=='is_new' and item.get('op') in ('eq','in') and item.get('priority')=='required':
+            values=set(item['values'])
+            if values and values<={'true','false'}:
+                housing='both' if len(values)==2 else 'new' if 'true' in values else 'secondary'
+                patch.setdefault('fields',[]).append({'key':'housing','value':housing,'source':quote})
+                continue
         if item.get('field')=='rooms' and item.get('op') in ('eq','in') and item.get('priority')=='required':
             numbers=[float(v) for v in item['values']]
             if numbers and all(n.is_integer() and 0<=n<=5 for n in numbers):

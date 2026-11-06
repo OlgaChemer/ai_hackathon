@@ -31,7 +31,14 @@ def scope(profile):
 
 
 def key(profile):
-    return hashlib.sha256(json.dumps(scope(profile),sort_keys=True,ensure_ascii=False).encode()).hexdigest()[:20]
+    definition=scope(profile)
+    definition['conditions']=sorted([{k:v for k,v in c.items() if k!='label'} for c in definition['conditions']],key=lambda c:c['field'])
+    def canonical(value):
+        if isinstance(value,dict):return {k:canonical(v) for k,v in value.items()}
+        if isinstance(value,list):return [canonical(v) for v in value]
+        if type(value) is float and value.is_integer():return int(value)
+        return value
+    return hashlib.sha256(json.dumps(canonical(definition),sort_keys=True,ensure_ascii=False).encode()).hexdigest()[:20]
 
 
 def current(value,profile):
