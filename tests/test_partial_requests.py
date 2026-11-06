@@ -182,6 +182,18 @@ class PartialRequests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(r['changes']['housing'],'both');self.assertEqual(r['changes']['payment'],'cash')
             self.assertNotIn('rooms_options',r['changes'])
 
+    async def test_information_ack_has_no_new_property_facts(self):
+        class Model(ScriptedLLM):
+            async def chat(model,messages,**kw):
+                self.assertNotEqual(kw.get('tag'),'profile_extract')
+                return LLMResponse('',[ToolCall('request_information',{'action':'market_prices','update_conditions':False,
+                    'research':{'respect_budget':False,'group_by':None,'aggregates':[]}})])
+        for text in ('Да','Давай','Покажи'):
+            s=self.agent({'city':'Москва'});s.llm=Model()
+            e=s.push('message',role='user',text=text);s.accept_request(text,e['seq'])
+            r=await understanding.prepare(s)
+            self.assertEqual(r['requested_action'],'market_prices');self.assertEqual(r['changes'],{})
+
     def test_research_query_reuses_numeric_executor_and_rejects_invalid_metrics(self):
         rows=[listing(id='a',area=40),listing(id='b',area=80)]
         result=research.execute(rows,{'respect_budget':True,'group_by':None,'aggregates':[{'field':'area','function':'max'}]})
