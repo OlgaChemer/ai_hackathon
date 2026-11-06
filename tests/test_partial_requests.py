@@ -106,7 +106,8 @@ class PartialRequests(unittest.IsolatedAsyncioTestCase):
                         'places':[],'unsupported':[],'selection':[],'requested_card':[]}))
                 return await super().chat(messages,**kw)
         s=self.agent({'city':'Москва','not_first_floor':True,'not_last_floor':True,'budget_max':20_000_000})
-        s.llm=Model();s.pending_decisions={'clarify':{'kind':'clarify','text':'Какой этаж для вас предпочтительнее?','payload':{'chips':['Любой']},'status':'waiting'}}
+        s.llm=Model();s.active_operation={'name':'ask_client','status':'waiting'}
+        s.pending_decisions={'clarify':{'kind':'clarify','text':'Какой этаж для вас предпочтительнее?','payload':{'chips':['Любой']},'status':'waiting'}}
         e=s.push('message',role='user',text='Любой');s.accept_request('Любой',e['seq'])
         r=await understanding.prepare(s)
         self.assertEqual(r['decision'],'apply');apply_request(s,r['changes'])

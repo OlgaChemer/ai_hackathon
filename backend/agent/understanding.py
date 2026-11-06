@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 
-from ..llm import LLMError,Tool,parse_json_loose
+from ..llm import LLMError,Tool,ToolCall,LLMResponse,parse_json_loose
 from ..llm.base import StructuredOutputError
 from ..runtime import Turn, record
 from ..config import settings
@@ -283,6 +283,12 @@ async def _prepare(s):
                          'selection':[{'id':x['id'],'number':i+1,'address':x.get('address')} for i,x in enumerate(s.shown)],
                          'liked':s.prefs.liked,'last_issue':s.last_issue}}
     revision=s.client_revision
+    # Буквальный выбор из открытой уточняющей карточки уже имеет адресата.
+    # Не просим роутер заново угадывать, является ли «Любой» продолжением.
+    waiting=s.pending_decisions.get('clarify') or {}
+    card_answer=((s.active_operation or {}).get('name')=='ask_client' and waiting.get('status')=='waiting'
+                 and inputs[-1]['text'].strip().casefold() in
+                 {str(option).strip().casefold() for option in waiting.get('payload',{}).get('chips') or []})
     error=None
     for attempt in range(2):
         instruction=ROUTER_SYSTEM+'\n'+guard.POLICY
@@ -291,8 +297,8 @@ async def _prepare(s):
         try:
             requested_action=None
             condition_sources={}
-            response=await s.llm.chat(messages,tools=tools,
-                                      tag='request_review',temperature=.01,max_tokens=2500)
+            response=(LLMResponse('',[ToolCall('profile_change',{})]) if card_answer else
+                      await s.llm.chat(messages,tools=tools,tag='request_review',temperature=.01,max_tokens=2500))
             if response.tool_calls:
                 if len(response.tool_calls)!=1:raise ValueError('Ожидался один смысловой результат')
                 result=frame_from_call(response.tool_calls[0],tools,inputs)

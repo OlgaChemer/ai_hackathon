@@ -31,6 +31,7 @@ async def semantic():
         if kind in ('area','remove','answer'):
             s.profile=merge_profile({'city':'Москва','rooms':2 if kind=='remove' else None,'budget_max':20_000_000,'not_first_floor':kind=='answer','not_last_floor':kind=='answer'})
         if kind=='answer':
+            s.active_operation={'name':'ask_client','status':'waiting'}
             s.pending_decisions={'clarify':{'kind':'clarify','text':'Какой этаж для вас предпочтительнее?',
                 'payload':{'chips':['Любой','Не первый','Не последний']},'status':'waiting'}}
         e=s.push('message',role='user',text=text);s.accept_request(text,e['seq'])
