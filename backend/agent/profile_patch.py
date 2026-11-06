@@ -98,6 +98,9 @@ def decode(patch,contract,inputs,aliases=None,*,provenance=None,profile=None,rea
         rows=patch.get(group,[])
         if not isinstance(rows,list) or any(not isinstance(row,dict) for row in rows):
             raise ValueError(group+' должен быть списком объектов')
+        key='field' if group=='filters' else 'key'
+        if any(not isinstance(row.get(key,''),str) or not isinstance(row.get('source',''),str) for row in rows):
+            raise ValueError(group+': имя свойства и цитата должны быть строками')
     if reading is not None:
         from .clarification import names_property
         def room_fact(row):
