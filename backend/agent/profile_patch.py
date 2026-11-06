@@ -56,6 +56,17 @@ def value(text,spec):
     return parsed
 
 
+def generation_schema(contract,inputs):
+    """Нативный вывод выбирает цитату из нового ввода, а не склоняет её заново."""
+    result=deepcopy(contract)
+    quotes=list(dict.fromkeys([*input_frame.source_words(inputs),*(row['text'] for row in inputs)]))
+    for group in ('fields','criteria','unsupported'):
+        spec=result['properties'][group]['items']['properties']['source']
+        spec['enum']=quotes
+        spec['maxLength']=max([1000,*map(len,quotes)])
+    return result
+
+
 def unverifiable_distance(f):
     if not isinstance(f,dict) or not isinstance(f.get('field'),str):return False
     if not f['field'].startswith('nearby:') or f.get('priority')=='remove':return False

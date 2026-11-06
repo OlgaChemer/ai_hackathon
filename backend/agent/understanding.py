@@ -327,9 +327,10 @@ async def _prepare(s):
                         contract_for_changes['required'].remove('selection')
                     prompt=PROFILE_SYSTEM+'\n'+guard.POLICY
                     if error:prompt+='\nОшибка прежнего разбора: '+error
-                    data['output_schema']=contract_for_changes
+                    strict_schema=profile_patch.generation_schema(contract_for_changes,inputs)
+                    data['output_schema']=strict_schema
                     parsed=await s.llm.chat([{'role':'system','content':prompt},guard.data_message('profile_changes',data)],
-                        json_mode=True,tag='profile_extract',temperature=.01,max_tokens=3000)
+                        json_mode=True,json_schema=strict_schema,tag='profile_extract',temperature=.01,max_tokens=3000)
                     changes=parse_json_loose(parsed.text)
                     changes=profile_patch.decode(changes,contract_for_changes,inputs,s.profile.get('_unsupported_keys'),provenance=condition_sources)
                     requested_action=changes.pop('_requested_action',None)
