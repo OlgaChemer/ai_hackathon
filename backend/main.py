@@ -321,7 +321,7 @@ def _llm():
 
 def _owns(s: O.Session, request: Request) -> bool:
     vid, uid = auth.whoami(request)
-    return bool((vid and s.visitor_id == vid) or (uid is not None and s.user_id == uid))
+    return repo.owns(s.visitor_id, s.user_id, vid, uid)
 
 
 def _session(sid: str, request: Request) -> O.Session:

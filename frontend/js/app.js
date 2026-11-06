@@ -585,7 +585,13 @@ initShell({ start });
 window.addEventListener("hashchange", route);
 window.addEventListener("popstate", route);
 initChats({ open: openChat, create: newChat, current: () => state.sid });
-initAccount({ onChange: () => refreshChats() });
+initAccount({
+  onChange: (why) => {
+    // после выхода подбор аккаунта в этом браузере недоступен — не оставляем его на экране
+    if (why === "logout" && state.sid) newChat();
+    refreshChats();
+  },
+});
 if (fromHash()) openChat(fromHash());
 else {
   addMsg("agent", "Здравствуйте! Я агент покупки квартиры. Расскажите текстом или голосом, что ищете: город, бюджет, комнаты и что для вас важно.");

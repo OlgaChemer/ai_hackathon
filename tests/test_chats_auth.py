@@ -163,6 +163,48 @@ class ChatsAndAuthTest(unittest.TestCase):
             evs = read_until(laptop, f"/api/chat/{sid}/stream", lambda e: e["type"] == "replay_end")
             self.assertTrue(any(e["type"] == "confirm" for e in evs))
 
+    def test_logout_hides_account_chats_in_this_browser(self):
+        """Подбор, перешедший в аккаунт, после выхода браузер больше не видит — только вошедший владелец."""
+        with self.client() as c:
+            sid, _ = self.start_chat(c)
+            r = c.post("/api/auth/register", json={"email": "anna@ya.ru", "password": "секрет123"}).json()
+            self.assertEqual(r["moved_chats"], 1)
+            c.post("/api/auth/logout")
+            self.assertEqual(c.get("/api/chats").json()["chats"], [])
+            self.assertEqual(c.get(f"/api/chat/{sid}/stream").status_code, 404)
+            self.assertEqual(c.post(f"/api/chat/{sid}/message", json={"text": "ещё"}).status_code, 404)
+            # новый анонимный подбор в том же браузере виден, а при входе переходит в аккаунт
+            sid2, _ = self.start_chat(c)
+            self.assertEqual([x["id"] for x in c.get("/api/chats").json()["chats"]], [sid2])
+            r = c.post("/api/auth/login", json={"email": "anna@ya.ru", "password": "секрет123"}).json()
+            self.assertEqual(r["moved_chats"], 1)
+            self.assertEqual({x["id"] for x in c.get("/api/chats").json()["chats"]}, {sid, sid2})
+
+    def test_other_account_on_same_browser_sees_only_its_chats(self):
+        """Общий компьютер: второй человек входит в свой аккаунт в том же браузере — чужие подборы не видны и не переходят."""
+        with self.client() as c:
+            sid_a, _ = self.start_chat(c)
+            c.post("/api/auth/register", json={"email": "a@ya.ru", "password": "секрет123"})
+            c.post("/api/auth/logout")
+            r = c.post("/api/auth/register", json={"email": "b@ya.ru", "password": "секрет123"}).json()
+            self.assertEqual(r["moved_chats"], 0)
+            self.assertEqual(c.get("/api/chats").json()["chats"], [])
+            self.assertEqual(c.get(f"/api/chat/{sid_a}/stream").status_code, 404)
+            c.post("/api/auth/logout")
+            c.post("/api/auth/login", json={"email": "a@ya.ru", "password": "секрет123"})
+            self.assertEqual([x["id"] for x in c.get("/api/chats").json()["chats"]], [sid_a])
+
+    def test_live_dialogue_moves_on_login_and_continues(self):
+        """Подбор идёт прямо сейчас: после входа он в аккаунте, с другого устройства открывается и продолжается."""
+        with self.client() as phone, self.client() as laptop:
+            sid, _ = self.start_chat(phone)
+            self.assertIsNone(O.SESSIONS[sid].user_id)
+            phone.post("/api/auth/register", json={"email": "live@ya.ru", "password": "секрет123"})
+            self.assertIsNotNone(O.SESSIONS[sid].user_id)
+            laptop.post("/api/auth/login", json={"email": "live@ya.ru", "password": "секрет123"})
+            evs = read_until(laptop, f"/api/chat/{sid}/stream", lambda e: e["type"] == "replay_end")
+            self.assertTrue(any(e["type"] == "confirm" for e in evs))
+
     def test_idle_sessions_are_released(self):
         s = O.create_session(QUERY, ScriptedLLM())
         self.assertEqual(O.reap_idle(now=s.idle_since + O.IDLE_DONE_S + 1), [s.id])  # не запускался и никто не смотрит
