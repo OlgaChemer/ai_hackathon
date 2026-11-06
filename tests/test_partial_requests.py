@@ -194,6 +194,16 @@ class PartialRequests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(r['unsupported'][0]['action'],'add')
         self.assertEqual(s.llm.chat.await_count,1)
 
+    async def test_repeated_known_facts_do_not_change_a_questions_role(self):
+        s=self.agent({'city':'Москва','rooms':2,'budget_max':20_000_000,'housing':'secondary'})
+        text='Что означает цена по аналогам?'
+        data={key:[] for key in ('fields','criteria','states','filters','places','unsupported','selection','requested_card','withdraw_unsupported')}
+        data['fields']=[{'key':'housing','value':'secondary','source':text}]
+        s.llm.chat=AsyncMock(side_effect=[LLMResponse('',[ToolCall('informational_question',{})]),LLMResponse(json.dumps(data))])
+        e=s.push('message',role='user',text=text);s.accept_request(text,e['seq'])
+        r=await understanding.prepare(s)
+        self.assertEqual(r['intent'],'question');self.assertEqual(r['changes'],{})
+
     async def test_read_only_operations_do_not_reinterpret_their_metric_as_a_condition(self):
         for operation in ('compare','analyze','more'):
             s=self.agent({'city':'Москва','rooms':2,'budget_max':20_000_000})

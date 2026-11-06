@@ -309,11 +309,13 @@ async def _prepare(s):
         try:
             requested_action=None
             condition_sources={}
+            original_intent=None
             response=(LLMResponse('',[ToolCall('profile_change',{})]) if card_answer else
                       await s.llm.chat(messages,tools=tools,tag='request_review',temperature=.01,max_tokens=2500))
             if response.tool_calls:
                 if len(response.tool_calls)!=1:raise ValueError('Ожидался один смысловой результат')
                 result=frame_from_call(response.tool_calls[0],tools,inputs)
+                original_intent=result['intent']
                 result.pop('needs_extraction',None)
                 rank=(result.get('selection') or {}).get('operation')=='rank'
                 # Маршрутизатор может выбрать отбор и пропустить новые условия
@@ -378,6 +380,11 @@ async def _prepare(s):
             requested_action=information_action or requested_action
             result=input_frame.complete_frame(result,CHANGE_SCHEMA)
             result = input_frame.decode(result, payload['profile'], payload, CHANGE_SCHEMA)
+            if (original_intent is not None and not result['changes'] and not result.get('unsupported')
+                    and result['decision']!='clarify'):
+                # Повтор уже известного факта не превращает информационный
+                # вопрос в изменение профиля и ответ на ожидающую карточку.
+                result['intent']=original_intent
             if requested_action:result['requested_action']=requested_action
             if research_request is not None:result['research']=research_request
             if condition_sources:result['condition_sources']=condition_sources
