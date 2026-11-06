@@ -68,6 +68,19 @@ class PartialRequests(unittest.IsolatedAsyncioTestCase):
         s.profile['payment']='mortgage_saving'
         self.assertTrue(capabilities.decision(s,'savings_plan')[0])
 
+    def test_explicit_call_executes_verified_target_and_does_not_repeat_completed_call(self):
+        s=self.agent({'city':'Москва','budget_max':20_000_000,'payment':'cash'})
+        x=listing(id='verified-target',city='Москва')
+        s.search={'listings':[x],'pool':[x]};s.shown=[x];s.call_targets=[x['id']]
+        s.red_lines_ok=True;s.request_intent='call'
+        self.assertEqual(workflow.next_search_action(s),'call_seller')
+        self.assertEqual(workflow.planned_call(s,'call_seller').arguments,{'listing_id':x['id']})
+        s.calls[x['id']]={'price':x['price']}
+        self.assertIsNone(workflow.next_search_action(s))
+        s.calls.clear();s.operations={'attempt':{'name':'call_seller','arguments':{'listing_id':x['id']},
+            'request_seq':s.request_review_seq,'status':'completed','result':{'called':False}}}
+        self.assertIsNone(workflow.next_search_action(s))
+
     def test_state_grounding_distinguishes_uncertainty_from_unrestricted_per_clause(self):
         from backend.agent.clarification import ground_state
         for key in ('budget_max','rooms','districts','housing'):

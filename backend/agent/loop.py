@@ -21,7 +21,7 @@ from . import actions, guard, prompts, understanding
 from .features import FEATURES
 from .numbers import fmt
 from .profile import missing_required
-from .workflow import next_search_action,available
+from .workflow import next_search_action,available,planned_call
 from .session import close_dangling_calls
 from .session import Superseded
 
@@ -149,7 +149,7 @@ async def run(s) -> None:
             if not forced and intake:
                 forced = intake
             if forced:
-                recovered=forced if isinstance(forced,ToolCall) else ToolCall(forced, {}, f"progress_{uuid.uuid4().hex[:8]}")
+                recovered=forced if isinstance(forced,ToolCall) else planned_call(s,forced)
                 resp = LLMResponse('',[recovered])
                 record('search_recovery',session=s.id,action=recovered.name)
                 forced = None

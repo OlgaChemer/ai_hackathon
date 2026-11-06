@@ -324,8 +324,9 @@ async def _prepare(s):
                 from .criteria import CRITERIA_KEYS
                 data['allowed_criteria']={key:input_frame.criterion_value(key,CHANGE_SCHEMA) for key in CRITERIA_KEYS}
                 contract_for_changes=deepcopy(extraction)
-                if rank:
-                    data['reading_command']=result['selection']
+                if rank or response.tool_calls[0].name=='call_intent':
+                    if rank:data['reading_command']=result['selection']
+                    else:data['message_purpose']='Просьба звонить. Номер квартиры — ссылка на объект, не количество карточек или комнат. Извлеки только явно новые условия; selection запрещён.'
                     contract_for_changes['properties'].pop('selection')
                     contract_for_changes['required'].remove('selection')
                 prompt=PROFILE_SYSTEM+'\n'+guard.POLICY

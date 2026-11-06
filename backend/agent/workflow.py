@@ -9,12 +9,20 @@ def available(s, name: str) -> bool:
     return decision(s,name)[0]
 
 
+def pending_calls(s):
+    attempted={op.get('arguments',{}).get('listing_id') for op in s.operations.values()
+               if op.get('name')=='call_seller' and op.get('request_seq')==s.request_review_seq
+               and op.get('status') in ('completed','needs_review','external_started','external_completed')}
+    return [lid for lid in s.call_targets if lid not in s.calls and lid not in attempted]
+
+
 def next_search_action(s):
     """Только явное рабочее намерение разрешает продолжение без нового ответа клиента."""
     if s.requested_action and available(s,s.requested_action):return s.requested_action
     if s.request_intent=='call':
         for name in ('confirm_red_lines','ask_payment'):
             if available(s,name):return name
+        if available(s,'call_seller') and pending_calls(s):return 'call_seller'
         return None
     if s.request_intent=='selection' and s.selection_operation in ('compare','analyze'):
         if s.selection_query.get('scope')!='shown' and s.search is None:
@@ -36,3 +44,12 @@ def next_search_action(s):
             else "offer_search_alternatives"
         )
     return None
+
+
+def planned_call(s,name):
+    """Аргументы принудительного продолжения берутся только из проверенного состояния."""
+    import uuid
+    from ..llm import ToolCall
+    args={}
+    if name=='call_seller':args['listing_id']=pending_calls(s)[0]
+    return ToolCall(name,args,f'progress_{uuid.uuid4().hex[:8]}')
