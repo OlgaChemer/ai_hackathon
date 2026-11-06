@@ -146,7 +146,7 @@ async def run(s) -> None:
             if s.requested_action and not available(s,s.requested_action) and not (POLICIES.get(s.requested_action) and POLICIES[s.requested_action].information):
                 s.requested_action=None;s.profile.pop('_requested_action',None);s.remember()
             intake = next_search_action(s)
-            if not isinstance(forced,ToolCall) and (intake in ("confirm_red_lines", "ask_payment") or (intake and intake==s.requested_action)):
+            if not forced and intake:
                 forced = intake
             if forced:
                 recovered=forced if isinstance(forced,ToolCall) else ToolCall(forced, {}, f"progress_{uuid.uuid4().hex[:8]}")

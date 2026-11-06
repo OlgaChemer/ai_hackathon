@@ -4,6 +4,7 @@ from __future__ import annotations
 from ... import geo, sources
 from ..features import FEATURES
 from ..numbers import fmt
+from ..listing_query import FIELDS
 from ..profile import in_districts, merge_profile, missing_required, passes_hard_filters, profile_summary
 from . import ActionError, action
 
@@ -211,8 +212,10 @@ async def market_prices(s) -> dict:
         "Задать клиенту вопрос карточкой с вариантами ответа (кнопки). Клиент может ответить и своими словами. "
         "Возвращает ответ клиента. Для простого разговора без вариантов просто напиши клиенту текстом.",
         question={"type": "string", "description": "вопрос, 1–2 предложения"},
-        options={"type": "array", "items": {"type": "string"}, "description": "2–5 коротких вариантов ответа"})
-async def ask_client(s, question: str, options: list[str] | None = None) -> dict:
+        options={"type": "array", "items": {"type": "string"}, "description": "2–5 коротких вариантов ответа"},
+        field={"type":"string","enum":["budget_max","housing","okrug","districts",*FIELDS],
+               "description":"Одно свойство, о котором вопрос, если применимо. Позволяет связать краткое «Любой» с нужным полем. Для общего вопроса можно не передавать."})
+async def ask_client(s, question: str, options: list[str] | None = None, field: str | None = None) -> dict:
     r = await s.ask("clarify", "Уточнение", question, chips=[str(o)[:60] for o in (options or [])][:5], market=s.market)
     return {"answer": r["data"].get("text", "")}
 

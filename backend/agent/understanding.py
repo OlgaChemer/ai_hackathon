@@ -261,6 +261,15 @@ async def _prepare(s):
         return s.request_review
     from .. import sources
     base_profile=deepcopy(s.profile)
+    from .clarification import choice
+    answered=choice(s,inputs)
+    if answered is not None:
+        validation.validate(answered,CHANGE_SCHEMA)
+        s.request_review={'seq':version,'base_profile':base_profile,'intent':'refine',
+            'decision':'apply' if answered else 'unchanged','changes':answered,'question':'','options':[]}
+        record('request_review',session=s.id,decision=s.request_review['decision'],intent='refine',
+               changed_keys=list(answered),source='bound_card_choice')
+        return s.request_review
     contract=input_frame.sparse_schema(CHANGE_SCHEMA, inputs)
     tools=semantic_tools(contract,inputs,s.profile.get('_unsupported_conditions') or [],bool(s.shown or s.search))
     extraction=input_frame.schema(CHANGE_SCHEMA,inputs)

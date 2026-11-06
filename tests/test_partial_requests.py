@@ -119,3 +119,17 @@ class PartialRequests(unittest.IsolatedAsyncioTestCase):
         result=research.execute(rows,{'respect_budget':True,'group_by':None,'aggregates':[{'field':'area','function':'max'}]})
         self.assertEqual(result['aggregates'][0]['value'],80)
         with self.assertRaises(ValueError):research.query({'respect_budget':True,'group_by':None,'aggregates':[{'field':'address','function':'max'}]})
+
+    async def test_bound_any_choice_clears_only_addressed_property(self):
+        for field in ('floor','area','budget_max','rooms'):
+            with self.subTest(field=field):
+                s=self.agent({'city':'Москва','rooms':2,'budget_max':20_000_000,'area_min':60,'not_first_floor':True})
+                s.active_operation={'name':'ask_client','arguments':{'field':field},'status':'waiting'}
+                s.pending_decisions={'clarify':{'kind':'clarify','text':'Выберите условие','payload':{'chips':['Любой']},'status':'waiting'}}
+                e=s.push('message',role='user',text='Любой');s.accept_request('Любой',e['seq'])
+                r=await understanding.prepare(s);apply_request(s,r['changes'])
+                self.assertEqual(s.profile['city'],'Москва')
+                self.assertEqual(s.profile['budget_max'],None if field=='budget_max' else 20_000_000)
+                self.assertEqual(s.profile['rooms'],None if field=='rooms' else 2)
+                self.assertEqual(s.profile['area_min'],None if field=='area' else 60)
+                self.assertEqual(s.profile['not_first_floor'],field!='floor')

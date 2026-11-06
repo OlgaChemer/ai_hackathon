@@ -128,12 +128,33 @@ async def scenario(browser,base,width):
     await context.close()
 
 
+async def partial(browser,base,width):
+    context=await browser.new_context(viewport={'width':width,'height':1000})
+    page=await context.new_page();errors=[]
+    page.on('pageerror',lambda error:errors.append(str(error)))
+    await page.add_init_script("localStorage.setItem('voice','0');localStorage.setItem('cookieNotice','1')")
+    await page.route('https://tile.openstreetmap.org/**',lambda route:route.fulfill(body=PIXEL,content_type='image/png'))
+    await page.goto(base)
+    await page.fill('#welcomeQuery','Москва')
+    await page.locator('#welcomeQuery').press('Enter')
+    await page.wait_for_function("document.querySelectorAll('.offer').length===10")
+    await page.wait_for_function("!document.querySelector('[data-selection=more]').disabled")
+    text=await page.locator('#chatLog').inner_text()
+    assert 'не заданы · поиск без ограничения' in text,text
+    assert 'не задан · поиск без ограничения' in text,text
+    assert await page.get_by_role('button',name='Подтвердить рамки',exact=True).count()==0
+    assert not errors,errors
+    await context.close()
+
+
 async def main(base):
     async with async_playwright() as p:
         browser=await p.chromium.launch()
         for width in (1440,390):
             await scenario(browser,base,width)
             print(f'PASS {width}px: more/likes, decision order, stale ID, HTTP/SSE race, seller questions')
+            await partial(browser,base,width)
+            print(f'PASS {width}px: city-only search, no invented rooms/budget or payment gate')
         await browser.close()
 
 
