@@ -73,6 +73,17 @@ class PartialRequests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ground_state('budget_max','unknown',text),'unrestricted')
         self.assertEqual(ground_state('rooms','unrestricted',text),'unknown')
 
+    def test_spelled_numbers_do_not_conflict_with_digits_in_other_conditions(self):
+        from backend.agent import input_frame
+        from backend.agent.request_schema import CHANGE_SCHEMA
+        text='Выше двенадцатого этажа, бюджет до 20 млн'
+        frame=input_frame.complete_frame({'intent':'refine','fields':{'filters':{'value':[
+            {'field':'floor','op':'gt','values':['12'],'priority':'required'}],'source':text}}},CHANGE_SCHEMA)
+        r=input_frame.decode(frame,merge_profile({}),{'messages':[{'text':text}]},CHANGE_SCHEMA)
+        self.assertEqual(r['changes']['filters'][0]['values'],['12'])
+        frame['fields']['filters']['value'][0]={'field':'delivery_year','op':'eq','values':['2026'],'priority':'required'}
+        with self.assertRaises(ValueError):input_frame.decode(frame,merge_profile({}),{'messages':[{'text':text}]},CHANGE_SCHEMA)
+
     async def test_partial_search_executes_without_payment_or_agreements(self):
         s=self.agent({'city':'Москва','filters':[{'field':'floor','op':'gt','values':['10'],'priority':'required'}],'poi':['park']})
         rows=[listing(id=f'p{i}',city='Москва',floor=11+i,rooms=1+i%3,nearby={'park':{'name':'Парк','dist':400}}) for i in range(15)]

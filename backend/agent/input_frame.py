@@ -219,6 +219,8 @@ def decode(frame, profile, payload, changes_schema):
         literals=[float(n.replace(' ','').replace('\u00a0','').replace(',','.'))
                   for text in input_texts for n in re.findall(r'(?<!\d)[+-]?\d+(?:[ \u00a0]\d{3})*(?:[.,]\d+)?',text)]
         if literals:
+            from .numbers import word_numbers
+            literals+=list(set().union(*(word_numbers(text) for text in input_texts)))
             supported={n*scale for n in literals for scale in (1,1000,1_000_000,1_000_000_000)}
             for item in changes.get('filters',[]):
                 if item['priority']=='remove':

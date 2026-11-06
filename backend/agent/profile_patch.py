@@ -97,6 +97,12 @@ def decode(patch,contract,inputs,aliases=None,*,provenance=None):
     # Декодер старых сохранённых результатов по-прежнему поддерживается.
     for item in patch['filters']:
         quote=item.get('source','')
+        if item.get('field')=='rooms' and item.get('op') in ('eq','in') and item.get('priority')=='required':
+            numbers=[float(v) for v in item['values']]
+            if numbers and all(n.is_integer() and 0<=n<=5 for n in numbers):
+                patch.setdefault('fields',[]).append({'key':'rooms_options','value':json.dumps([int(n) for n in numbers if n]),'source':quote})
+                if 0 in numbers:patch['fields'].append({'key':'studio_requested','value':'true','source':quote})
+                continue
         if item.get('field','').startswith('nearby:') and item.get('op')=='exists' and item.get('priority')!='remove':
             # «Рядом есть парк» использует объявленный продуктовый радиус,
             # а не существование парка на произвольном расстоянии.
