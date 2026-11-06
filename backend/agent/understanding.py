@@ -312,38 +312,37 @@ async def _prepare(s):
             if response.tool_calls:
                 if len(response.tool_calls)!=1:raise ValueError('Ожидался один смысловой результат')
                 result=frame_from_call(response.tool_calls[0],tools,inputs)
-                extract=result.pop('needs_extraction',False)
+                result.pop('needs_extraction',None)
                 rank=(result.get('selection') or {}).get('operation')=='rank'
                 # Маршрутизатор может выбрать отбор и пропустить новые условия
-                # в той же фразе. Для действий проверяем факты независимо от
+                # в той же фразе. Каждый новый ввод проверяется независимо от
                 # предложенного update_conditions; это один раз на новый ввод.
-                extract=extract or rank or response.tool_calls[0].name in ('request_information','call_intent')
-                if extract:
-                    data={k:payload[k] for k in ('messages','profile','supported_cities','ambiguous_catalog_names','listing_fields','pending_decisions')}
-                    data['unsupported_conditions']=s.profile.get('_unsupported_conditions') or []
-                    data['unsupported_properties']=s.profile.get('_unsupported_keys') or {}
-                    data['allowed_fields']=input_frame.basic_fields(CHANGE_SCHEMA)
-                    from .criteria import CRITERIA_KEYS
-                    data['allowed_criteria']={key:input_frame.criterion_value(key,CHANGE_SCHEMA) for key in CRITERIA_KEYS}
-                    contract_for_changes=deepcopy(extraction)
-                    if rank:
-                        data['reading_command']=result['selection']
-                        contract_for_changes['properties'].pop('selection')
-                        contract_for_changes['required'].remove('selection')
-                    prompt=PROFILE_SYSTEM+'\n'+guard.POLICY
-                    if error:prompt+='\nОшибка прежнего разбора: '+error
-                    strict_schema=profile_patch.generation_schema(contract_for_changes,inputs)
-                    data['output_schema']=strict_schema
-                    parsed=await s.llm.chat([{'role':'system','content':prompt},guard.data_message('profile_changes',data)],
-                        json_mode=True,json_schema=strict_schema,tag='profile_extract',temperature=.01,max_tokens=3000)
-                    changes=parse_json_loose(parsed.text)
-                    changes=profile_patch.decode(changes,contract_for_changes,inputs,s.profile.get('_unsupported_keys'),provenance=condition_sources)
-                    requested_action=changes.pop('_requested_action',None)
-                    if (rank or response.tool_calls[0].name=='request_information') and (any(v is not None for v in (changes.get('fields') or {}).values()) or
-                                 any(v is not None for v in (changes.get('criteria') or {}).values()) or
-                                 changes.get('places') or changes.get('unsupported')):
-                        result['intent']='refine'
-                    result={**changes,**result}
+                data={k:payload[k] for k in ('messages','profile','supported_cities','ambiguous_catalog_names','listing_fields','pending_decisions')}
+                data['unsupported_conditions']=s.profile.get('_unsupported_conditions') or []
+                data['unsupported_properties']=s.profile.get('_unsupported_keys') or {}
+                data['allowed_fields']=input_frame.basic_fields(CHANGE_SCHEMA)
+                from .criteria import CRITERIA_KEYS
+                data['allowed_criteria']={key:input_frame.criterion_value(key,CHANGE_SCHEMA) for key in CRITERIA_KEYS}
+                contract_for_changes=deepcopy(extraction)
+                if rank:
+                    data['reading_command']=result['selection']
+                    contract_for_changes['properties'].pop('selection')
+                    contract_for_changes['required'].remove('selection')
+                prompt=PROFILE_SYSTEM+'\n'+guard.POLICY
+                if error:prompt+='\nОшибка прежнего разбора: '+error
+                strict_schema=profile_patch.generation_schema(contract_for_changes,inputs)
+                data['output_schema']=strict_schema
+                parsed=await s.llm.chat([{'role':'system','content':prompt},guard.data_message('profile_changes',data)],
+                    json_mode=True,json_schema=strict_schema,tag='profile_extract',temperature=.01,max_tokens=3000)
+                changes=parse_json_loose(parsed.text)
+                changes=profile_patch.decode(changes,contract_for_changes,inputs,s.profile.get('_unsupported_keys'),provenance=condition_sources)
+                requested_action=changes.pop('_requested_action',None)
+                pure_read=(result.get('selection') or {}).get('operation') in ('compare','analyze','more')
+                if not pure_read and result['intent'] not in ('call','hold') and (any(v is not None for v in (changes.get('fields') or {}).values()) or
+                             any(v is not None for v in (changes.get('criteria') or {}).values()) or
+                             changes.get('places') or changes.get('unsupported')):
+                    result['intent']='refine'
+                result={**changes,**result}
             else:result=parse_json_loose(response.text)
             research_request=result.pop('research',None)
             information_action=result.pop('requested_action',None)
