@@ -158,6 +158,30 @@ class PartialRequests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(r['unsupported'][0]['action'],'add')
         self.assertEqual(s.llm.chat.await_count,1)
 
+    async def test_read_only_operations_do_not_reinterpret_their_metric_as_a_condition(self):
+        for operation in ('compare','analyze','more'):
+            s=self.agent({'city':'Москва','rooms':2,'budget_max':20_000_000})
+            s.shown=[listing()];s.search={'pool':list(s.shown)}
+            args={'operation':operation,'scope':'shown' if operation!='more' else 'all','limit':None,
+                  'aggregates':[{'field':'price_per_m2','function':'mean'}] if operation=='analyze' else [],
+                  'group_by':None,'order_by':'price_per_m2','direction':'asc','keep_order':False,
+                  'update_conditions':False,'count_source':None}
+            s.llm.chat=AsyncMock(return_value=LLMResponse('',[ToolCall('read_selection',args)]))
+            text='У какой из этих двух ниже стоимость метра?'
+            e=s.push('message',role='user',text=text);s.accept_request(text,e['seq'])
+            r=await understanding.prepare(s)
+            self.assertEqual(r['changes'],{});self.assertEqual(r['selection_operation'],operation)
+            self.assertFalse(r.get('unsupported'));self.assertEqual(s.llm.chat.await_count,1)
+        s=self.agent({'city':'Москва','rooms':3});s.shown=[listing()];s.search={'pool':list(s.shown)}
+        text='Теперь только две комнаты, сравни показанные квартиры по цене метра.'
+        args={**args,'operation':'compare','scope':'shown','update_conditions':True}
+        patch_data={key:[] for key in ('fields','criteria','states','filters','places','unsupported','selection','requested_card')}
+        patch_data['fields']=[{'key':'rooms_options','value':'[2]','source':text}]
+        s.llm.chat=AsyncMock(side_effect=[LLMResponse('',[ToolCall('read_selection',args)]),LLMResponse(json.dumps(patch_data))])
+        e=s.push('message',role='user',text=text);s.accept_request(text,e['seq'])
+        r=await understanding.prepare(s)
+        self.assertEqual(r['changes']['rooms_options'],[2]);self.assertEqual(s.llm.chat.await_count,2)
+
     def test_spelled_numbers_do_not_conflict_with_digits_in_other_conditions(self):
         from backend.agent import input_frame
         from backend.agent.request_schema import CHANGE_SCHEMA
