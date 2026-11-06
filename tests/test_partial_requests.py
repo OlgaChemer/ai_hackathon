@@ -59,6 +59,21 @@ class PartialRequests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(p['filters'],[predicate])
             self.assertIn(p[alias],(None,False))
 
+    def test_closed_status_codes_are_not_parsed_as_numbers_or_arrays(self):
+        from backend.agent import input_frame,profile_patch
+        from backend.agent.request_schema import CHANGE_SCHEMA
+        text='Бюджет и район неважны.';inputs=[{'text':text}]
+        contract=profile_patch.schema(input_frame.schema(CHANGE_SCHEMA,inputs))
+        data={key:[] for key in contract['properties']}
+        for key in ('budget_max','districts'):
+            data['fields'].append({'key':key,'value':'unrestricted','source':text})
+            data['states'].append({'key':key,'state':'unrestricted','source':text})
+        frame=profile_patch.decode(data,contract,inputs)
+        self.assertEqual(frame['fields']['field_states']['value'],{'budget_max':'unrestricted','districts':'unrestricted'})
+        self.assertNotIn('budget_max',frame['fields']);self.assertNotIn('districts',frame['fields'])
+        data['fields'][0]['source']='Рассчитай личный бюджет'
+        with self.assertRaises(ValueError):profile_patch.decode(data,contract,[{'text':'Рассчитай личный бюджет'}])
+
     def test_wildcard_url_does_not_invent_rooms_or_price(self):
         url=sources.cian.build_url('Москва',None,None)
         self.assertNotIn('room',url);self.assertNotIn('maxprice',url)

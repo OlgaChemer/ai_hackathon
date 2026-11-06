@@ -101,6 +101,21 @@ def decode(patch,contract,inputs,aliases=None,*,provenance=None,profile=None,rea
         key='field' if group=='filters' else 'key'
         if any(not isinstance(row.get(key,''),str) or not isinstance(row.get('source',''),str) for row in rows):
             raise ValueError(group+': имя свойства и цитата должны быть строками')
+    def mode_for(key,state,quote):
+        from .clarification import ground_state
+        context=next((row for row in reversed(inputs) if quote.casefold() in row['text'].casefold()),{})
+        return ground_state(key,state,quote,bound_field=context.get('question_field'),question=context.get('question',''))
+    fields=[]
+    for row in patch.get('fields',[]):
+        key='rooms' if row.get('key')=='rooms_options' else row.get('key')
+        raw=row.get('value')
+        if key in ('budget_max','rooms','districts','okrug','housing') and raw in ('unknown','unrestricted'):
+            mode=mode_for(key,raw,row['source'])
+            if mode is None:raise ValueError('Статус '+key+' требует явного решения по этому свойству')
+            if not any(s['key']==key and s['source']==row['source'] for s in patch['states']):
+                patch['states'].append({'key':key,'state':mode,'source':row['source']})
+        else:fields.append(row)
+    patch['fields']=fields
     if reading is not None:
         from .clarification import names_property
         def room_fact(row):
@@ -176,10 +191,6 @@ def decode(patch,contract,inputs,aliases=None,*,provenance=None,profile=None,rea
     if patch.get('unsupported') is None:patch['unsupported']=[]
     if not isinstance(patch['unsupported'],list):raise ValueError('unsupported должен быть списком')
     texts=[r['text'].casefold() for r in inputs]
-    def mode_for(key,state,quote):
-        from .clarification import ground_state
-        context=next((row for row in reversed(inputs) if quote.casefold() in row['text'].casefold()),{})
-        return ground_state(key,state,quote,bound_field=context.get('question_field'),question=context.get('question',''))
     aliases=aliases or {}
     def alias_for(key):
         def canonical(k):return k.replace('poi:','nearby:',1) if k.startswith('poi:') else k
