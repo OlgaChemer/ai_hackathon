@@ -43,7 +43,10 @@ class Bridge:
             messages[i]=m={k:v for k,v in m.items() if k in ('role','content','tool_calls','tool_call_id')}
             for c in m.get('tool_calls') or []:
                 if c.get('id') in self.states:m['functions_state_id']=self.states[c['id']]
-        messages=[{'role':'system','content':DOMAIN+self.prompt},*messages]
+        # GigaChat допускает только одно system-сообщение в начале.
+        # Одинаковая нормализация для обоих провайдеров; правила хоста первыми.
+        instructions=[DOMAIN+self.prompt,*[str(m.get('content') or '') for m in messages if m['role']=='system']]
+        messages=[{'role':'system','content':'\n\n'.join(instructions)},*[m for m in messages if m['role']!='system']]
         tools=[Tool(t['function']['name'],t['function'].get('description',''),t['function']['parameters']) for t in specs]
         r=await self.llm.chat(messages,tools=tools or None,temperature=.2,max_tokens=2400,tag='workshop')
         for c in r.tool_calls:

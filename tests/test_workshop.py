@@ -163,8 +163,12 @@ class WorkshopContracts(unittest.IsolatedAsyncioTestCase):
                 return LLMResponse('Готово',[ToolCall('run_python',{'code':'print(1)'},'f1')],functions_state_id='state-1')
         model=Model();bridge=sandbox.Bridge(model,'Сравнить квартиры',lambda text:None)
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=bridge.app),base_url='http://bridge') as client:
-            r=await client.post('/chat',json={'messages':[{'role':'user','content':'расчёт'}]})
+            r=await client.post('/chat',json={'messages':[{'role':'system','content':'Инструкции nanobot'},
+                {'role':'user','content':'расчёт'}]})
             self.assertEqual(r.status_code,200)
+            self.assertEqual(sum(m['role']=='system' for m in model.messages[0]),1)
+            self.assertTrue(model.messages[0][0]['content'].startswith(sandbox.DOMAIN))
+            self.assertIn('Инструкции nanobot',model.messages[0][0]['content'])
             await client.post('/chat',json={'messages':[{'role':'assistant','content':'','tool_calls':[{'id':'f1','function':{'name':'run_python','arguments':'{}'}}]},
                 {'role':'tool','tool_call_id':'f1','content':'1'}]})
             self.assertEqual(model.messages[-1][1]['functions_state_id'],'state-1')
