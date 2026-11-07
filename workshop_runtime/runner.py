@@ -73,11 +73,16 @@ Excel содержит только готовые значения, без фо
 async def main():
     data=json.loads(Path('/input/data.json').read_text())
     provider=PlatformProvider();tools=ToolRegistry();python=RunPython();tools.register(python)
+    async def bounded_history(messages,previous_summary):
+        # Короткая одноразовая задача: при переполнении завершаемся явно,
+        # вместо потери исходных условий или скрытого дополнительного LLM-вызова.
+        return None
     try:
         result=await AgentRunner().run(AgentRunSpec(initial_messages=[{'role':'system','content':SYSTEM},
             {'role':'user','content':data['prompt']+'\nЗадание и все данные находятся в /input/data.json.'}],
             tools=tools,runtime=LLMRuntime.capture(provider,'workshop',context_window_tokens=32000),
-            max_iterations=8,max_tool_result_chars=16000,workspace=ROOT,session_key='task',provider_retry_mode='none'))
+            max_iterations=8,max_tool_result_chars=16000,workspace=ROOT,session_key='task',provider_retry_mode='none',
+            consolidate_history=bounded_history))
         if result.error or not result.final_content or python.calls<1:raise RuntimeError('Агент не завершил исполнимый расчёт.')
         metrics=json.loads((ROOT/'metrics.json').read_text())
         if metrics!=data['facts']:raise RuntimeError('Базовые числа отчёта не совпали с проверенным расчётом.')
