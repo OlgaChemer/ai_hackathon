@@ -36,5 +36,21 @@ def build_llm(provider: str | None = None) -> LLMClient:
 
 
 @lru_cache
+def get_provider(provider: str) -> LLMClient:
+    """Один клиент/очередь на провайдера во всём приложении, включая мастерскую."""
+    return build_llm(provider)
+
+
+@lru_cache
+def get_vision_provider(provider:str) -> LLMClient:
+    if provider=='gigachat':return get_provider(provider)  # общая очередь тарифа
+    if provider=='deepseek':
+        from .deepseek import DeepSeekClient
+        return DeepSeekClient(settings.deepseek_api_key,settings.deepseek_base_url,
+            settings.deepseek_vision_model,timeout=settings.llm_call_timeout_s)
+    raise LLMError('Не настроена модель для анализа фотографий.')
+
+
+@lru_cache
 def get_llm() -> LLMClient:
-    return build_llm()
+    return get_provider(settings.llm_provider)

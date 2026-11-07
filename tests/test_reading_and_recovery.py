@@ -38,6 +38,40 @@ def facts(frame,*,reading=False):
 class ReadingAndRecovery(unittest.IsolatedAsyncioTestCase):
     def setUp(self):db.configure('sqlite://')
 
+    async def test_comparison_of_these_listings_uses_current_page_without_replacing_selection(self):
+        s=self.agent();s.shown=[*s.search['pool'],listing(id='other-page',price=1000,area=100)];s.selection_revision=7
+        original=deepcopy(s.shown)
+        self.assertTrue(R.set_visible_scope(s,{'visible_listing_ids':['cian-1','cian-2'],'selection_revision':7}))
+        s.selection_query={**Q.default_query(),'scope':'shown','sort':[{'field':'price_per_m2','direction':'asc'}]}
+        s.selection_operation='compare'
+        await search.read_selection(s)
+        messages=[x.get('text','') for x in s.history if x['type']=='message']
+        self.assertTrue(any('75 000 ₽/м²' in text for text in messages))
+        self.assertFalse(any('other-page' in text for text in messages))
+        self.assertEqual(s.shown,original)
+
+    async def test_stale_page_cannot_modify_profile_or_trigger_model(self):
+        s=self.agent();s.shown=list(s.search['pool']);s.selection_revision=8
+        original=deepcopy(s.profile)
+        result=await s._receive_text('Из этих квартир покажи лучшую',{'visible_listing_ids':['cian-1'],'selection_revision':7})
+        self.assertEqual(result,'unresolved')
+        self.assertEqual(s.profile,original)
+        self.assertEqual(s.request_inputs,[])
+        self.assertTrue(any('Подборка уже обновилась' in x.get('text','') for x in s.history))
+
+    def test_unknown_page_listing_ids_are_not_accepted(self):
+        s=self.agent();s.shown=list(s.search['pool']);s.selection_revision=7
+        for ids in [['other'],[],['cian-1','cian-1'],[{}]]:
+            with self.subTest(ids=ids):
+                self.assertFalse(R.set_visible_scope(s,{'visible_listing_ids':ids,'selection_revision':7}))
+
+    async def test_explanation_context_contains_current_page_not_first_page(self):
+        s=self.agent();await self.show(s)
+        R.set_visible_scope(s,{'visible_listing_ids':['cian-2'],'selection_revision':s.selection_revision})
+        cards=qa.build_context(s)['подборка']
+        self.assertEqual(len(cards),1)
+        self.assertEqual(cards[0]['цена'],'6 000 000 ₽')
+
     def agent(self):
         s=session.create_session('',ScriptedLLM())
         s.profile=merge_profile({'city':'Казань','rooms_options':[1,2],'budget_max':9_000_000,'payment':'cash'})

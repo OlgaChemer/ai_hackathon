@@ -1,0 +1,126 @@
+"""Премиум UI, три задачи, скачивание и отказ вне тематики на desktop/mobile."""
+import argparse
+import asyncio
+from pathlib import Path
+from playwright.async_api import async_playwright
+from tests.e2e.ui_regressions import PIXEL
+
+
+async def login(page,email):
+    await page.get_by_role('button',name='Войти',exact=True).click()
+    await page.locator('dialog.auth input[name=email]').fill(email)
+    await page.locator('dialog.auth input[name=password]').fill('workshop-ui-only-123')
+    await page.locator('dialog.auth button[value=submit]').click()
+    await page.locator('dialog.auth').wait_for(state='detached')
+
+
+async def main(base):
+    async with async_playwright() as p:
+        browser=await p.chromium.launch()
+        for width in (1440,390):
+            context=await browser.new_context(viewport={'width':width,'height':1000})
+            page=await context.new_page();errors=[]
+            await page.route('https://images.cdn-cian.ru/ui-photo.jpg',lambda route:route.fulfill(body=PIXEL,content_type='image/png'))
+            page.on('pageerror',lambda e:errors.append(str(e)))
+            await page.add_init_script("localStorage.setItem('voice','0');localStorage.setItem('cookieNotice','1')")
+            await page.goto(base)
+            assert not await page.locator('#workshopButton').is_visible()
+            assert (await page.request.get(base+'/api/workshop/context')).status==401
+            await login(page,'darkyhat@mail.ru')
+            await page.locator('#workshopButton').click()
+            await page.locator('[data-context]').filter(has_text='понравившихся квартир: 2').wait_for()
+            assert await page.locator('dialog.workshop input[type=file]').count()==0
+            for kind in ('repair','compare','market'):
+                await page.locator('[data-kind='+kind+']').click()
+                assert await page.locator('dialog.workshop input[type=number]').count()==0
+                if kind=='repair':
+                    assert 'Минимальный' in await page.locator('[data-repair-scenarios]').inner_text()
+                    assert 'Капитальный' in await page.locator('[data-repair-scenarios]').inner_text()
+                if kind=='compare':
+                    assert not await page.locator('[data-repair-scenarios]').is_visible()
+                if kind=='market':
+                    await page.request.post(base+'/_test/profile',data={'rooms':3,'market_sample':True})
+                    await page.evaluate("document.dispatchEvent(new CustomEvent('profilechange',{detail:{chat_id:'ui-workshop'}}))")
+                    await page.locator('[data-context]').filter(has_text='3-комнат').wait_for()
+                    await page.locator('[data-wide]').check()
+                    checkbox=await page.locator('[data-wide]').bounding_box()
+                    label=await page.locator('[data-wide-wrap] span').bounding_box()
+                    assert checkbox['x']+checkbox['width']<=label['x']
+                    assert abs(checkbox['y']-label['y'])<12
+                    assert 'весь город без фильтров' in await page.locator('[data-context]').inner_text()
+                    await page.locator('[data-wide]').uncheck()
+                await page.locator('[data-start]').click()
+                await page.locator('.workshop-report').wait_for()
+                await page.locator('[data-start]').wait_for(state='visible')
+                await page.wait_for_function("!document.querySelector('[data-start]').disabled")
+                assert await page.locator('.workshop-facts table tr').count()>=2
+                if kind=='repair':
+                    assert 'Минимальный' in await page.locator('.workshop-facts table').inner_text()
+                    assert 'Покупка + ремонт' not in await page.locator('.workshop-facts table').inner_text()
+                if kind=='compare':
+                    assert 'Метро' in await page.locator('.workshop-facts table').inner_text()
+                    assert 'Ремонт с запасом' not in await page.locator('.workshop-facts table').inner_text()
+                    assert 'Минимальная цена за м²' in await page.locator('.workshop-facts').inner_text()
+                if kind=='market':
+                    assert '3-комнат' in await page.locator('[data-report-scope]').inner_text()
+                    summary=await page.locator('.workshop-facts').inner_text()
+                    assert 'Данные текущего подбора' in summary
+                    assert 'Подтверждено по условиям: 4; требуют проверки: 2' in summary
+                    assert 'В расчёте: 4' in summary
+                    assert 'Небольшая выборка' in summary
+                assert await page.locator('.workshop-report h2').count()==1
+                assert await page.locator('.workshop-report strong').first.text_content()=='Сравнил варианты'
+                assert await page.locator('.workshop-report table tbody tr').count()==1
+                assert await page.locator('.workshop-report :is(img,script)').count()==0
+                assert not await page.evaluate('Boolean(window.workshopXss)')
+                assert await page.locator('.workshop-report a[href^="javascript:"]').count()==0
+                assert await page.locator('.workshop-photos img').count()==1
+                assert 'Просмотрено 1 из 4' in await page.locator('.workshop-photos').inner_text()
+                csv=await page.request.get(base+(await page.locator('[data-result] a').filter(has_text='Скачать CSV').get_attribute('href')))
+                assert csv.status==200
+            await page.locator('[data-question]').fill('Почему медианная цена такая?')
+            await page.locator('[data-ask]').click()
+            await page.locator('.workshop-report h3').filter(has_text='Ответ по сохранённой выборке').wait_for()
+            await page.wait_for_function('!document.querySelector("[data-ask]").disabled')
+            assert await page.locator('.workshop-question').count()==1
+            await page.locator('[data-question]').fill('А теперь сравни только двухкомнатные')
+            await page.locator('[data-ask]').click()
+            await page.wait_for_function('document.querySelectorAll(".workshop-report h3").length===2 && !document.querySelector("[data-ask]").disabled')
+            await page.locator('[data-close]').click()
+            await page.reload();await page.locator('#workshopButton').click()
+            await page.locator('[data-history] button').first.click()
+            await page.locator('.workshop-question').nth(1).wait_for()
+            assert await page.locator('.workshop-question').first.inner_text()=='Вы\n\nПочему медианная цена такая?'
+            await page.locator('[data-result]').screenshot(path=f'/tmp/workshop-thread-{width}.png')
+            await page.locator('[data-kind=repair]').click()
+            await page.locator('[data-prompt]').fill('Напиши шахматную игру для квартиры')
+            await page.locator('[data-start]').click()
+            await page.locator('[data-error]').filter(has_text='Я помогаю с недвижимостью').wait_for()
+            await page.screenshot(path=f'/tmp/workshop-ui-{width}.png',full_page=False)
+            assert await page.evaluate('document.documentElement.scrollWidth<=window.innerWidth'), 'Горизонтальная прокрутка страницы'
+            assert not errors,errors
+            await page.locator('[data-close]').click()
+            await page.evaluate("""async()=>{
+              const {confirmCard}=await import('/js/cards.js');
+              const {showAgent,setChatExpanded}=await import('/js/shell.js');showAgent();setChatExpanded(true);
+              confirmCard({kind:'call',decision_id:'phone-ui-check',title:'Звонок продавцу',text:'Проверка показа телефонного режима',questions:[{question:'Есть ли ремонт?'}],replay:true});
+            }""")
+            await page.get_by_role('button',name='Позвонить мне на телефон',exact=True).wait_for()
+            await page.locator('[data-seller-questions]').fill('Сохрани этот вопрос при обновлении доступа')
+            await page.evaluate("async()=>{const {navigate}=await import('/js/shell.js');navigate('welcome');}")
+            await page.locator('[data-account=menu]').click();await page.locator('[data-logout]').click()
+            await page.wait_for_function('!document.querySelector(".confirm-call [data-phone]")')
+            assert await page.locator('[data-seller-questions]').input_value()=='Сохрани этот вопрос при обновлении доступа'
+            await context.close()
+            context=await browser.new_context(viewport={'width':width,'height':1000});page=await context.new_page()
+            await page.goto(base);await login(page,'other@example.ru')
+            assert not await page.locator('#workshopButton').is_visible()
+            assert (await page.request.get(base+'/api/workshop/context')).status==403
+            await context.close()
+            print(f'PASS {width}px: premium, Markdown, followups, phone visibility on login/logout, no calls placed',flush=True)
+        await browser.close()
+
+
+if __name__=='__main__':
+    parser=argparse.ArgumentParser();parser.add_argument('--base',default='http://127.0.0.1:8798')
+    asyncio.run(main(parser.parse_args().base))

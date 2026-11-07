@@ -42,6 +42,7 @@ def patch(live_llm=False):
 
     async def nearby(rows,kinds,**kwargs):
         for x in rows:
+            if x.get('lat') is None or x.get('lng') is None:continue
             for kind in kinds:
                 x.setdefault('nearby',{})[kind]={'name':'Тестовый объект','dist':350,'lat':x['lat']+.001,'lng':x['lng']}
                 x.setdefault('nearby_evidence',{})[kind]={'source':'fixture','distance_kind':'straight_line'}

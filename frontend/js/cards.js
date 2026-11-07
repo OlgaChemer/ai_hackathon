@@ -134,6 +134,7 @@ export function confirmCard(ev) {
   const extra = card.querySelector("[data-extra]");
   const actions = card.querySelector(".actions");
   card.dataset.decisionId = ev.decision_id || '';
+  card.decisionEvent=ev;
   if (state.cards[ev.kind]?.nodeType && !state.cards[ev.kind].classList.contains('is-done')) {
     state.cards[ev.kind].classList.add('is-done');
     archiveDecision(state.cards[ev.kind]);
@@ -258,6 +259,18 @@ export function staleCards() {
   state.cards = {};
   state.awaiting = null;
   stage.querySelectorAll("[data-selection]").forEach((b) => (b.disabled = true));
+}
+
+export function refreshPhoneAccess(){
+  const card=state.cards.call;
+  if(!card?.isConnected||card.classList.contains('is-done')||!card.decisionEvent||card.querySelector('button')?.disabled)return;
+  const questions=card.querySelector('[data-seller-questions]')?.value;
+  const number=card.querySelector('[data-phone]')?.value;
+  delete state.cards.call;
+  confirmCard({...card.decisionEvent,replay:true});
+  const replacement=state.cards.call;card.replaceWith(replacement);
+  if(questions!==undefined)replacement.querySelector('[data-seller-questions]').value=questions;
+  if(number!==undefined&&replacement.querySelector('[data-phone]'))replacement.querySelector('[data-phone]').value=number;
 }
 
 function storedPhone() {

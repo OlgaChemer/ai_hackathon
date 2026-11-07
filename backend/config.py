@@ -18,11 +18,17 @@ def _bool(name: str, default: bool) -> bool:
 
 @dataclass(frozen=True)
 class Settings:
+    workshop_provider: str = os.getenv('WORKSHOP_LLM_PROVIDER','deepseek').strip().lower()
+    workshop_email: str = 'darkyhat@mail.ru'
+    workshop_root: str = os.getenv('WORKSHOP_ROOT', str(ROOT/'backend'/'data'/'workshop'))
+    workshop_image: str = os.getenv('WORKSHOP_IMAGE','mesto-workshop:0.4.1')
+    workshop_docker: str = os.getenv('WORKSHOP_DOCKER','/usr/bin/docker')
     llm_provider: str = os.getenv("LLM_PROVIDER", "gigachat").strip().lower()
 
     deepseek_api_key: str = os.getenv("DEEPSEEK_API_KEY", "")
     deepseek_base_url: str = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
     deepseek_model: str = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+    deepseek_vision_model: str = os.getenv('DEEPSEEK_VISION_MODEL','deepseek-flash')
 
     gigachat_credentials: str = os.getenv("GIGACHAT_CREDENTIALS", "")
     gigachat_scope: str = os.getenv("GIGACHAT_SCOPE", "GIGACHAT_API_PERS")

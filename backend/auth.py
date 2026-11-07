@@ -106,7 +106,8 @@ def visitor_id(request: Request) -> str | None:
 
 
 def public(u: User | None) -> dict | None:
-    return {"id": u.id, "email": u.email, "name": u.name} if u else None
+    return {"id": u.id, "email": u.email, "name": u.name,
+            'premium':bool(u.premium and u.email.casefold()==settings.workshop_email)} if u else None
 
 
 def _start(s: Session, user: User, request: Request, response: Response) -> dict:

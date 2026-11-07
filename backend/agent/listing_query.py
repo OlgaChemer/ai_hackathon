@@ -65,7 +65,7 @@ QUERY_SCHEMA = {
 
 
 def default_query():
-    return {'scope':'all','mode':'rank','limit':10,'filters':[],'sort':[],'aggregates':[],'group_by':None}
+    return {'scope':'all','mode':'rank','limit':30,'filters':[],'sort':[],'aggregates':[],'group_by':None}
 
 
 def field_value(x, field):

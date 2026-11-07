@@ -65,7 +65,7 @@ CONFIRMATIONS = {
     "family": {"children": number(0, 30), "youngest_age": {"type": ["number", "null"], "minimum": 0, "maximum": 100}, "matcap": number()},
     "finance": {"monthly_income": number(), "monthly_expenses": number(), "savings": number(),
                 "horizon_months": number(1, 600), "risk": choice("conservative", "moderate", "aggressive")},
-    "selection": {"action": choice("proceed", "more", "text"), "liked": IDS, "disliked": IDS},
+    "selection": {"action": choice("proceed", "more", "liked", "text"), "liked": IDS, "disliked": IDS},
 }
 
 

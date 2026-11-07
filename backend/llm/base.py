@@ -28,6 +28,12 @@ class LLMBusy(LLMError):
 
 
 @dataclass
+class VisionImage:
+    data: bytes
+    mime_type: str = 'image/jpeg'
+
+
+@dataclass
 class ToolCall:
     name: str
     arguments: dict[str, Any]
@@ -55,6 +61,9 @@ class Tool:
 class LLMClient(ABC):
     name: str = "base"
     model: str = ""
+
+    async def analyze_images(self,prompt:str,images:list[VisionImage]) -> LLMResponse:
+        raise LLMError('Этот провайдер не поддерживает анализ изображений.')
 
     @abstractmethod
     async def chat(

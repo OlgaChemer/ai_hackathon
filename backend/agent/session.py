@@ -366,6 +366,10 @@ class Session:
                 ev=self.push('message',role='user',text=text,command_id=(self._command or {}).get('id'))
                 progress['message_seq']=ev['seq']
                 if self.refuse(text):return 'blocked'
+                from .selection_request import set_visible_scope
+                if not set_visible_scope(self,marks):
+                    self.push('message',role='agent',text='Подборка уже обновилась. Посмотрите актуальную страницу и повторите запрос — прежние условия сохранены.',await_reply=True)
+                    return 'unresolved'
                 self.accept_request(ev['text'],ev['seq'])
                 self.client_revision+=1
             elif not any(x['seq']==progress['message_seq'] for x in self.request_inputs):

@@ -32,7 +32,7 @@ def compile_request(request, previous=None):
     operation=request['operation']
     query={**Q.default_query(), 'scope':request['scope'],
            'mode':'more' if operation=='more' else 'rank',
-           'limit':request['limit'] if request['limit'] is not None else previous.get('limit',10),
+           'limit':request['limit'] if request['limit'] is not None else previous.get('limit',Q.default_query()['limit']),
            'sort':deepcopy(request['sort'] if request['sort'] is not None else previous.get('sort',[])),
            'aggregates':deepcopy(request['aggregates'] or []),'group_by':request['group_by']}
     if operation=='more': query['scope']='all'
@@ -40,3 +40,18 @@ def compile_request(request, previous=None):
         raise ValueError('Для сравнения нужен показатель: цена за м², площадь, цена или оценка')
     Q.validate_query(query)
     return query,operation
+
+
+def set_visible_scope(s,marks):
+    """Привязать отсылку «эти квартиры» к странице того же снимка подборки."""
+    ids=(marks or {}).get('visible_listing_ids')
+    known={x['id'] for x in s.shown}
+    if ids is None:
+        s.selection_scope_ids=[x['id'] for x in s.shown]
+        return True
+    if ((marks or {}).get('selection_revision')!=s.selection_revision
+            or not isinstance(ids,list) or len(ids)>30 or any(not isinstance(i,str) for i in ids) or len(set(ids))!=len(ids)
+            or any(i not in known for i in ids) or (known and not ids)):
+        return False
+    s.selection_scope_ids=list(ids)
+    return True

@@ -78,6 +78,9 @@ async def check_map(s, listings: list[dict], announce: bool = False, kinds=None)
     ok = await geo.nearby(candidates[:30], kinds, budget_s=max(0, deadline - time.monotonic()),
                          on_progress=lambda:report_progress(s,(s.search or {}).get('listings') or listings,'map'))
     if s.search is not None:
+        checked=set(s.search.get('map_checked_kinds',[])) if s.search.get('map_checked_revision')==s.client_revision else set()
+        s.search['map_checked_revision']=s.client_revision
+        s.search['map_checked_kinds']=sorted(checked|set(kinds))
         reasons=s.search.setdefault('coverage_reasons',[])
         if not ok:
             reason='map_budget_exhausted' if time.monotonic()>=deadline else 'map_incomplete'
@@ -293,7 +296,8 @@ async def show_selection(s, query: dict | None = None) -> dict:
         raise ActionError(f'Неверный запрос к подборке: {exc}') from exc
     p, prefs, meta = s.profile, s.prefs, st["meta"]
     poi = set(prefs.poi) | {f['field'].split(':',1)[1] for f in effective['filters'] if f['field'].startswith('nearby:')}
-    if any(k not in (x.get('nearby') or {}) for x in st['pool'] for k in poi):
+    checked=set(st.get('map_checked_kinds',[])) if st.get('map_checked_revision')==s.client_revision else set()
+    if not poi.issubset(checked) and any(k not in (x.get('nearby') or {}) for x in st['pool'] for k in poi):
         st['map_ok'] = await check_map(s,st['pool'], kinds=list(poi))
     pool = [x for x in st['pool'] if passes_hard_filters(x,p)
             and x.get('district') not in prefs.districts_minus and selectable(x,prefs)
@@ -303,7 +307,8 @@ async def show_selection(s, query: dict | None = None) -> dict:
         unseen=[x for x in pool if x['id'] not in st['shown_ids']]
         if len(unseen)<effective['limit']:
             before=len(st['pool'])
-            await _more_pages(s,lambda:len(st['pool'])>before)
+            await _more_pages(s,lambda:sum(x['id'] not in st['shown_ids'] and selectable(x,prefs)
+                                         and x['id'] not in prefs.disliked for x in st['pool'])>=effective['limit'])
             pool += [x for x in st['pool'][before:] if passes_hard_filters(x,p)
                      and selectable(x,prefs) and x['id'] not in prefs.disliked
                      and x.get('district') not in prefs.districts_minus]
@@ -313,6 +318,7 @@ async def show_selection(s, query: dict | None = None) -> dict:
     result=Q.execute(data,effective,liked=prefs.liked,
                      shown=s.selection_scope_ids or [x['id'] for x in s.shown],seen=st['shown_ids'])
     batch=result.pop('items')
+    s.push('search_progress',on=False)
     if not batch:
         failed=Counter(label for x in st.get('listings',[]) for label in match(x,prefs)['failed'])
         reason=(' Проверенные объявления не проходят условия: '+', '.join(label for label,_ in failed.most_common(3))+'.'
@@ -346,7 +352,7 @@ async def show_selection(s, query: dict | None = None) -> dict:
     s.profile.pop('_last_issue',None)
     s.remember()
     s.push('result',step=4,kind='selection',data={
-        'cards':s.shown,'liked':prefs.liked,'disliked':prefs.disliked,'learned':prefs.learned(),
+        'cards':s.shown,'selection_revision':s.selection_revision,'liked':prefs.liked,'disliked':prefs.disliked,'learned':prefs.learned(),
         'confirmed_count':sum(x['match']['status']=='confirmed' for x in s.shown),
         'unverified_count':sum(x['match']['status']=='unverified' for x in s.shown),
         'query':effective,'remaining':result['remaining'],'total':result['total'],'aggregates':result['aggregates'],'groups':result['groups'],
@@ -394,6 +400,11 @@ async def wait_selection(s,effective,result):
         s.selection_dirty=True
         s.request_intent='selection'
         s.selection_operation='more'
+    elif d.get('action')=='liked':
+        s.selection_query={**Q.default_query(),'scope':'liked','limit':max(1,min(30,len(prefs.liked))),'sort':effective.get('sort',[])}
+        s.selection_dirty=True
+        s.request_intent='selection'
+        s.selection_operation='rank'
     elif d.get('action')=='proceed':
         s.call_targets=list(prefs.liked)
         if not prefs.liked and batch:
@@ -429,11 +440,12 @@ async def read_selection(s):
     if query['scope']!='shown' and s.search:
         meta=s.search.get('meta',{})
         rows=[{**x,'ranking':meta.get(x['id'],{}).get('ranking',x.get('ranking'))} for x in rows if selectable(x,s.prefs)]
-    result=Q.execute(rows,{**query,'limit':30},shown=[x['id'] for x in s.shown],liked=s.prefs.liked)
+    shown_ids=s.selection_scope_ids or [x['id'] for x in s.shown]
+    result=Q.execute(rows,{**query,'limit':30},shown=shown_ids,liked=s.prefs.liked)
     if operation=='compare':
         field=query['sort'][0]['field']
         known=[x for x in result['items'] if Q.field_value(x,field) is not None]
-        scope=set(s.prefs.liked if query['scope']=='liked' else [x['id'] for x in s.shown])
+        scope=set(s.prefs.liked if query['scope']=='liked' else shown_ids)
         unknown=sum(Q.field_value(x,field) is None for x in rows if query['scope']=='all' or x['id'] in scope)
         if len(known)<2:
             text=f'Для сравнения по показателю «{Q.FIELDS[field][1]}» недостаточно данных: известно {len(known)} значений. Карточки сохранил.'

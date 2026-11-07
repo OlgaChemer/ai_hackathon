@@ -14,6 +14,7 @@ export async function initAccount(opts = {}) {
 }
 
 function render() {
+  document.dispatchEvent(new CustomEvent('accountchange', {detail: {user}}));
   const slot = document.getElementById("account");
   slot.innerHTML = user
     ? html`<button class="account-btn" data-account="menu" aria-haspopup="menu" title="${user.email}">

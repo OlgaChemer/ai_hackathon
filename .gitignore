@@ -20,6 +20,7 @@ backend/data/cache/
 # база агента: пользователи, диалоги, объявления (SQLite)
 backend/data/*.db
 backend/data/*.db-*
+backend/data/workshop/
 
 # локальные модели (Whisper и т.п.)
 models/

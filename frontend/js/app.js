@@ -2,17 +2,19 @@
 import { initAccount } from "./account.js";
 import { api } from "./api.js";
 import { addGuard, addLine, createCall, renderCall, setPhase, setStatus, setTyping, showLearned, showSellerInput, updatePrices } from "./call.js";
-import { confirmCard, initCards, resolved, staleCards } from "./cards.js";
+import { confirmCard, initCards, resolved, staleCards, refreshPhoneAccess } from "./cards.js";
 import { savingsChart } from "./chart.js";
 import { initChats, refreshChats } from "./chats.js";
 import { el, html, sleep } from "./format.js";
 import { initShell, navigate, showAgent, showPage, syncShell, refreshContext, setChatExpanded } from "./shell.js";
-import { mountMap, unmountMap } from "./map.js";
+import { mountMap, unmountMap, focusMap } from "./map.js";
 import { $, addMsg, chatLog, config, resetState, stage, state } from "./state.js";
 import * as V from "./views.js";
 import { SELECTION_PROMPT, initVoiceChat, phoneActive, sayPrompt, talk } from "./voicechat.js";
 import { bindMic, recorder, voice } from "./voice.js";
 import { EffectQueue } from './effects.js';
+import { initWorkshop } from './workshop.js';
+initWorkshop();
 
 let gen = 0; // поколение диалога: события старого диалога отбрасываются
 let queue = [];
@@ -37,7 +39,7 @@ function viewFor(n) {
 
 function renderStage() {
   unmountMap(stage.querySelector("[data-map]"));
-  stage.innerHTML = state.results[4] ? V.selection(state.results[4], state.marks)
+  stage.innerHTML = state.results[4] ? V.selection(state.results[4], state.marks, state.selectionPage)
     : state.searching ? ""
     : V.waiting("Здесь появятся квартиры", "Расскажите агенту о бюджете, городе и пожеланиях. Профиль и решения останутся в чате.");
   if (state.selectionNotice) stage.prepend(el(html`<p class="hint" role="status">${state.selectionNotice}</p>`));
@@ -46,7 +48,7 @@ function renderStage() {
     stage.prepend(el(html`<div class="search-progress" role="status"><span class="search-spinner" aria-hidden="true"></span><span data-search-progress>${state.searching}</span></div>`));
   } else stage.removeAttribute("aria-busy");
   const map = stage.querySelector("[data-map]");
-  if (map && state.results[4]?.cards) mountMap(map, state.results[4].cards);
+  if (map && state.results[4]?.cards) mountMap(map, V.selectionPage(state.results[4].cards, state.selectionPage).cards);
   syncSelectionButtons();
 }
 
@@ -122,6 +124,7 @@ async function handle(ev, myGen) {
       if (!quiet && ev.role === "agent" && talk.on && !phoneActive()) talk.say(ev.text);
       break;
     case "result":
+      if (ev.kind === 'selection') state.searching = null;
       if (ev.kind === 'selection' && !ev.data.cards?.length && state.results[4]?.cards?.length) {
         state.selectionNotice = 'Последняя команда не дала результатов. Сохранена предыдущая подборка; она относится к прежним условиям.';
         if (!quiet) renderStage();
@@ -130,10 +133,12 @@ async function handle(ev, myGen) {
       if (ev.kind === 'selection') state.selectionNotice = null;
       state.results[ev.step] = ev.data;
       if (ev.kind === "profile") refreshContext(ev.data);
+      if (ev.kind === 'profile') document.dispatchEvent(new CustomEvent('profilechange',{detail:{chat_id:state.sid}}));
       if (![3, 4, 6].includes(ev.step)) renderChatResult(ev.step);
       if (ev.kind === "selection") setChatExpanded(false);
       if (ev.kind === "finance") state.strategy = ev.data.finance?.risk || null;
       if (ev.kind === "selection") {
+        state.selectionPage = 1;
         state.marks = { liked: new Set(ev.data.liked || []), disliked: new Set(ev.data.disliked || []) };
       }
       if (!quiet) renderStage();
@@ -151,6 +156,9 @@ async function handle(ev, myGen) {
       }
       if (ev.kind !== "clarify") state.awaiting = ev.kind === "selection" ? "selection" : null;
       if (ev.kind === "selection") {
+        const wasSearching = Boolean(state.searching);
+        state.searching = null;
+        if (wasSearching && !quiet) renderStage();
         state.cards.selection = true;
         syncSelectionButtons();
         if (!quiet) sayPrompt(SELECTION_PROMPT);
@@ -257,6 +265,7 @@ async function handle(ev, myGen) {
       if (ev.on) setChatExpanded(true);
       break;
     case "error":
+      state.searching = null;
       addMsg("error", ev.text);
       if (quiet) break;
       if (talk.on) talk.say(`Ошибка: ${ev.text}`);
@@ -443,6 +452,11 @@ async function sendText(text) {
   if (!state.sid) return start(text);
   $("query").value = "";
   const marks = { liked: [...state.marks.liked], disliked: [...state.marks.disliked] };
+  const selection = state.results[4];
+  if (Number.isInteger(selection?.selection_revision)) {
+    marks.visible_listing_ids = V.selectionPage(selection.cards, state.selectionPage).cards.map(c => c.id);
+    marks.selection_revision = selection.selection_revision;
+  }
   try {
     const r = await api.chatMessage(state.sid, text, marks);
     if (r.continued) {
@@ -472,7 +486,7 @@ async function selectionAction(action, said = null) {
   }
   state.awaiting = null;
   stage.querySelectorAll("[data-selection]").forEach((b) => (b.disabled = true));
-  const label = action === "proceed" ? "звонить по отмеченным" : "подобрать ещё";
+  const label = action === "proceed" ? "звонить по отмеченным" : action === 'liked' ? 'показать понравившиеся' : "подобрать ещё";
   try {
     await api.confirm(state.sid, "selection", true, {
       action, liked: [...state.marks.liked], disliked: [...state.marks.disliked], _label: label, ...(said ? { _said: said } : {}),
@@ -514,6 +528,24 @@ bindMic($("micBtn"), $("query"), {
 $("micBtn").hidden = false;
 
 async function handleResultClick(e) {
+  const favorites = e.target.closest('[data-favorites]');
+  if (favorites && !favorites.disabled) {
+    return state.awaiting === 'selection' ? selectionAction('liked') : sendText(`Покажи ${Math.min(30,state.marks.liked.size)} понравившихся квартир`);
+  }
+  const page = e.target.closest('[data-selection-page]');
+  if (page && !page.disabled && state.results[4]) {
+    state.selectionPage = V.selectionPage(state.results[4].cards, Number(page.dataset.selectionPage)).page;
+    renderStage();
+    const nav = stage.querySelector('[data-pagination="top"]');
+    nav?.scrollIntoView({behavior:'instant', block:'start'});
+    nav?.querySelector('[aria-current="page"]')?.focus({preventScroll:true});
+    return;
+  }
+  const mapButton = e.target.closest('[data-show-map]');
+  if (mapButton && !mapButton.disabled) {
+    await focusMap(stage.querySelector('[data-map]'), mapButton.dataset.showMap);
+    return;
+  }
   const vote = e.target.closest("[data-vote]");
   if (vote) return setVote(vote.closest("[data-id]").dataset.id, vote.dataset.vote, true);
   const sel = e.target.closest("[data-selection]");
@@ -549,6 +581,10 @@ function setVote(id, dir, toggle) {
   }
   const counter = stage.querySelector("[data-liked-count]");
   if (counter) counter.textContent = `(${liked.size})`;
+  const favorites = stage.querySelector('[data-favorites]');
+  if (favorites) favorites.disabled = !liked.size;
+  const favoriteCount = stage.querySelector('[data-favorites-count]');
+  if (favoriteCount) favoriteCount.textContent = `(${liked.size})`;
 }
 
 initCards({ sendText });
@@ -593,10 +629,20 @@ else {
   renderStage();
   route();
 }
-api.health().then((h) => {
+let healthRevision=0;
+async function refreshHealth(){
+ const revision=++healthRevision;
+ try{
+  const h=await api.health();if(revision!==healthRevision)return;
   recorder.available = Boolean(h.stt?.installed && h.stt.status !== "error");
+  const changed=config.phoneReady!==Boolean(h.phone?.ready);
   config.phoneReady = Boolean(h.phone?.ready);
+  if(changed)refreshPhoneAccess();
   config.sellerPhoneDefault = h.phone?.seller_phone || "";
   setProvider(h);
-})
-  .catch(() => setProvider({ provider: "offline", reason: "сервер недоступен" }));
+ }catch{
+  if(revision===healthRevision){config.phoneReady=false;refreshPhoneAccess();setProvider({provider:'offline',reason:'сервер недоступен'});}
+ }
+}
+document.addEventListener('accountchange',()=>{config.phoneReady=false;refreshPhoneAccess();refreshHealth();});
+refreshHealth();

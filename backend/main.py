@@ -34,6 +34,8 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(messag
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 app = FastAPI(title="Агент жизненных событий — Домклик")
+from .workshop.api import router as workshop_router
+app.include_router(workshop_router)
 app.middleware("http")(auth.visitor_middleware)
 
 
@@ -82,11 +84,19 @@ def _cooldown(s):
 @app.on_event("startup")
 async def _startup():
     db.configure()
+    from .workshop import store as workshop_store
+    db.required(workshop_store.recover)
     stt.preload_in_background()
     asyncio.create_task(_reaper())
     if settings.refresh_at:  # ночной обход объявлений внутри сервера (или отдельно: python -m backend.workers.refresh --once)
         from .workers import refresh
         asyncio.create_task(refresh.daily(settings.refresh_at))
+
+
+@app.on_event('shutdown')
+async def _workshop_shutdown():
+    from .workshop import service
+    await service.shutdown()
 
 
 async def _reaper():
@@ -120,6 +130,8 @@ class ClientMessage(BaseModel):
     text: str = Field(min_length=1, max_length=1000)
     liked: list[str] = []
     disliked: list[str] = []
+    visible_listing_ids: list[str] | None = Field(default=None,max_length=30)
+    selection_revision: int | None = Field(default=None,ge=0)
 
 
 class SpeakRequest(BaseModel):
@@ -144,7 +156,7 @@ class ProductRequest(BaseModel):
 
 
 @app.get("/api/health")
-async def health():
+async def health(request:Request):
     try:
         llm, reason = get_llm(), None
     except LLMError as exc:  # модель не настроена — агент не работает, интерфейс это покажет
@@ -159,7 +171,7 @@ async def health():
         "featured_cities": sources.FEATURED_CITIES,
         "stt": stt.status(),
         "places": places.status(),
-        "phone": phone.status(),
+        "phone": phone.status(auth.current_user(request)),
     }
 
 
@@ -223,13 +235,13 @@ async def speech_to_text(request: Request):
 
 
 def _check_pin(request: Request):
-    if not phone.allowed(request.headers.get("X-Phone-Pin")):
-        raise HTTPException(403, "Нужен PIN для звонков (PHONE_PIN в .env сервера)")
+    if not phone.allowed(request.headers.get("X-Phone-Pin"),auth.current_user(request)):
+        raise HTTPException(403, "Телефонные звонки доступны оператору. Войдите в разрешённый аккаунт или укажите операторский PIN.")
 
 
 @app.post("/api/phone")
 async def phone_config(req:PhoneRequest,request: Request):
-    """SIP-доступ Exolve для звонка из браузера. На публичном сервере — только с PIN."""
+    """SIP-доступ: операторский аккаунт или PIN, затем разрешение конкретной операции."""
     _check_pin(request)
     s=_session(req.chat_id,request)
     who=phone_access.actor(*auth.whoami(request))
@@ -429,12 +441,12 @@ async def chat_message(sid: str, req: ClientMessage, request: Request):
     _cooldown(live)
     if live is not None and (live.task is None or O.running(live)):  # агент ещё не запущен или работает
         live.voice_mode = req.voice_mode
-        kind = await live.receive_text(req.text.strip(), {"liked": req.liked, "disliked": req.disliked},req.command_id)
+        kind = await live.receive_text(req.text.strip(), req.model_dump(include={'liked','disliked','visible_listing_ids','selection_revision'}),req.command_id)
         return {"ok": True, "handled_as": kind, "continued": False}
     s = O.restore_session(sid, '', _llm())
     s.voice_mode = req.voice_mode
     after=s.seq
-    kind=await s.receive_text(req.text.strip(),{'liked':req.liked,'disliked':req.disliked},req.command_id)
+    kind=await s.receive_text(req.text.strip(),req.model_dump(include={'liked','disliked','visible_listing_ids','selection_revision'}),req.command_id)
     return {"ok": True, "handled_as": kind, "continued": True, "after": after}
 
 
