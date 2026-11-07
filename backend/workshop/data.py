@@ -161,4 +161,7 @@ def facts(snapshot):
     return {'kind':kind,'count':len(valid),'min_price':min(prices) if prices else None,
         'median_price':round(statistics.median(prices)) if prices else None,
         'median_price_per_m2':round(statistics.median(meters)) if meters else None,'groups':groups,
+        'rows':[{'id':x['id'],'address':x.get('address'),'rooms':x.get('rooms'),'price':x['price'],
+                 'area':x.get('area'),'price_per_m2':round(x['price']/x['area']) if x.get('area') and x['area']>0 else None}
+                for x in valid],
         'coverage':snapshot.get('coverage'),'whole_market':False}

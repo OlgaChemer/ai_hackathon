@@ -179,6 +179,8 @@ class WorkshopAPI(unittest.TestCase):
         self.assertEqual((coverage['received'],coverage['confirmed'],coverage['unverified']),(166,4,2))
         self.assertEqual(facts['count'],4)
         self.assertEqual(facts['median_price'],8_150_000)
+        self.assertEqual(facts['rows'][0]['price_per_m2'],round(rows[0]['price']/rows[0]['area']))
+        self.assertEqual(len(facts['rows']),4)
         self.assertEqual({x['id'] for x in sample['listings']},{'0','1','2','3'})
         self.assertEqual({x['id'] for x in sample['unverified_listings']},{'4','5'})
         self.assertEqual(coverage['origin'],'current_search')
