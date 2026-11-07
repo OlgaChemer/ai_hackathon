@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import shlex
+from contextlib import nullcontext
 
 from fastapi import FastAPI,Request,HTTPException
 import uvicorn
@@ -58,6 +59,7 @@ async def run(job_id,snapshot,llm,progress):
     bridge=Bridge(llm,snapshot['prompt'],progress)
     server=uvicorn.Server(uvicorn.Config(bridge.app,uds=str(socket),log_level='error',access_log=False,lifespan='off',timeout_graceful_shutdown=2))
     server.install_signal_handlers=lambda:None
+    server.capture_signals=lambda:nullcontext()
     server_task=asyncio.create_task(server.serve())
     process=None;name='mesto-workshop-'+job_id;docker=shlex.split(settings.workshop_docker)
     try:
@@ -74,8 +76,13 @@ async def run(job_id,snapshot,llm,progress):
             '--mount',f'type=bind,src={input_path.resolve()},dst=/input/data.json,readonly',
             '--mount',f'type=bind,src={bridge_dir.resolve()},dst=/bridge,readonly',settings.workshop_image]
         process=await asyncio.create_subprocess_exec(*cmd,stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.PIPE,limit=12_000_000)
+        diagnostic=bytearray()
         async def stderr():
-            while await process.stderr.read(4096):pass
+            while True:
+                chunk=await process.stderr.read(4096)
+                if not chunk:break
+                diagnostic.extend(chunk)
+                if len(diagnostic)>16000:del diagnostic[:-16000]
         errors=asyncio.create_task(stderr());result=None;total=0
         try:
             while True:
@@ -89,7 +96,9 @@ async def run(job_id,snapshot,llm,progress):
                 if event.get('type')=='failed':raise RuntimeError(event.get('text','Расчёт не завершён.'))
                 if event.get('type')=='complete':result=event
             code=await process.wait()
-            if code or not result:raise RuntimeError('Изолированный агент не завершил задание. Попробуйте ещё раз.')
+            if code or not result:
+                path=root/'runtime-error.log';path.write_bytes(diagnostic);path.chmod(0o600)
+                raise RuntimeError('Изолированный агент не завершил задание. Попробуйте ещё раз.')
             if result.get('metrics')!=snapshot['facts'] or result.get('code_runs',0)<1:raise RuntimeError('Проверка результата не пройдена.')
             artifact_dir=root/'artifacts';artifact_dir.mkdir(exist_ok=True,mode=0o700)
             names=[]
