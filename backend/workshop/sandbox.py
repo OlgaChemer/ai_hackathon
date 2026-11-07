@@ -43,6 +43,10 @@ class Bridge:
             messages[i]=m={k:v for k,v in m.items() if k in ('role','content','tool_calls','tool_call_id')}
             for c in m.get('tool_calls') or []:
                 if c.get('id') in self.states:m['functions_state_id']=self.states[c['id']]
+            if m['role']=='tool':
+                # В том числе ошибки валидации nanobot: GigaChat требует JSON.
+                try:json.loads(m.get('content') or '')
+                except (ValueError,TypeError):m['content']=json.dumps({'output':m.get('content')},ensure_ascii=False)
         # GigaChat допускает только одно system-сообщение в начале.
         # Одинаковая нормализация для обоих провайдеров; правила хоста первыми.
         instructions=[DOMAIN+self.prompt,*[str(m.get('content') or '') for m in messages if m['role']=='system']]

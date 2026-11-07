@@ -172,6 +172,8 @@ class WorkshopContracts(unittest.IsolatedAsyncioTestCase):
             await client.post('/chat',json={'messages':[{'role':'assistant','content':'','tool_calls':[{'id':'f1','function':{'name':'run_python','arguments':'{}'}}]},
                 {'role':'tool','tool_call_id':'f1','content':'1'}]})
             self.assertEqual(model.messages[-1][1]['functions_state_id'],'state-1')
+            await client.post('/chat',json={'messages':[{'role':'tool','tool_call_id':'f1','content':'Код возврата: 0'}]})
+            self.assertEqual(json.loads(model.messages[-1][1]['content']),{'output':'Код возврата: 0'})
             self.assertEqual((await client.post('/chat',json={'messages':[{'role':'user','content':'test'}],
                 'tools':[{'function':{'name':'call_seller','parameters':{}}}]})).status_code,403)
             bridge.calls=12
