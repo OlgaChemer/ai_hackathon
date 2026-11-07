@@ -96,9 +96,12 @@ async def run(job_id,snapshot,llm,progress):
     inspector=Inspector(snapshot,llm.name,progress)
     prompt=snapshot['prompt']
     if snapshot['kind']=='market':
+        coverage=snapshot.get('coverage') or {}
+        prompt+=f"\nОхват проверен сервером: подтверждённых объявлений {coverage.get('confirmed',len(snapshot['listings']))}; непроверенных {coverage.get('unverified',0)}; в расчёте {snapshot['facts']['count']}. Укажи именно эти количества. Непроверенные перечислены отдельно в unverified_listings, а не в listings."
         prompt+='\nДля исследования используй охват coverage: отдельно назови подтверждённые и непроверенные квартиры. '+\
             'В listings и основных метриках только подтверждённые; unverified_listings в статистику не входят. '+\
             'Площади и проверенные цены за м² по квартирам находятся в facts.rows; медиана метра — facts.median_price_per_m2. Используй готовые числа, не объявляй их отсутствующими. '+\
+            'Прочие признаки проверяй в listings: отсутствие поля в кратких facts.rows не означает, что его нет в объявлении. '+\
             'Если small_sample=true, это небольшая выборка: сравни найденное, но не делай выводов о всём рынке или трендах. '+\
             'origin=current_search означает сохранённые данные текущего подбора, а не новый обход объявлений.'
     bridge=Bridge(llm,prompt,progress,inspector)
