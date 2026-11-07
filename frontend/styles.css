@@ -1398,3 +1398,14 @@ body[data-page="agent"]:has(.chat.expanded) :is(.site-header,.stage,.footnote) {
 .talk-settings select { min-width:0; max-width:75%; border:1px solid var(--line); border-radius:8px; background:var(--surface); padding:6px; font-size:16px; }
 .talk-settings input { width:100%; accent-color:var(--green); }
 .talk-settings small { color:var(--ink-3); }
+/* Личная премиум-мастерская */
+.workshop{width:min(920px,94vw);max-height:90dvh;overflow:auto;border:1px solid var(--line,#dbe7e0);border-radius:22px;padding:26px;color:var(--ink,#12382a);background:#fff}
+.workshop::backdrop{background:rgba(10,35,24,.4)}
+.workshop-header,.workshop-actions,.workshop-kinds{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.workshop-header{justify-content:space-between}.workshop-header h2{margin:0}.workshop label{display:block;margin:14px 0}
+.workshop select,.workshop textarea,.workshop input[type=number]{display:block;width:100%;padding:11px;border:1px solid #dbe7e0;border-radius:10px;font:inherit;margin-top:6px}
+.workshop-assumptions{display:grid;grid-template-columns:1fr 1fr;gap:18px}.workshop [data-progress]{padding-top:14px;color:#357e49}
+.workshop-report{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.65;margin:16px 0}.workshop pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;max-height:300px;overflow:auto}
+.workshop-facts table{width:100%;border-collapse:collapse;min-width:520px}.workshop-facts th,.workshop-facts td{padding:10px;text-align:left;border-bottom:1px solid #dbe7e0;font-size:13px}
+.workshop [data-history]{display:flex;gap:10px;flex-wrap:wrap}.workshop [data-result]{margin:14px 0}.workshop [hidden]{display:none!important}
+@media(max-width:600px){.workshop{padding:18px;width:96vw}.workshop-assumptions{grid-template-columns:1fr;gap:0}#workshopButton{font-size:11px;padding:7px}}

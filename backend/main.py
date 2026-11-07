@@ -34,6 +34,8 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(messag
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 app = FastAPI(title="Агент жизненных событий — Домклик")
+from .workshop.api import router as workshop_router
+app.include_router(workshop_router)
 app.middleware("http")(auth.visitor_middleware)
 
 
@@ -82,11 +84,19 @@ def _cooldown(s):
 @app.on_event("startup")
 async def _startup():
     db.configure()
+    from .workshop import store as workshop_store
+    db.required(workshop_store.recover)
     stt.preload_in_background()
     asyncio.create_task(_reaper())
     if settings.refresh_at:  # ночной обход объявлений внутри сервера (или отдельно: python -m backend.workers.refresh --once)
         from .workers import refresh
         asyncio.create_task(refresh.daily(settings.refresh_at))
+
+
+@app.on_event('shutdown')
+async def _workshop_shutdown():
+    from .workshop import service
+    await service.shutdown()
 
 
 async def _reaper():

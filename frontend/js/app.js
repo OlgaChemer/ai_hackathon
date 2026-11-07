@@ -13,6 +13,8 @@ import * as V from "./views.js";
 import { SELECTION_PROMPT, initVoiceChat, phoneActive, sayPrompt, talk } from "./voicechat.js";
 import { bindMic, recorder, voice } from "./voice.js";
 import { EffectQueue } from './effects.js';
+import { initWorkshop } from './workshop.js';
+initWorkshop();
 
 let gen = 0; // поколение диалога: события старого диалога отбрасываются
 let queue = [];
