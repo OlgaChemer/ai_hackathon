@@ -168,10 +168,48 @@ export function confirmCard(ev) {
         <dt>Комнат</dt><dd>${p.rooms_options?.length > 1 ? p.rooms_options.join("–") : p.rooms === 0 ? "студия" : p.rooms}</dd>
         <dt>Агент соглашается сам</dt><dd>${p.authority_rule}</dd>
       </dl>
-      <label style="margin-top:8px">Бюджет, ₽ — выше агент не пойдёт
-        <input type="number" step="50000" min="1000000" value="${p.budget_max}" data-budget>
-      </label>`;
-    collect = () => ({ budget_max: Number(extra.querySelector("[data-budget]").value) || p.budget_max });
+      <div class="price-range" data-price-range>
+        <div class="price-range__head">
+          <span>Ниже не предлагаю — <b data-min-label></b></span>
+          <span>Выше не торгуюсь — <b data-max-label></b></span>
+        </div>
+        <div class="price-range__track">
+          <div class="price-range__fill" data-fill></div>
+          <input type="range" data-min-range aria-label="Нижняя граница цены">
+          <input type="range" data-max-range aria-label="Верхняя граница цены">
+        </div>
+        <p class="hint">По умолчанию нижняя граница на 30% ниже верхней — квартиры дешевле в подборку не попадут.</p>
+      </div>`;
+    const step = Number(p.step) || 500000;
+    const floor = Number(p.floor) || 1000000;
+    const top = Math.max(Math.round((p.budget_max * 1.5) / step) * step, p.budget_max + step);
+    const lo0 = Math.max(floor, Math.min(Number(p.budget_min) || Math.round((p.budget_max * 0.7) / step) * step, p.budget_max - step));
+    const rangeMin = extra.querySelector("[data-min-range]");
+    const rangeMax = extra.querySelector("[data-max-range]");
+    const fill = extra.querySelector("[data-fill]");
+    const minLabel = extra.querySelector("[data-min-label]");
+    const maxLabel = extra.querySelector("[data-max-label]");
+    for (const input of [rangeMin, rangeMax]) {
+      input.min = String(floor); input.max = String(top); input.step = String(step);
+    }
+    rangeMin.value = String(lo0);
+    rangeMax.value = String(Math.max(lo0 + step, p.budget_max));
+    const draw = (changed) => {
+      let lo = Number(rangeMin.value), hi = Number(rangeMax.value);
+      if (lo > hi - step) {
+        if (changed === "min") { lo = hi - step; rangeMin.value = String(lo); }
+        else { hi = lo + step; rangeMax.value = String(hi); }
+      }
+      const span = top - floor || 1;
+      fill.style.left = `${((lo - floor) / span) * 100}%`;
+      fill.style.width = `${((hi - lo) / span) * 100}%`;
+      minLabel.textContent = rub(lo);
+      maxLabel.textContent = rub(hi);
+    };
+    rangeMin.addEventListener("input", () => draw("min"));
+    rangeMax.addEventListener("input", () => draw("max"));
+    draw();
+    collect = () => ({ budget_min: Number(rangeMin.value), budget_max: Number(rangeMax.value) });
   }
   if (ev.kind === "finance") {
     extra.innerHTML = financeForm(ev);
@@ -210,7 +248,7 @@ export function confirmCard(ev) {
   const hint = voiceHint(ev);
   card.dataset.hint = hint;
   const spoken = {
-    red_lines: () => `Подтвердите верхний лимит покупки: ${[ev.payload.city, ...(ev.payload.cities || [])].join(", ")}, ${roomDescription(ev.payload.rooms_options?.length ? ev.payload.rooms_options : [ev.payload.rooms])}, до ${rub(ev.payload.budget_max)}. Выше этой суммы я не пойду. Итоговую цену подтверждаете вы.`,
+    red_lines: () => `Подтвердите диапазон цены: ${[ev.payload.city, ...(ev.payload.cities || [])].join(", ")}, ${roomDescription(ev.payload.rooms_options?.length ? ev.payload.rooms_options : [ev.payload.rooms])}, от ${rub(ev.payload.budget_min || Math.round(ev.payload.budget_max * 0.7))} до ${rub(ev.payload.budget_max)}. Выше не пойду, ниже предлагать не буду. Итоговую цену подтверждаете вы.`,
     finance: () => `${ev.title}.`,
     payment: () => `${ev.title}`,
     family: () => "Есть ли у вас дети? Возраст и маткапитал можно указать на карточке.",

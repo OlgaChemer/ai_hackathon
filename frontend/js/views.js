@@ -36,7 +36,7 @@ export function profile(p) {
     <dl class="facts">
       <div><dt>Город</dt><dd>${[p.city, ...(p.cities || []).filter(c => c !== p.city)].filter(Boolean).join(", ") || "уточню"}${p.okrug ? `, ${p.okrug}` : ""}</dd></div>
       <div><dt>Комнат</dt><dd>${rooms}</dd></div>
-      <div><dt>Бюджет до</dt><dd class="num">${p.budget_max ? rub(p.budget_max) : p.field_states?.budget_max==='unrestricted' ? "без ограничения" : "не задан · поиск без ограничения"}${html.raw(p.budget_source ? html`<small class="dd-note">${p.budget_source}</small>` : "")}</dd></div>
+      <div><dt>Бюджет</dt><dd class="num">${p.budget_max ? (p.budget_min ? `${rub(p.budget_min)} – ${rub(p.budget_max)}` : rub(p.budget_max)) : p.field_states?.budget_max==='unrestricted' ? "без ограничения" : "не задан · поиск без ограничения"}${html.raw(p.budget_source ? html`<small class="dd-note">${p.budget_source}</small>` : "")}</dd></div>
       <div><dt>Районы</dt><dd>${p.districts?.length ? p.districts.join(", ") : "любые"}</dd></div>
       <div><dt>Расположение</dt><dd>${p.prefer_center ? "желательно ближе к центру" : "по вашим пожеланиям"}</dd></div>
       <div><dt>Кухня</dt><dd>${p.kitchen_min ? `от ${p.kitchen_min} м²` : "любая"}</dd></div>

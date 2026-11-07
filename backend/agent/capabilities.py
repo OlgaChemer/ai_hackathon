@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from . import finance
 from .profile import missing_required,missing_search
 
-CORE_FIELDS=frozenset(('city','rooms','budget_max','okrug','housing','rooms_options','cities','districts','prefer_center','center_required'))
+CORE_FIELDS=frozenset(('city','rooms','budget_max','budget_min','okrug','housing','rooms_options','cities','districts','prefer_center','center_required'))
 FILTER_FIELDS=frozenset(('features','poi','kitchen_min','area_min','not_first_floor','not_last_floor',
                         'condition','material','year_min','metro_max_minutes','soft_criteria',
                         'clear_criteria','avoid_districts','filters','wishes'))

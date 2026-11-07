@@ -56,7 +56,7 @@ def choice(*values):
 
 CONFIRMATIONS = {
     "clarify": {}, "price": {}, "object": {}, "sign": {},
-    "red_lines": {"budget_max": number(100_000)},
+    "red_lines": {"budget_max": number(100_000), "budget_min": number(100_000)},
     "call": {"mode": choice("auto", "human", "phone"),
              'phone_grant_id':{'type':'string','maxLength':40},
              "questions":{"type":"array","maxItems":15,"items":{"type":"string","maxLength":300}}},
