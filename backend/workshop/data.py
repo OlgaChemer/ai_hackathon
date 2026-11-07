@@ -7,14 +7,29 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from ..db.models import Chat,Listing
 
-KINDS={'repair':'Оценка ремонта','compare':'Сравнение полной стоимости','market':'Исследование рынка'}
+KINDS={'repair':'Сценарии ремонта','compare':'Сравнение квартир','market':'Исследование рынка'}
+SCENARIOS=[
+    {'key':'minimal','label':'Минимальный','rate_min':5000,'rate_max':10000,'scope':'Локальные исправления и подготовка к проживанию'},
+    {'key':'cosmetic','label':'Косметический','rate_min':12000,'rate_max':22000,'scope':'Обновление стен, потолков и покрытий'},
+    {'key':'capital','label':'Капитальный','rate_min':30000,'rate_max':50000,'scope':'Полная отделка; состав работ с коммуникациями уточняется после осмотра'},
+]
+
+
+def analysis_assumptions(kind):
+    if kind!='repair':return {}
+    return {'scenarios':deepcopy(SCENARIOS),'reserve_pct':15,
+            'nature':'Демонстрационные расчётные диапазоны за м², не рыночные котировки и не смета подрядчика. '
+                     'Работы и базовые материалы условно включены; мебель, техника и скрытые дефекты не оценены. Регион и объём требуют уточнения.'}
 
 
 def clean_listing(x):
     keys=('id','url','source','source_name','city','district','address','rooms','area','price','kitchen','floor',
-          'floors','condition','year','is_new','deadline','delivery_year','nearby','description','provenance','photo','photos')
+          'floors','condition','material','year','is_new','deadline','delivery_year','nearby','nearby_evidence',
+          'metro','lat','lng','features','match','description','provenance','photo','photos')
     row={k:deepcopy(x[k]) for k in keys if k in x}
     row['description']=str(row.get('description') or '')[:1200]
+    if isinstance(row.get('nearby'),list):
+        row['nearby']={p['kind']:p if p.get('dist') is not None else None for p in row['nearby']}
     return row
 
 
@@ -25,7 +40,9 @@ def context(connection,uid,chat_id=None,liked=None):
     if chat_id and c is None:raise HTTPException(404,'Диалог недоступен.')
     if c is None:return {'chats':choices,'chat_id':None,'profile':{},'liked':[],'revision':0}
     state=(c.state or {}).get('data',{})
-    profile=state.get('profile') or c.profile or {}
+    from ..agent.profile import profile_summary,merge_profile
+    profile={k:deepcopy(v) for k,v in (state.get('profile') or c.profile or {}).items() if not k.startswith('_') and k!='market'}
+    if profile:profile['summary']=profile_summary(merge_profile(profile))
     search=state.get('search') or {}
     rows={x['id']:x for x in [*(search.get('listings') or []),*(state.get('shown') or [])] if x.get('id')}
     # Для старых диалогов восстанавливаем только действительно показанные данные.
@@ -43,7 +60,9 @@ def context(connection,uid,chat_id=None,liked=None):
     if set(ids)-set(rows):raise HTTPException(422,'Часть понравившихся квартир не удалось восстановить. Откройте подбор и обновите отметки.')
     selected=[clean_listing(rows[i]) for i in ids if i in rows]
     return {'chats':choices,'chat_id':c.id,'profile':deepcopy(profile),'liked':selected,
-            'revision':state.get('profile_revision',0),'selection_revision':state.get('selection_revision',0)}
+            'repair_assumptions':analysis_assumptions('repair'),
+            'revision':state.get('profile_revision',0),'selection_revision':state.get('selection_revision',0),
+            'updating':any(i['seq']>state.get('request_review_seq',0) for i in state.get('request_inputs') or [])}
 
 
 def assumptions(rate,reserve):
@@ -54,6 +73,27 @@ def assumptions(rate,reserve):
 
 def facts(snapshot):
     rows=snapshot['listings'];kind=snapshot['kind'];a=snapshot['assumptions']
+    if snapshot.get('analysis_version')==2 and kind in ('repair','compare'):
+        from .. import geo
+        from ..agent import criteria
+        result=[]
+        for x in rows:
+            area=x.get('area');price=x.get('price')
+            area=area if type(area) in (int,float) and math.isfinite(area) and area>0 else None
+            price=price if type(price) in (int,float) and math.isfinite(price) and price>0 else None
+            row={'id':x['id'],'address':x.get('address') or x['id'],'area':area}
+            if kind=='repair':
+                row['scenarios']=[{'key':s['key'],'label':s['label'],
+                    'base_min':round(area*s['rate_min']) if area is not None else None,
+                    'base_max':round(area*s['rate_max']) if area is not None else None,
+                    'cost_min':round(area*s['rate_min']*(1+a['reserve_pct']/100)) if area is not None else None,
+                    'cost_max':round(area*s['rate_max']*(1+a['reserve_pct']/100)) if area is not None else None} for s in a['scenarios']]
+            else:
+                row.update(price=price,price_per_m2=round(price/area) if price is not None and area is not None else None,
+                    district=x.get('district'),condition=x.get('condition'),metro=x.get('metro'),
+                    nearby=geo.summary(x,['school','kindergarten','park']),criteria=criteria.evaluate(snapshot['profile'],x))
+            result.append(row)
+        return {'kind':kind,'version':2,'assumptions':a,'rows':result,'count':len(result)}
     if kind in ('repair','compare'):
         result=[]
         for x in rows:

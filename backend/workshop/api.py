@@ -19,7 +19,7 @@ class JobRequest(BaseModel):
     chat_id:str=Field(min_length=1,max_length=32)
     kind:Literal['repair','compare','market']
     prompt:str=Field(default='',max_length=1000)
-    liked:list[str]|None=Field(default=None,max_length=20)
+    liked:list[str]|None=Field(default=None,max_length=30)
     rate:float=Field(default=30000,ge=0,le=300000)
     reserve:float=Field(default=15,ge=0,le=100)
     whole_city:StrictBool=False

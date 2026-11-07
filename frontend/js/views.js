@@ -325,6 +325,7 @@ export function selection(d, marks, page = 1) {
     <div class="offers">${html.raw(view.cards.map((c, i) => offerCard(c, vote(c.id), view.offset + i + 1)).join(""))}</div>
     ${html.raw(pagination(view, d.cards.length, 'bottom'))}
     <div class="sel-actions">
+      <button class="btn btn-ghost" data-favorites ${marks.liked.size ? '' : 'disabled'}>Показать понравившиеся <span data-favorites-count>(${marks.liked.size})</span></button>
       <button class="btn btn-ghost" data-selection="more">Подобрать ещё с учётом отметок</button>
       <button class="btn btn-primary" data-selection="proceed">Звонить по отмеченным <span data-liked-count>(${marks.liked.size})</span></button>
     </div>

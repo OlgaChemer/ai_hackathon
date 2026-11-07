@@ -6,7 +6,7 @@ import {markdown} from './markdown.js';
 const LABELS={repair:'Ремонт понравившихся',compare:'Сравнение квартир',market:'Исследование рынка'};
 const TERMINAL=new Set(['completed','failed','refused','needs_input','interrupted','cancelled']);
 let dialog=null,context=null,kind='repair',timer=null,current=null;
-let threadJobs=[],viewSeq=0;
+let threadJobs=[],viewSeq=0,contextSeq=0;
 
 async function request(path,options={}) {
   const response=await fetch('/api/workshop'+path,{headers:{'Content-Type':'application/json'},...options});
@@ -21,23 +21,24 @@ export function initWorkshop(){
     if(button.hidden&&dialog)dialog.close();
   });
   button.addEventListener('click',open);
+  document.addEventListener('profilechange',event=>{
+    if(dialog && context?.chat_id===event.detail.chat_id)loadContext(context.chat_id).catch(e=>error(e.message));
+  });
 }
 
 async function open(){
   dialog?.close();
-  current=null;threadJobs=[];viewSeq++;
+  current=null;context=null;threadJobs=[];viewSeq++;
   dialog=el(html`<dialog class="workshop" aria-labelledby="workshopTitle">
     <div class="workshop-header"><div><p class="eyebrow">Личная аналитика · Премиум</p><h2 id="workshopTitle">ИИ-мастерская</h2></div><button class="btn btn-ghost" data-close aria-label="Закрыть мастерскую">Закрыть</button></div>
     <p>Работаем с вашим подбором и реальными объявлениями. Загружать файлы не нужно.</p>
     <label>Подбор<select data-chat aria-label="Выбранный подбор"></select></label>
     <p data-context class="muted" role="status">Получаю ваши подборы…</p>
     <div class="workshop-kinds" role="group" aria-label="Задача"><button class="btn" data-kind="repair">Оценить ремонт</button><button class="btn btn-ghost" data-kind="compare">Сравнить квартиры</button><button class="btn btn-ghost" data-kind="market">Исследовать рынок</button></div>
-    <form data-form><div class="workshop-assumptions">
-      <label>Ремонт, ₽/м²<input data-rate type="number" min="0" max="300000" step="1000" value="30000" required></label>
-      <label>Запас на ремонт, %<input data-reserve type="number" min="0" max="100" step="1" value="15" required></label></div>
-      <p class="small muted" data-assumption-note>Сценарные ставки для сравнения, а не рыночная смета. Их можно изменить.</p>
+    <form data-form><p data-mode-note></p><div class="workshop-assumptions" data-repair-scenarios></div>
+      <p class="small muted" data-assumption-note></p>
       <label class="workshop-checkbox" data-wide-wrap hidden><input data-wide type="checkbox"><span>Исследовать весь город без фильтров подбора<small>Условия покупки в основном диалоге сохранятся.</small></span></label>
-      <label>Что ещё учесть?<textarea data-prompt maxlength="1000" rows="3" placeholder="Например: сравни затраты и цену метра, объясни компромиссы. Можно оставить пустым."></textarea></label>
+      <label>Что ещё учесть?<textarea data-prompt maxlength="1000" rows="3"></textarea></label>
       <div class="workshop-actions"><button class="btn btn-primary" data-start type="submit">Оценить ремонт</button><button class="btn btn-ghost" data-cancel type="button" hidden>Остановить</button></div>
     </form><p data-error class="auth-error" role="alert" hidden></p>
     <section data-progress role="status" aria-live="polite"></section>
@@ -53,6 +54,7 @@ async function open(){
   dialog.addEventListener('close',()=>{clearTimeout(timer);viewSeq++;dialog.remove();dialog=null;});
   dialog.querySelectorAll('[data-kind]').forEach(button=>button.onclick=()=>setKind(button.dataset.kind));
   dialog.querySelector('[data-chat]').onchange=()=>loadContext(dialog.querySelector('[data-chat]').value);
+  dialog.querySelector('[data-wide]').onchange=renderContext;
   dialog.querySelector('[data-form]').onsubmit=start;
   dialog.querySelector('[data-followup]').onsubmit=ask;
   dialog.querySelector('[data-cancel]').onclick=async()=>{try{watch(await request('/jobs/'+current.id+'/cancel',{method:'POST'}));}catch(e){error(e.message);}};
@@ -65,30 +67,48 @@ function error(message){if(!dialog)return;const node=dialog.querySelector('[data
 function setKind(next){
   kind=next;
   dialog.querySelectorAll('[data-kind]').forEach(button=>{const active=button.dataset.kind===kind;button.classList.toggle('btn-ghost',!active);button.setAttribute('aria-pressed',String(active));});
-  dialog.querySelector('.workshop-assumptions').hidden=kind==='market';
-  dialog.querySelector('[data-assumption-note]').hidden=kind==='market';
+  dialog.querySelector('.workshop-assumptions').hidden=kind!=='repair';
+  dialog.querySelector('[data-assumption-note]').hidden=kind!=='repair';
   dialog.querySelector('[data-wide-wrap]').hidden=kind!=='market';
   dialog.querySelector('[data-start]').textContent=LABELS[kind];
+  dialog.querySelector('[data-mode-note]').textContent={repair:'Три варианта для каждой квартиры: минимальный, косметический и капитальный ремонт. Учтём видимое состояние по фото; задавать бюджет ремонта не нужно.',compare:'Сравним состояние, расположение, метро, школы, садики, парки, площадь и цену. Объясним, какую квартиру лучше выбрать под ваши приоритеты. Стоимость ремонта здесь не считаем.',market:'Новое исследование использует текущие принятые условия выбранного диалога. Старые отчёты и вопросы по ним сохраняют свой исходный снимок.'}[kind];
+  dialog.querySelector('[data-prompt]').placeholder={repair:'Например: нужны базовые материалы, мебель пока не учитывать.',compare:'Например: важнее садик и школа, чем площадь. Какая квартира лучше для семьи?',market:'Например: сравни цены за м² и районы по текущим условиям.'}[kind];
+  renderContext();
 }
 
 async function loadContext(id){
-  context=await request('/context'+(id?'?chat_id='+encodeURIComponent(id):''));if(!dialog)return;
+  const seq=++contextSeq;
+  const next=await request('/context'+(id?'?chat_id='+encodeURIComponent(id):''));if(!dialog||seq!==contextSeq)return;
+  context=next;
   const select=dialog.querySelector('[data-chat]');select.replaceChildren();
   for(const chat of context.chats){const option=document.createElement('option');option.value=chat.id;option.textContent=chat.title;select.append(option);}
   select.value=context.chat_id||'';
+  renderContext();
+  dialog.querySelector('[data-start]').disabled=!context.chat_id||context.updating||Boolean(current&&!TERMINAL.has(current.status));
+}
+
+function renderContext(){
+  if(!dialog||!context)return;
   const count=context.chat_id===state.sid?state.marks.liked.size:context.liked.length;
+  const wide=kind==='market'&&dialog.querySelector('[data-wide]').checked;
   dialog.querySelector('[data-context]').textContent=context.chat_id
-    ? `${context.profile.city||'Город пока не указан'} · понравившихся квартир: ${count}. Для ремонта и сравнения отметьте «Нравится» в подборе.`
+    ? `${wide ? context.profile.city+' · весь город без фильтров комнат, бюджета и пожеланий.' : context.profile.summary||context.profile.city||'Город пока не указан'} · понравившихся квартир: ${count}.${context.updating?' Применяются новые пожелания — дождитесь обновления.':''}`
     : 'Сначала начните подбор квартир с агентом.';
-  dialog.querySelector('[data-start]').disabled=!context.chat_id;
+  const assumptions=context.repair_assumptions;
+  const scenarios=dialog.querySelector('[data-repair-scenarios]');scenarios.replaceChildren();
+  for(const s of assumptions?.scenarios||[]){const block=document.createElement('div');const title=document.createElement('strong');title.textContent=s.label;const text=document.createElement('p');text.textContent=`${s.rate_min.toLocaleString('ru-RU')}–${s.rate_max.toLocaleString('ru-RU')} ₽/м² · ${s.scope}`;block.append(title,text);scenarios.append(block);}
+  dialog.querySelector('[data-assumption-note]').textContent=assumptions ? `${assumptions.nature} Запас ${assumptions.reserve_pct}% показан отдельно в расчёте.` : '';
 }
 
 async function start(event){
   event.preventDefault();error('');if(!context?.chat_id)return;
   const button=dialog.querySelector('[data-start]');button.disabled=true;
+  try{await loadContext(dialog.querySelector('[data-chat]').value||context.chat_id);}catch(e){error(e.message);button.disabled=false;return;}
+  if(!dialog||!context?.chat_id)return;
+  if(context.updating){error('Дождитесь применения последних пожеланий, затем запустите исследование.');return;}
+  button.disabled=true;
   const payload={command_id:crypto.randomUUID(),chat_id:context.chat_id,kind,
-    prompt:dialog.querySelector('[data-prompt]').value.trim(),rate:Number(dialog.querySelector('[data-rate]').value),
-    reserve:Number(dialog.querySelector('[data-reserve]').value),whole_city:kind==='market'&&dialog.querySelector('[data-wide]').checked,
+    prompt:dialog.querySelector('[data-prompt]').value.trim(),whole_city:kind==='market'&&dialog.querySelector('[data-wide]').checked,
     liked:context.chat_id===state.sid?[...state.marks.liked]:null};
   try{let job;try{job=await request('/jobs',{method:'POST',body:JSON.stringify(payload)});}catch(e){
       // Сетевой повтор имеет тот же ID; сервер не запустит работу дважды.
@@ -146,6 +166,8 @@ function renderEntry(job,index,output){
     const title=document.createElement(index?'h4':'h3');title.textContent=index?'Ответ на ваш вопрос':LABELS[job.kind];article.append(title);
     if(!index){
       const note=document.createElement('p');note.className='small muted';note.textContent='Данные на '+new Date(job.result.source_time).toLocaleString('ru-RU')+'. Исследование не изменяет условия покупки.';article.append(note);
+      if(job.result.scope){const scope=document.createElement('p');scope.className='small muted';scope.dataset.reportScope='';
+        scope.textContent='Условия этого отчёта: '+(job.result.scope.whole_city ? `${job.result.scope.city} · весь город без фильтров` : job.result.scope.summary||[job.result.scope.city,job.result.scope.rooms_options?.length?job.result.scope.rooms_options.join(' / ')+' комн.':job.result.scope.rooms!=null?job.result.scope.rooms+' комн.':'любая комнатность',job.result.scope.budget_max?'до '+job.result.scope.budget_max.toLocaleString('ru-RU')+' ₽':'без ограничения бюджета'].filter(Boolean).join(' · '));article.append(scope);}
     }
     article.append(markdown(job.result.text));
     if(job.result.visual_analysis?.length)article.append(photoEvidence(job.result.visual_analysis));
@@ -184,7 +206,17 @@ function factTable(facts){
   const money=value=>typeof value==='number'&&Number.isFinite(value)?Math.round(value).toLocaleString('ru-RU')+' ₽':'Нет данных';
   const note=document.createElement('p');
   let headers,rows;
-  if(facts.kind==='market'){
+  if(facts.version===2&&facts.kind==='repair'){
+    note.textContent=`Три сценария, в итоговых диапазонах уже учтён запас ${facts.assumptions.reserve_pct}%. ${facts.assumptions.nature}`;
+    headers=['Квартира','Площадь','Минимальный','Косметический','Капитальный'];
+    rows=facts.rows.map(r=>[r.address,r.area===null?'Нет данных':r.area+' м²',...r.scenarios.map(s=>s.cost_min===null?'Нет данных':`${money(s.cost_min)} – ${money(s.cost_max)}`)]);
+  }else if(facts.version===2&&facts.kind==='compare'){
+    note.textContent='Сравнение самих квартир: состояние, метро и инфраструктура. Неизвестные признаки требуют проверки. Стоимость ремонта в цену не добавляется.';
+    headers=['Квартира','Площадь','Цена','Цена за м²','Состояние','Метро','Объекты рядом'];
+    rows=facts.rows.map(r=>[r.address,r.area===null?'Нет данных':r.area+' м²',money(r.price),money(r.price_per_m2),r.condition||'Нет данных',
+      r.metro?[r.metro.name,r.metro.minutes?`${r.metro.minutes} мин`:null,r.metro.mode].filter(Boolean).join(' · '):'Нет данных',
+      r.nearby?.length?r.nearby.map(p=>`${p.label}: ${p.dist===null?'не найдено в радиусе 1 км':Math.round(p.dist)+' м по прямой'}`).join('; '):'Нет проверенных данных']);
+  }else if(facts.kind==='market'){
     note.textContent=`Проверенная выборка: ${facts.count} объявлений. Медианная цена ${money(facts.median_price)}, медианная цена метра ${money(facts.median_price_per_m2)}. Это полученная выборка, а не весь рынок.`;
     headers=['Комнаты','Объявлений','Медианная цена'];rows=facts.groups.map(g=>[g.rooms===null?'Не указаны':g.rooms===0?'Студии':g.rooms,g.count,money(g.median_price)]);
   }else{

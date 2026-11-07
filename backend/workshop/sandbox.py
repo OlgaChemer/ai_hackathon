@@ -152,7 +152,8 @@ async def run(job_id,snapshot,llm,progress):
             return {'text':result['text'],'facts':snapshot['facts'],'artifacts':names,'code_runs':result['code_runs'],
                     'data_revision':snapshot.get('revision'),'source_time':snapshot['source_time'],
                     'visual_analysis':list(inspector.results.values()),
-                    'scope':{k:snapshot['profile'].get(k) for k in ('city','rooms','rooms_options','budget_max','housing')}}
+                    'scope':{**{k:snapshot['profile'].get(k) for k in ('city','rooms','rooms_options','budget_max','housing','summary')},
+                             'whole_city':snapshot.get('whole_city',False)}}
         finally:
             errors.cancel();await asyncio.gather(errors,return_exceptions=True)
     finally:

@@ -132,6 +132,7 @@ async function handle(ev, myGen) {
       if (ev.kind === 'selection') state.selectionNotice = null;
       state.results[ev.step] = ev.data;
       if (ev.kind === "profile") refreshContext(ev.data);
+      if (ev.kind === 'profile') document.dispatchEvent(new CustomEvent('profilechange',{detail:{chat_id:state.sid}}));
       if (![3, 4, 6].includes(ev.step)) renderChatResult(ev.step);
       if (ev.kind === "selection") setChatExpanded(false);
       if (ev.kind === "finance") state.strategy = ev.data.finance?.risk || null;
@@ -480,7 +481,7 @@ async function selectionAction(action, said = null) {
   }
   state.awaiting = null;
   stage.querySelectorAll("[data-selection]").forEach((b) => (b.disabled = true));
-  const label = action === "proceed" ? "звонить по отмеченным" : "подобрать ещё";
+  const label = action === "proceed" ? "звонить по отмеченным" : action === 'liked' ? 'показать понравившиеся' : "подобрать ещё";
   try {
     await api.confirm(state.sid, "selection", true, {
       action, liked: [...state.marks.liked], disliked: [...state.marks.disliked], _label: label, ...(said ? { _said: said } : {}),
@@ -522,6 +523,10 @@ bindMic($("micBtn"), $("query"), {
 $("micBtn").hidden = false;
 
 async function handleResultClick(e) {
+  const favorites = e.target.closest('[data-favorites]');
+  if (favorites && !favorites.disabled) {
+    return state.awaiting === 'selection' ? selectionAction('liked') : sendText('Покажи понравившиеся квартиры');
+  }
   const page = e.target.closest('[data-selection-page]');
   if (page && !page.disabled && state.results[4]) {
     state.selectionPage = V.selectionPage(state.results[4].cards, Number(page.dataset.selectionPage)).page;
@@ -571,6 +576,10 @@ function setVote(id, dir, toggle) {
   }
   const counter = stage.querySelector("[data-liked-count]");
   if (counter) counter.textContent = `(${liked.size})`;
+  const favorites = stage.querySelector('[data-favorites]');
+  if (favorites) favorites.disabled = !liked.size;
+  const favoriteCount = stage.querySelector('[data-favorites-count]');
+  if (favoriteCount) favoriteCount.textContent = `(${liked.size})`;
 }
 
 initCards({ sendText });

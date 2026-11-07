@@ -31,12 +31,23 @@ def setup():
             assert snapshot.get('conversation')
             text='### Ответ по сохранённой выборке\n\n**Учитываю предыдущий ответ.** Вопрос: '+snapshot['prompt']
         return {'text':text,
+            'scope':{**snapshot['profile'],'whole_city':snapshot.get('whole_city',False)},
             'visual_analysis':[{'listing_id':'ui-a','address':'Тестовая, 1','status':'analyzed','visible_state':'cosmetic',
                 'photos':[{'url':'https://images.cdn-cian.ru/ui-photo.jpg'}],'gallery_count':4,'inspected_at':'2026-11-07T10:00:00Z',
                 'observations':['На стене видна потёртость.'],'limitations':['Скрытая проводка по фото не проверяется.']}],
             'facts':snapshot['facts'],'artifacts':['analysis.csv','analysis.xlsx'],'code_runs':1,
             'source_time':snapshot['source_time']}
     service.sandbox.run=run
+    @main.app.post('/_test/profile')
+    def change_profile(payload:dict):
+        from copy import deepcopy
+        with db.session() as s:
+            chat=s.get(Chat,'ui-workshop');saved=deepcopy(chat.state)
+            profile=merge_profile({'rooms_options':[int(payload['rooms'])]},saved['data']['profile'])
+            saved['data']['profile']=profile;saved['data']['profile_revision']+=1
+            chat.state=saved;chat.profile=profile
+        return {'ok':True}
+    main.app.router.routes.insert(0,main.app.router.routes.pop())  # перед статическим mount('/')
     async def seed():
         with db.session() as s:
             for email,name in [('darkyhat@mail.ru','Премиум'),('other@example.ru','Обычный')]:

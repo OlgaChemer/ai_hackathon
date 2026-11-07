@@ -1411,7 +1411,8 @@ body[data-page="agent"]:has(.chat.expanded) :is(.site-header,.stage,.footnote) {
 .workshop-header,.workshop-actions,.workshop-kinds{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
 .workshop-header{justify-content:space-between}.workshop-header h2{margin:0}.workshop label{display:block;margin:14px 0}
 .workshop select,.workshop textarea,.workshop input[type=number]{display:block;width:100%;padding:11px;border:1px solid #dbe7e0;border-radius:10px;font:inherit;margin-top:6px}
-.workshop-assumptions{display:grid;grid-template-columns:1fr 1fr;gap:18px}.workshop [data-progress]{padding-top:14px;color:#357e49}
+.workshop-assumptions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px}.workshop [data-progress]{padding-top:14px;color:#357e49}
+.workshop [data-repair-scenarios]>div{padding:12px;border:1px solid var(--line);border-radius:12px}.workshop [data-repair-scenarios] p{font-size:13px;margin-bottom:0}
 .workshop-report{overflow-wrap:anywhere;line-height:1.65;margin:16px 0}.workshop pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;max-height:300px;overflow:auto}
 .workshop label.workshop-checkbox{display:flex;align-items:flex-start;gap:10px;padding:14px;border:1px solid var(--line,#dbe7e0);border-radius:12px;background:#f3faf5;cursor:pointer}
 .workshop label.workshop-checkbox input[type=checkbox]{flex:0 0 18px;width:18px;height:18px;min-height:0;margin:3px 0 0;padding:0;accent-color:#209c3c}

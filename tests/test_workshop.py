@@ -34,6 +34,7 @@ class WorkshopAPI(unittest.TestCase):
         self.temp=tempfile.TemporaryDirectory();self.calls=[]
         self.settings=replace(api.settings,workshop_root=self.temp.name)
         self.patches=[patch.object(main.app.router,'on_startup',[]),patch.object(api,'settings',self.settings),
+            patch.object(service.geo,'nearby',new=AsyncMock(return_value=False)),
             patch.object(service,'get_provider',return_value=ScopeLLM()),patch.object(service.sandbox,'run',self.run_sandbox)]
         for p in self.patches:p.start()
         self.client=TestClient(main.app,base_url='https://testserver');self.client.__enter__()
@@ -96,8 +97,11 @@ class WorkshopAPI(unittest.TestCase):
         self.assertEqual([x['id'] for x in context['liked']],['a','b'])
         r=self.client.post('/api/workshop/jobs',json=self.payload());self.assertEqual(r.status_code,202,r.text)
         result=self.wait(r.json()['id']);self.assertEqual(result['status'],'completed',result)
-        facts=result['result']['facts'];self.assertEqual(facts['rows'][0]['repair_with_reserve'],1_725_000)
-        self.assertEqual(facts['rows'][0]['total'],11_725_000)
+        facts=result['result']['facts'];self.assertEqual(facts['version'],2)
+        variants=facts['rows'][0]['scenarios']
+        self.assertEqual([v['key'] for v in variants],['minimal','cosmetic','capital'])
+        self.assertEqual((variants[0]['cost_min'],variants[0]['cost_max']),(287500,575000))
+        self.assertNotIn('total',facts['rows'][0])
         self.assertEqual(self.calls[0]['revision'],7)
         self.assertNotIn('provider',result)
         file=self.client.get('/api/workshop/jobs/'+result['id']+'/files/analysis.csv')
@@ -109,6 +113,51 @@ class WorkshopAPI(unittest.TestCase):
         self.assertEqual(self.calls[0]['listings'][0]['id'],'b')
         r=self.client.post('/api/workshop/jobs',json=self.payload(command_id='forged',liked=['not-owned']))
         self.assertEqual(r.status_code,422,r.text)
+
+    def test_compare_has_real_characteristics_and_no_repair_costs(self):
+        with db.session() as s:
+            chat=s.get(Chat,'own');saved=deepcopy(chat.state)
+            saved['data']['shown'][0]['metro']={'name':'Примерная','minutes':7,'mode':'пешком'}
+            saved['data']['shown'][0]['condition']='косметический'
+            chat.state=saved
+        job=self.wait(self.client.post('/api/workshop/jobs',json=self.payload('compare')).json()['id'])
+        self.assertEqual(job['status'],'completed',job)
+        facts=job['result']['facts'];row=facts['rows'][0]
+        self.assertEqual(row['metro']['minutes'],7)
+        self.assertEqual(row['condition'],'косметический')
+        self.assertEqual(row['price_per_m2'],200000)
+        self.assertFalse(set(row)&{'repair','repair_with_reserve','total','scenarios'})
+        self.assertEqual(facts['assumptions'],{})
+        self.assertIn('criteria',row)
+
+    def test_new_market_uses_latest_accepted_conditions_and_strips_old_internal_query(self):
+        with db.session() as s:
+            chat=s.get(Chat,'own');saved=deepcopy(chat.state)
+            profile=merge_profile({'rooms_options':[3]},saved['data']['profile'])
+            profile['summary']='Ищу 2-комнатную квартиру'
+            profile['_initial_request']='Ищу двушку'
+            saved['data'].update(profile=profile,profile_revision=8)
+            chat.state=saved
+        ctx=self.client.get('/api/workshop/context?chat_id=own').json()
+        self.assertEqual(ctx['profile']['rooms'],3)
+        self.assertIn('3-комнат',ctx['profile']['summary'])
+        self.assertNotIn('_initial_request',ctx['profile'])
+        rows=[listing(id=str(i),city='Москва',rooms=3) for i in range(8)]
+        with patch.object(service.sources,'collect',AsyncMock(return_value=(rows,[]))) as collect:
+            job=self.wait(self.client.post('/api/workshop/jobs',json=self.payload('market')).json()['id'])
+            self.assertEqual(job['status'],'completed',job)
+            self.assertEqual(collect.call_args.args[0]['rooms_options'],[3])
+        self.assertEqual(self.calls[-1]['revision'],8)
+
+    def test_market_waits_for_pending_profile_change_instead_of_using_previous_rooms(self):
+        with db.session() as s:
+            chat=s.get(Chat,'own');saved=deepcopy(chat.state)
+            saved['data'].update(request_inputs=[{'seq':9,'text':'Теперь трёшку'}],request_review_seq=8)
+            chat.state=saved
+        self.assertTrue(self.client.get('/api/workshop/context?chat_id=own').json()['updating'])
+        r=self.client.post('/api/workshop/jobs',json=self.payload('market'))
+        self.assertEqual(r.status_code,409,r.text)
+        self.assertEqual(self.calls,[])
 
     def test_duplicate_id_returns_same_job_and_changed_payload_conflicts(self):
         body=self.payload();first=self.client.post('/api/workshop/jobs',json=body).json()
@@ -208,6 +257,15 @@ class WorkshopAPI(unittest.TestCase):
 
 
 class WorkshopContracts(unittest.IsolatedAsyncioTestCase):
+    def test_three_repair_ranges_preserve_unknown_area_and_exclude_purchase_budget(self):
+        snapshot={'kind':'repair','analysis_version':2,'assumptions':data.analysis_assumptions('repair'),
+                  'profile':{'budget_max':1},'listings':[listing(id='known',area=50),listing(id='unknown',area=None)]}
+        facts=data.facts(snapshot)
+        self.assertEqual(len(facts['rows'][0]['scenarios']),3)
+        self.assertTrue(all(v['cost_min']>1 for v in facts['rows'][0]['scenarios']))
+        self.assertTrue(all(v['cost_min'] is None and v['cost_max'] is None for v in facts['rows'][1]['scenarios']))
+        self.assertNotIn('total',facts['rows'][0])
+
     def test_retry_replaces_readonly_snapshot_without_corrupting_previous_input(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory)

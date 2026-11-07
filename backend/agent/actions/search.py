@@ -395,6 +395,11 @@ async def wait_selection(s,effective,result):
         s.selection_dirty=True
         s.request_intent='selection'
         s.selection_operation='more'
+    elif d.get('action')=='liked':
+        s.selection_query={**Q.default_query(),'scope':'liked','sort':effective.get('sort',[])}
+        s.selection_dirty=True
+        s.request_intent='selection'
+        s.selection_operation='rank'
     elif d.get('action')=='proceed':
         s.call_targets=list(prefs.liked)
         if not prefs.liked and batch:

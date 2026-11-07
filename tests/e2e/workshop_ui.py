@@ -32,17 +32,35 @@ async def main(base):
             assert await page.locator('dialog.workshop input[type=file]').count()==0
             for kind in ('repair','compare','market'):
                 await page.locator('[data-kind='+kind+']').click()
+                assert await page.locator('dialog.workshop input[type=number]').count()==0
+                if kind=='repair':
+                    assert 'Минимальный' in await page.locator('[data-repair-scenarios]').inner_text()
+                    assert 'Капитальный' in await page.locator('[data-repair-scenarios]').inner_text()
+                if kind=='compare':
+                    assert not await page.locator('[data-repair-scenarios]').is_visible()
                 if kind=='market':
+                    await page.request.post(base+'/_test/profile',data={'rooms':3})
+                    await page.evaluate("document.dispatchEvent(new CustomEvent('profilechange',{detail:{chat_id:'ui-workshop'}}))")
+                    await page.locator('[data-context]').filter(has_text='3-комнат').wait_for()
                     await page.locator('[data-wide]').check()
                     checkbox=await page.locator('[data-wide]').bounding_box()
                     label=await page.locator('[data-wide-wrap] span').bounding_box()
                     assert checkbox['x']+checkbox['width']<=label['x']
                     assert abs(checkbox['y']-label['y'])<12
+                    assert 'весь город без фильтров' in await page.locator('[data-context]').inner_text()
+                    await page.locator('[data-wide]').uncheck()
                 await page.locator('[data-start]').click()
                 await page.locator('.workshop-report').wait_for()
                 await page.locator('[data-start]').wait_for(state='visible')
                 await page.wait_for_function("!document.querySelector('[data-start]').disabled")
                 assert await page.locator('.workshop-facts table tr').count()>=2
+                if kind=='repair':
+                    assert 'Минимальный' in await page.locator('.workshop-facts table').inner_text()
+                    assert 'Покупка + ремонт' not in await page.locator('.workshop-facts table').inner_text()
+                if kind=='compare':
+                    assert 'Метро' in await page.locator('.workshop-facts table').inner_text()
+                    assert 'Ремонт с запасом' not in await page.locator('.workshop-facts table').inner_text()
+                if kind=='market':assert '3-комнат' in await page.locator('[data-report-scope]').inner_text()
                 assert await page.locator('.workshop-report h2').count()==1
                 assert await page.locator('.workshop-report strong').first.text_content()=='Сравнил варианты'
                 assert await page.locator('.workshop-report table tbody tr').count()==1

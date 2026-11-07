@@ -29,6 +29,10 @@ async def scenario(browser,base,width):
     await page.wait_for_function("!document.querySelector('[data-selection=more]').disabled")
     assert await page.locator('.msg-thinking').count()==0
     assert await page.locator('.msg-agent').filter(has_text='Отобрал для вас 10').count()>=1
+    await page.get_by_role('button',name='Показать понравившиеся (10)',exact=True).click()
+    await page.wait_for_function('(first)=>document.querySelectorAll(".offer").length===10 && [...document.querySelectorAll(".offer")].every(n=>first.includes(n.dataset.id))',arg=first)
+    await page.wait_for_function("!document.querySelector('[data-selection=more]').disabled")
+    assert await page.locator('.offer [data-vote=up][aria-pressed=true]').count()==10
     # Прогресс обновляет тот же узел; старый пустой SSE-результат не стирает карточки.
     await page.evaluate("""async()=>{
       const {state}=await import('/js/state.js');

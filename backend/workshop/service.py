@@ -18,8 +18,8 @@ from . import data,store,sandbox
 
 log=logging.getLogger(__name__)
 TASKS={};SLOTS=WeakKeyDictionary()
-DEFAULTS={'repair':'Рассчитай сценарный бюджет ремонта понравившихся квартир, сравни суммы и неизвестные данные.',
-          'compare':'Сравни понравившиеся квартиры по цене, площади, стоимости метра и общей стоимости с ремонтом. Объясни компромиссы.',
+DEFAULTS={'repair':'Оцени по доступным фотографиям состояние понравившихся квартир. Для каждой покажи три диапазона: минимальный, косметический и капитальный ремонт. Объясни состав работ, допущения и неизвестное; бюджет покупки не является бюджетом ремонта.',
+          'compare':'Сравни понравившиеся квартиры по состоянию, расположению, метро, детским садам, школам, паркам, площади и цене. Учти текущие пожелания и фото. Объясни компромиссы и какую квартиру кому лучше выбрать. Не рассчитывай стоимость ремонта.',
           'market':'Исследуй полученную выборку рынка: цены, стоимость метра, комнатность, ограничения данных и практические выводы.'}
 SCOPE={'type':'object','additionalProperties':False,'properties':{
     'decision':{'type':'string','enum':['allow','clarify','refuse']},
@@ -65,14 +65,17 @@ def create(connection,uid,payload):
         return store.public(old)
     ctx=data.context(connection,uid,payload['chat_id'],payload['liked'])
     if not ctx['chat_id']:raise HTTPException(422,'Сначала начните подбор с агентом.')
+    if ctx.get('updating'):raise HTTPException(409,'Агент ещё применяет последние пожелания. Дождитесь обновления профиля и запустите исследование снова.')
     if payload['kind']!='market' and not ctx['liked']:raise HTTPException(422,'Отметьте квартиры «Нравится», затем откройте мастерскую.')
     profile=deepcopy(ctx['profile'])
     if payload['kind']=='market':
         if profile.get('city') not in sources.SUPPORTED_CITIES:raise HTTPException(422,'В выбранном диалоге ещё не определён поддерживаемый город.')
         if payload['whole_city']:profile=merge_profile({'city':profile['city']})
+    from ..agent.profile import profile_summary
+    profile['summary']=profile_summary(merge_profile(profile))
     snapshot={k:ctx[k] for k in ('chat_id','revision','selection_revision')}
     snapshot.update(kind=payload['kind'],prompt=payload['prompt'] or DEFAULTS[payload['kind']],
-        profile=profile,listings=ctx['liked'],assumptions=data.assumptions(payload['rate'],payload['reserve']),
+        analysis_version=2,profile=profile,listings=ctx['liked'],assumptions=data.analysis_assumptions(payload['kind']),
         source_time=utcnow().isoformat()+'Z',whole_city=payload['whole_city'])
     return store.create(connection,uid,payload,settings.workshop_provider,snapshot)
 
@@ -134,6 +137,9 @@ async def execute(job_id):
             verdict=await scope(llm,question_context+snapshot['prompt'])
             if verdict['decision']!='allow':
                 db.required(update,job_id,'needs_input' if verdict['decision']=='clarify' else 'refused',error=verdict['message']);return
+            if snapshot['kind']=='compare' and snapshot.get('analysis_version')==2:
+                progress('Проверяю школы, детские сады и парки рядом с выбранными квартирами.')
+                await geo.nearby(snapshot['listings'][:30],['school','kindergarten','park'],budget_s=settings.places_budget_s)
             if snapshot['kind']=='market' and not snapshot.get('parent_job_id'):
                 progress('Получаю реальные объявления по условиям исследования.')
                 def batch(rows):progress(f'Источник вернул ещё {len(rows)} объявлений. Проверяю условия.')
@@ -146,7 +152,7 @@ async def execute(job_id):
                 snapshot['listings']=[data.clean_listing(x) for x in confirmed]
                 snapshot['coverage']={'received':len(rows),'confirmed':len(confirmed),'unverified':sum(criteria.evaluate(snapshot['profile'],x)['status']=='unverified' for x in eligible),
                     'reports':reports,'whole_market':False,'limited_sample':True}
-                if len(confirmed)<6:raise RuntimeError(f'Подтверждено только {len(confirmed)} объявлений; для исследования нужно хотя бы 6. Проверьте условия или выберите исследование всего города.')
+                if len(confirmed)<6:raise RuntimeError(f"По текущим условиям: {snapshot['profile'].get('summary','выбранный профиль')} Подтверждено только {len(confirmed)} объявлений; для исследования нужно хотя бы 6. Можно явно выбрать исследование всего города без фильтров.")
                 progress(f'Для исследования подтверждено {len(confirmed)} объявлений. Готовлю анализ.')
             snapshot['facts']=data.facts(snapshot)
             db.required(update,job_id,'running',snapshot=snapshot)
@@ -161,6 +167,7 @@ async def execute(job_id):
         db.required(update,job_id,'interrupted',error='Выполнение остановлено. Данные задания сохранены.')
         raise
     except Exception as exc:
+        log.exception('workshop execution failed: %s',job_id)
         record('workshop_failed',job=job_id,error=type(exc).__name__)
         message=str(exc) if isinstance(exc,(RuntimeError,LLMError)) else 'Не удалось завершить анализ. Данные сохранены; попробуйте ещё раз.'
         if isinstance(exc,asyncio.TimeoutError):message='Анализ превысил 3 минуты и остановлен. Попробуйте сократить задачу.'

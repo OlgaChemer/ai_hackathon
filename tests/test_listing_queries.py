@@ -170,6 +170,18 @@ class DialogueStateTest(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         db.configure('sqlite://')
 
+    async def test_favorites_button_shows_only_liked_across_batches_without_call_consent(self):
+        s=self.agent();s.prefs.liked=['cian-1','cian-20']
+        s.shown=s.search['pool'][:10]
+        s.ask=AsyncMock(return_value={'approved':True,'data':{'action':'liked','liked':s.prefs.liked}})
+        await search.wait_selection(s,Q.default_query(),{'remaining':15,'aggregates':[],'groups':[]})
+        self.assertEqual(s.selection_query['scope'],'liked')
+        self.assertEqual(s.request_intent,'selection')
+        self.assertFalse(s.call_targets)
+        s.ask=AsyncMock(return_value={'approved':True,'data':{'action':'text','liked':s.prefs.liked}})
+        await search.show_selection(s)
+        self.assertEqual({x['id'] for x in s.shown},{'cian-1','cian-20'})
+
     def agent(self):
         s=session.create_session('',ScriptedLLM())
         s.profile=merge_profile({'city':'Казань','rooms':2,'budget_max':30_000_000,'payment':'cash'})
