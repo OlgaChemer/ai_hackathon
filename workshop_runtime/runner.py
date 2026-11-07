@@ -66,9 +66,11 @@ class InspectPhotos(Tool):
     description='Открыть галерею известной квартиры и оценить видимое состояние по фото. Только ID из listings, до трёх квартир за задачу. Сервер получает фото и вызывает модель с поддержкой изображений; возвращает наблюдения, источники и ограничения. Данные также сохраняются в /workspace/photo-analysis.json.'
     parameters={'type':'object','properties':{'listing_ids':{'type':'array','minItems':1,'maxItems':3,'items':{'type':'string'}}},'required':['listing_ids'],'additionalProperties':False}
 
-    def __init__(self,provider,data):self.provider=provider;self.results={r['listing_id']:r for r in data.get('visual_analysis',[])}
+    def __init__(self,provider,data):
+        self.provider=provider;self.results={r['listing_id']:r for r in data.get('visual_analysis',[])};self.requested_ids=[]
 
     async def execute(self,listing_ids):
+        self.requested_ids=list(dict.fromkeys([*self.requested_ids,*listing_ids]))[-3:]
         event('progress',text='Получаю фотографии и проверяю видимое состояние квартир.')
         response=await self.provider.client.post('/inspect-photos',json={'listing_ids':listing_ids},timeout=85)
         if response.status_code!=200:return json.dumps({'error':response.json().get('detail','Фотографии недоступны.')},ensure_ascii=False)
@@ -171,7 +173,7 @@ async def main():
 Отсутствующий объект рядом — не то же самое, что неизвестный. Расстояние до инфраструктуры по прямой не выдавай за пеший маршрут.
 Метро оценивай по отдельному полю metro; если минут или режима пути нет, сообщи об этом. Не придумывай близость и не достраивай фото по тексту.'''
     provider=PlatformProvider();tools=ToolRegistry();python=RunPython();tools.register(python)
-    tools.register(InspectPhotos(provider,data))
+    photos=InspectPhotos(provider,data);tools.register(photos)
     continuations=0
     async def ensure_analysis():
         nonlocal continuations
@@ -183,7 +185,7 @@ async def main():
         # Сохраняем точное задание, все исходные метрики и последние результаты.
         # Код и файлы остаются доступны; платного пересказа через модель нет.
         event('progress',text='Сохраняю выводы расчётов и готовлю итог анализа.')
-        return summary(data,messages,python.successful)
+        return summary(data,messages,python.successful,[photos.results[i] for i in photos.requested_ids if i in photos.results])
     try:
         result=await AgentRunner().run(AgentRunSpec(initial_messages=[{'role':'system','content':instructions},
             *context_messages(data),

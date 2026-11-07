@@ -257,6 +257,18 @@ class WorkshopAPI(unittest.TestCase):
 
 
 class WorkshopContracts(unittest.IsolatedAsyncioTestCase):
+    def test_compaction_keeps_photo_evidence_after_later_python_runs(self):
+        from workshop_runtime.history import summary
+        snapshot={'prompt':'Сравни состояние','kind':'compare','facts':{'count':3}}
+        photo={'listing_id':'flat','status':'analyzed','visible_state':'cosmetic','photos':[{'url':'https://example.invalid'}],
+               'observations':['На фото потёртый пол'],'limitations':['Скрытая проводка не проверена']}
+        history=[{'role':'tool','content':'Поздний расчёт '+str(i)+'x'*6000} for i in range(5)]
+        result=json.loads(summary(snapshot,history,4,[photo]))
+        self.assertEqual(result['visual_analysis'][0]['observations'],['На фото потёртый пол'])
+        self.assertEqual(result['visual_analysis'][0]['photos_seen'],1)
+        self.assertEqual(result['facts'],snapshot['facts'])
+        large={**photo,'observations':['x'*5000]*20,'limitations':['y'*5000]*20}
+        self.assertLess(len(summary(snapshot,history,4,[large]*20)),12000)
     def test_three_repair_ranges_preserve_unknown_area_and_exclude_purchase_budget(self):
         snapshot={'kind':'repair','analysis_version':2,'assumptions':data.analysis_assumptions('repair'),
                   'profile':{'budget_max':1},'listings':[listing(id='known',area=50),listing(id='unknown',area=None)]}
