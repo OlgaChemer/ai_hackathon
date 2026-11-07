@@ -78,6 +78,9 @@ async def check_map(s, listings: list[dict], announce: bool = False, kinds=None)
     ok = await geo.nearby(candidates[:30], kinds, budget_s=max(0, deadline - time.monotonic()),
                          on_progress=lambda:report_progress(s,(s.search or {}).get('listings') or listings,'map'))
     if s.search is not None:
+        checked=set(s.search.get('map_checked_kinds',[])) if s.search.get('map_checked_revision')==s.client_revision else set()
+        s.search['map_checked_revision']=s.client_revision
+        s.search['map_checked_kinds']=sorted(checked|set(kinds))
         reasons=s.search.setdefault('coverage_reasons',[])
         if not ok:
             reason='map_budget_exhausted' if time.monotonic()>=deadline else 'map_incomplete'
@@ -293,7 +296,8 @@ async def show_selection(s, query: dict | None = None) -> dict:
         raise ActionError(f'Неверный запрос к подборке: {exc}') from exc
     p, prefs, meta = s.profile, s.prefs, st["meta"]
     poi = set(prefs.poi) | {f['field'].split(':',1)[1] for f in effective['filters'] if f['field'].startswith('nearby:')}
-    if any(k not in (x.get('nearby') or {}) for x in st['pool'] for k in poi):
+    checked=set(st.get('map_checked_kinds',[])) if st.get('map_checked_revision')==s.client_revision else set()
+    if not poi.issubset(checked) and any(k not in (x.get('nearby') or {}) for x in st['pool'] for k in poi):
         st['map_ok'] = await check_map(s,st['pool'], kinds=list(poi))
     pool = [x for x in st['pool'] if passes_hard_filters(x,p)
             and x.get('district') not in prefs.districts_minus and selectable(x,prefs)
@@ -314,6 +318,7 @@ async def show_selection(s, query: dict | None = None) -> dict:
     result=Q.execute(data,effective,liked=prefs.liked,
                      shown=s.selection_scope_ids or [x['id'] for x in s.shown],seen=st['shown_ids'])
     batch=result.pop('items')
+    s.push('search_progress',on=False)
     if not batch:
         failed=Counter(label for x in st.get('listings',[]) for label in match(x,prefs)['failed'])
         reason=(' Проверенные объявления не проходят условия: '+', '.join(label for label,_ in failed.most_common(3))+'.'

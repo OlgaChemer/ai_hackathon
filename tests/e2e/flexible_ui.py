@@ -48,11 +48,20 @@ async def scenario(browser,base,width):
     assert await page.evaluate("window.progressNode===document.querySelector('[data-search-progress]')")
     await page.evaluate("""async()=>{
       const {state}=await import('/js/state.js');
-      state.es.onmessage(new MessageEvent('message',{data:JSON.stringify({type:'search_progress',on:false})}));
       state.es.onmessage(new MessageEvent('message',{data:JSON.stringify({type:'result',step:4,kind:'selection',data:{cards:[]}})}));
     }""")
     await page.wait_for_function("document.querySelector('#stage').textContent.includes('Сохранена предыдущая подборка')")
     assert await page.locator('.offer').count()==10
+    assert await page.locator('[data-search-progress]').count()==0
+    # История старого диалога: после повторной карты нет отдельного on=false.
+    await page.evaluate("""async()=>{
+      const {state}=await import('/js/state.js');
+      const emit=event=>state.es.onmessage(new MessageEvent('message',{data:JSON.stringify(event)}));
+      emit({type:'search_progress',on:true,text:'Подтверждено 4; ещё 2 не проверены',replay:true});
+      emit({type:'result',step:4,kind:'selection',data:state.results[4],replay:true});
+      emit({type:'replay_end',live:true,seq:state.lastSeq});
+    }""")
+    await page.wait_for_function("!document.querySelector('[data-search-progress]')")
     # Старое решение остаётся до следующей реплики, устаревший resolved не закрывает новое.
     result=await page.evaluate("""async () => {
       const {state,chatLog,addMsg}=await import('/js/state.js');

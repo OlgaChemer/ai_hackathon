@@ -90,6 +90,18 @@ class CriteriaTest(unittest.TestCase):
 
 
 class SearchIntegrationTest(unittest.TestCase):
+    def test_partial_map_is_not_retried_before_showing_cards_and_progress_ends(self):
+        self.s.profile['poi']=['park'];self.s.prefs.sync(self.s.profile)
+        rows=[listing(id=str(i),nearby={'park':{'dist':100,'name':'Парк'}} if i<4 else {}) for i in range(6)]
+        with patch.object(geo,'nearby',AsyncMock(return_value=False)) as nearby:
+            self.run_search(rows,clear_deadlines=True)
+        self.assertEqual(nearby.await_count,1)
+        self.assertEqual(len(self.s.shown),6)
+        self.assertEqual(sum(x['match']['status']=='confirmed' for x in self.s.shown),4)
+        selection=next(i for i,e in enumerate(self.s.history) if e.get('kind')=='selection' and e['type']=='result')
+        progress=[e for e in self.s.history[:selection] if e['type']=='search_progress']
+        self.assertFalse(progress[-1]['on'])
+
     def setUp(self):
         db.configure('sqlite://')
         geo._live_cache.clear()
@@ -99,12 +111,16 @@ class SearchIntegrationTest(unittest.TestCase):
         self.s.prefs.sync(self.s.profile)
         self.s.ask = AsyncMock(return_value={'approved': True, 'data': {'action': 'proceed'}})
 
-    def run_search(self, rows):
+    def run_search(self, rows,clear_deadlines=False):
         async def go():
             with patch.object(sources, 'collect', AsyncMock(return_value=(rows, [{'source': 'Тест', 'count': len(rows), 'status': 'live'}]))), \
                  patch.object(sources, 'stored', return_value=[]), patch.object(sources, 'comparables', return_value=[]), \
                  patch.object(sources, 'more', AsyncMock(return_value=[])):
                 result = await S.search_listings(self.s)
+                if clear_deadlines:
+                    # Эти поля не переживают копирование между агентскими операциями.
+                    self.s.search.pop('map_deadline',None)
+                    self.s.search.pop('map_revision',None)
                 await S.show_selection(self.s)
                 return result
         return asyncio.run(go())

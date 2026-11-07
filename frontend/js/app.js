@@ -124,6 +124,7 @@ async function handle(ev, myGen) {
       if (!quiet && ev.role === "agent" && talk.on && !phoneActive()) talk.say(ev.text);
       break;
     case "result":
+      if (ev.kind === 'selection') state.searching = null;
       if (ev.kind === 'selection' && !ev.data.cards?.length && state.results[4]?.cards?.length) {
         state.selectionNotice = 'Последняя команда не дала результатов. Сохранена предыдущая подборка; она относится к прежним условиям.';
         if (!quiet) renderStage();
@@ -155,6 +156,9 @@ async function handle(ev, myGen) {
       }
       if (ev.kind !== "clarify") state.awaiting = ev.kind === "selection" ? "selection" : null;
       if (ev.kind === "selection") {
+        const wasSearching = Boolean(state.searching);
+        state.searching = null;
+        if (wasSearching && !quiet) renderStage();
         state.cards.selection = true;
         syncSelectionButtons();
         if (!quiet) sayPrompt(SELECTION_PROMPT);
@@ -261,6 +265,7 @@ async function handle(ev, myGen) {
       if (ev.on) setChatExpanded(true);
       break;
     case "error":
+      state.searching = null;
       addMsg("error", ev.text);
       if (quiet) break;
       if (talk.on) talk.say(`Ошибка: ${ev.text}`);
