@@ -211,7 +211,9 @@ function factTable(facts){
     headers=['Квартира','Площадь','Минимальный','Косметический','Капитальный'];
     rows=facts.rows.map(r=>[r.address,r.area===null?'Нет данных':r.area+' м²',...r.scenarios.map(s=>s.cost_min===null?'Нет данных':`${money(s.cost_min)} – ${money(s.cost_max)}`)]);
   }else if(facts.version===2&&facts.kind==='compare'){
-    note.textContent='Сравнение самих квартир: состояние, метро и инфраструктура. Неизвестные признаки требуют проверки. Стоимость ремонта в цену не добавляется.';
+    const leaderLabels={price:'Минимальная цена',price_per_m2:'Минимальная цена за м²',area:'Наибольшая площадь'};
+    const leaders=Object.entries(facts.leaders||{}).filter(([,v])=>v.value!==null).map(([key,v])=>`${leaderLabels[key]}: ${v.listing_ids.map(id=>facts.rows.find(r=>r.id===id)?.address||id).join(', ')} (${key==='area'?v.value+' м²':money(v.value)})`).join('. ');
+    note.textContent='Состояние, метро и инфраструктура; неизвестные признаки требуют проверки. Стоимость ремонта не добавляется. '+leaders;
     headers=['Квартира','Площадь','Цена','Цена за м²','Состояние','Метро','Объекты рядом'];
     rows=facts.rows.map(r=>[r.address,r.area===null?'Нет данных':r.area+' м²',money(r.price),money(r.price_per_m2),r.condition||'Нет данных',
       r.metro?[r.metro.name,r.metro.minutes?`${r.metro.minutes} мин`:null,r.metro.mode].filter(Boolean).join(' · '):'Нет данных',

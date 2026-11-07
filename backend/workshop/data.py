@@ -93,7 +93,14 @@ def facts(snapshot):
                     district=x.get('district'),condition=x.get('condition'),metro=x.get('metro'),
                     nearby=geo.summary(x,['school','kindergarten','park']),criteria=criteria.evaluate(snapshot['profile'],x))
             result.append(row)
-        return {'kind':kind,'version':2,'assumptions':a,'rows':result,'count':len(result)}
+        output={'kind':kind,'version':2,'assumptions':a,'rows':result,'count':len(result)}
+        if kind=='compare':
+            output['leaders']={}
+            for key,choose in [('price',min),('price_per_m2',min),('area',max)]:
+                values=[r[key] for r in result if r.get(key) is not None]
+                best=choose(values) if values else None
+                output['leaders'][key]={'value':best,'listing_ids':[r['id'] for r in result if best is not None and r.get(key)==best]}
+        return output
     if kind in ('repair','compare'):
         result=[]
         for x in rows:

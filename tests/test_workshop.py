@@ -129,6 +129,8 @@ class WorkshopAPI(unittest.TestCase):
         self.assertFalse(set(row)&{'repair','repair_with_reserve','total','scenarios'})
         self.assertEqual(facts['assumptions'],{})
         self.assertIn('criteria',row)
+        self.assertEqual(facts['leaders']['price']['listing_ids'],['a'])
+        self.assertEqual(facts['leaders']['price_per_m2']['listing_ids'],['b'])
 
     def test_new_market_uses_latest_accepted_conditions_and_strips_old_internal_query(self):
         with db.session() as s:
