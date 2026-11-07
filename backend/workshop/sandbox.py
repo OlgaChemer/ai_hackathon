@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import shlex
+import tempfile
 from contextlib import nullcontext
 
 from fastapi import FastAPI,Request,HTTPException
@@ -72,10 +73,24 @@ class Bridge:
         return {'text':r.text,'tool_calls':[{'id':c.id,'name':c.name,'arguments':c.arguments} for c in r.tool_calls]}
 
 
+def save_input(root,snapshot):
+    """Атомарно заменить read-only снимок, в том числе при повторе задания."""
+    temporary=None
+    try:
+        with tempfile.NamedTemporaryFile(mode='w',encoding='utf-8',dir=root,prefix='.input-',delete=False) as stream:
+            temporary=Path(stream.name)
+            json.dump(snapshot,stream,ensure_ascii=False)
+        temporary.chmod(0o444)
+        target=root/'input.json';temporary.replace(target)
+        return target
+    finally:
+        if temporary is not None:temporary.unlink(missing_ok=True)
+
+
 async def run(job_id,snapshot,llm,progress):
     root=Path(settings.workshop_root)/job_id;root.mkdir(parents=True,exist_ok=True,mode=0o700)
     bridge_dir=root/'bridge';bridge_dir.mkdir(exist_ok=True);bridge_dir.chmod(0o755)
-    input_path=root/'input.json';input_path.write_text(json.dumps(snapshot,ensure_ascii=False));input_path.chmod(0o444)
+    input_path=save_input(root,snapshot)
     socket=bridge_dir/'model.sock'
     from .photos import Inspector
     inspector=Inspector(snapshot,llm.name,progress)

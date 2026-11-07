@@ -208,6 +208,20 @@ class WorkshopAPI(unittest.TestCase):
 
 
 class WorkshopContracts(unittest.IsolatedAsyncioTestCase):
+    def test_retry_replaces_readonly_snapshot_without_corrupting_previous_input(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            target=sandbox.save_input(root,{'prompt':'Первый запрос'})
+            with target.open() as previous:
+                self.assertEqual(target.stat().st_mode & 0o777,0o444)
+                sandbox.save_input(root,{'prompt':'Повтор задания'})
+                self.assertEqual(json.loads(previous.read()),{'prompt':'Первый запрос'})
+            self.assertEqual(json.loads(target.read_text()),{'prompt':'Повтор задания'})
+            with self.assertRaises(TypeError):sandbox.save_input(root,{'invalid':object()})
+            self.assertEqual(json.loads(target.read_text()),{'prompt':'Повтор задания'})
+            self.assertEqual(list(root.glob('.input-*')),[])
+            self.assertEqual(target.stat().st_mode & 0o777,0o444)
+
     def test_long_research_history_is_bounded_without_losing_source_data(self):
         from workshop_runtime.history import summary,context_messages
         history=[]
