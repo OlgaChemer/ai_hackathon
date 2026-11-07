@@ -149,6 +149,18 @@ class WorkshopAPI(unittest.TestCase):
 
 
 class WorkshopContracts(unittest.IsolatedAsyncioTestCase):
+    def test_compaction_keeps_exact_task_and_facts_but_bounds_observations(self):
+        from workshop_runtime.history import summary
+        data={'prompt':'Сравни только эти квартиры, резерв 17%, не меняй бюджет',
+              'kind':'compare','facts':{'rows':[{'id':'one','total':19000000},{'id':'two','total':None}]}}
+        history=[{'role':'tool','content':str(i)+'x'*10000} for i in range(30)]
+        compact=json.loads(summary(data,history,3))
+        self.assertEqual(compact['task'],data['prompt'])
+        self.assertEqual(compact['facts'],data['facts'])
+        self.assertEqual(len(compact['last_observations']),3)
+        self.assertTrue(all(len(x)<=1500 for x in compact['last_observations']))
+        self.assertEqual(compact['successful_python_runs'],3)
+
     def test_csv_cells_cannot_turn_into_formulas(self):
         from backend.workshop.artifacts import prepare
         csv=prepare('analysis.csv',b'name,value\n=WEBSERVICE("https://example.org"),-15\n')

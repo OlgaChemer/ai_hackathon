@@ -13,6 +13,7 @@ from nanobot.agent.tools.base import Tool
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.providers.base import LLMProvider,LLMResponse,ToolCallRequest
 from nanobot.utils.llm_runtime import LLMRuntime
+from history import summary
 
 logger.remove();logger.add(sys.stderr,level='ERROR')
 ROOT=Path('/workspace')
@@ -111,9 +112,10 @@ async def main():
     base_reports(data)
     provider=PlatformProvider();tools=ToolRegistry();python=RunPython();tools.register(python)
     async def bounded_history(messages,previous_summary):
-        # Короткая одноразовая задача: при переполнении завершаемся явно,
-        # вместо потери исходных условий или скрытого дополнительного LLM-вызова.
-        return None
+        # Сохраняем точное задание, все исходные метрики и последние результаты.
+        # Код и файлы остаются доступны; платного пересказа через модель нет.
+        event('progress',text='Сохраняю выводы расчётов и готовлю итог анализа.')
+        return summary(data,messages,python.successful)
     try:
         result=await AgentRunner().run(AgentRunSpec(initial_messages=[{'role':'system','content':SYSTEM},
             {'role':'user','content':data['prompt']+'\nЗадание и все данные находятся в /input/data.json.\nПроверенные факты:\n'+json.dumps(data['facts'],ensure_ascii=False)}],
