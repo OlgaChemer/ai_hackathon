@@ -25,7 +25,9 @@ import json
 import math
 import re
 import sys
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -58,24 +60,49 @@ NAME_NOISE = re.compile(r"\b(район|муниципальный округ|в
 
 # ------------------------------------------------------------------ Overpass
 
+_mirror_lock = threading.Lock()
+_mirror_penalty: dict[str, float] = {}  # чем больше, тем позже пробуем зеркало
+
+
+def _order() -> list[str]:
+    """Зеркала: сначала то, что отвечало последним; зависавшие — в конец."""
+    with _mirror_lock:
+        return sorted(MIRRORS, key=lambda u: _mirror_penalty.get(u, 0.0))
+
+
+def _mark(url: str, ok: bool, hung: bool = False) -> None:
+    with _mirror_lock:
+        if ok:
+            _mirror_penalty[url] = min(_mirror_penalty.get(url, 0.0), 0.0) - 1.0  # ответивший — первым
+        else:
+            _mirror_penalty[url] = max(_mirror_penalty.get(url, 0.0), 0.0) + (10.0 if hung else 1.0)
+
+
 def overpass(query: str, timeout: int = 180, fetch=None) -> list[dict]:
-    """Запрос к Overpass с запасными зеркалами и повтором при перегрузке."""
+    """Запрос к Overpass: зеркала по очереди, начиная с ответившего последним; зависшие — в конец списка."""
     if fetch is not None:  # тесты подставляют ответы
         return fetch(query)
     last = None
-    for attempt in range(4):
-        for url in MIRRORS:
+    for attempt in range(5):
+        for url in _order():
             try:
-                # короткое ожидание соединения: недоступный сервер не держит сборку минутами
-                r = httpx.post(url, data={"data": query}, headers=HEADERS, timeout=httpx.Timeout(timeout + 30, connect=15))
+                # соединение — 15 с; ответ — чуть дольше лимита самого запроса, но не минуты сверх него
+                r = httpx.post(url, data={"data": query}, headers=HEADERS,
+                               timeout=httpx.Timeout(timeout + 15, connect=15))
                 if r.status_code == 200:
+                    _mark(url, True)
                     time.sleep(PAUSE_S)
                     return r.json().get("elements", [])
                 last = f"{url}: HTTP {r.status_code}"
+                _mark(url, False)
+            except (httpx.TimeoutException,) as exc:
+                last = f"{url}: {type(exc).__name__}"
+                _mark(url, False, hung=True)
             except (httpx.HTTPError, ValueError) as exc:
                 last = f"{url}: {type(exc).__name__}"
+                _mark(url, False)
             print("   …", last, file=sys.stderr)
-            time.sleep(PAUSE_S * (attempt + 1))
+        time.sleep(PAUSE_S * (attempt + 2))  # пауза между кругами, а не после каждого зеркала
     raise RuntimeError(f"Overpass недоступен: {last}. Если серверы не отвечают из вашей сети — включите VPN "
                        f"или укажите другой сервер: --mirror https://…/api/interpreter")
 
@@ -299,6 +326,7 @@ def main() -> int:
     ap.add_argument("--cities", nargs="*", help="какие города собрать (по умолчанию все из backend.geodata.CITIES)")
     ap.add_argument("--force", action="store_true", help="пересобрать уже готовые")
     ap.add_argument("--mirror", help="свой сервер Overpass (…/api/interpreter) — первым в списке")
+    ap.add_argument("--jobs", type=int, default=3, help="сколько городов собирать одновременно (по умолчанию 3)")
     args = ap.parse_args()
     if args.mirror:
         MIRRORS.insert(0, args.mirror)
@@ -308,22 +336,27 @@ def main() -> int:
         print("Нет в списке backend.geodata.CITIES:", ", ".join(sorted(unknown)))
         return 2
     failed = []
-    for i, cfg in enumerate(todo, 1):
-        target = OUT_DIR / f"{slug(cfg['name'])}.json.gz"
-        if target.exists() and not args.force:
-            print(f"[{i}/{len(todo)}] {cfg['name']}: уже собран ({target.name}), пропускаю")
-            continue
-        print(f"[{i}/{len(todo)}] {cfg['name']}")
+    todo = [c for c in todo if args.force or not (OUT_DIR / f"{slug(c['name'])}.json.gz").exists() or print(
+        f"{c['name']}: уже собран, пропускаю")]
+
+    def one(cfg: dict) -> str | None:
         t0 = time.monotonic()
         try:
-            city, extra = build_city(cfg)
+            city, extra = build_city(cfg, log=lambda msg: print(msg, flush=True))
         except Exception as exc:  # noqa: BLE001 — один город не должен останавливать остальные
-            print(f"  ОШИБКА: {exc}")
-            failed.append(cfg["name"])
-            continue
+            print(f"  {cfg['name']}: ОШИБКА: {exc}", flush=True)
+            return cfg["name"]
         main_path, data_path = write(city, extra)
-        print(f"  готово за {time.monotonic() - t0:.0f} с: {main_path.name} ({main_path.stat().st_size // 1024} КБ), "
-              f"{data_path.name} ({data_path.stat().st_size // 1024} КБ)")
+        print(f"  {cfg['name']}: готово за {time.monotonic() - t0:.0f} с: {main_path.name} ({main_path.stat().st_size // 1024} КБ), "
+              f"{data_path.name} ({data_path.stat().st_size // 1024} КБ)  [{len(list(OUT_DIR.glob('*.poi.json.gz')))}/{len(CITIES)}]",
+              flush=True)
+        return None
+
+    print(f"Собираю {len(todo)} городов, по {args.jobs} одновременно")
+    with ThreadPoolExecutor(max_workers=max(1, args.jobs)) as pool:
+        for fut in as_completed([pool.submit(one, cfg) for cfg in todo]):
+            if name := fut.result():
+                failed.append(name)
     if failed:
         print("Не собраны:", ", ".join(failed), "— запустите ещё раз: готовые города пропускаются.")
         return 1
