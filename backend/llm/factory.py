@@ -36,5 +36,11 @@ def build_llm(provider: str | None = None) -> LLMClient:
 
 
 @lru_cache
+def get_provider(provider: str) -> LLMClient:
+    """Один клиент/очередь на провайдера во всём приложении, включая мастерскую."""
+    return build_llm(provider)
+
+
+@lru_cache
 def get_llm() -> LLMClient:
-    return build_llm()
+    return get_provider(settings.llm_provider)

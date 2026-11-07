@@ -6,7 +6,7 @@ from pathlib import Path
 from sqlalchemy import inspect,text
 
 ROOT=Path(__file__).parent
-MANIFESTS=('schema_v1.json','schema_v2.json')
+MANIFESTS=('schema_v1.json','schema_v2.json','schema_v3.json')
 HEAD=len(MANIFESTS)
 
 

@@ -42,6 +42,27 @@ class User(Base):
     name: Mapped[str | None] = mapped_column(String(120))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime)
+    premium: Mapped[bool] = mapped_column(Boolean, default=False, server_default='0')
+
+
+class WorkshopJob(Base):
+    """Изолированное исследование: снимок входа, журнал и артефакты конкретного владельца."""
+    __tablename__ = 'workshop_jobs'
+    __table_args__ = (UniqueConstraint('user_id','command_id'),)
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey('users.id'), index=True)
+    chat_id: Mapped[str] = mapped_column(ForeignKey('chats.id'))
+    command_id: Mapped[str] = mapped_column(String(64))
+    kind: Mapped[str] = mapped_column(String(20))
+    prompt: Mapped[str] = mapped_column(Text)
+    provider: Mapped[str] = mapped_column(String(20))
+    status: Mapped[str] = mapped_column(String(20), default='queued')
+    snapshot: Mapped[dict] = mapped_column(JSON, default=dict)
+    events: Mapped[list] = mapped_column(JSON, default=list)
+    result: Mapped[dict | None] = mapped_column(JSON)
+    error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 class Visitor(Base):
