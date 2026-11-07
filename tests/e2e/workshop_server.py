@@ -31,6 +31,9 @@ def setup():
             assert snapshot.get('conversation')
             text='### Ответ по сохранённой выборке\n\n**Учитываю предыдущий ответ.** Вопрос: '+snapshot['prompt']
         return {'text':text,
+            'visual_analysis':[{'listing_id':'ui-a','address':'Тестовая, 1','status':'analyzed','visible_state':'cosmetic',
+                'photos':[{'url':'https://images.cdn-cian.ru/ui-photo.jpg'}],'gallery_count':4,'inspected_at':'2026-11-07T10:00:00Z',
+                'observations':['На стене видна потёртость.'],'limitations':['Скрытая проводка по фото не проверяется.']}],
             'facts':snapshot['facts'],'artifacts':['analysis.csv','analysis.xlsx'],'code_runs':1,
             'source_time':snapshot['source_time']}
     service.sandbox.run=run

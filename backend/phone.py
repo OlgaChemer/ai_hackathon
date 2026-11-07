@@ -172,7 +172,7 @@ def status(user=None) -> dict:
 
 
 def allowed(pin: str | None,user=None) -> bool:
-    """Звонок и синтез — только с PIN, если он задан (PHONE_PIN в .env)."""
+    """Звонок и синтез: операторский аккаунт либо корректный настроенный PIN."""
     return operator(user) or (bool(settings.phone_pin) and secrets.compare_digest(pin or "",settings.phone_pin))
 
 

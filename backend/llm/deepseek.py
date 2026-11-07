@@ -17,7 +17,7 @@ class DeepSeekClient(LLMClient):
     async def analyze_images(self,prompt,images):
         content=[{'type':'text','text':prompt},*[{'type':'image_url','image_url':{
             'url':'data:'+image.mime_type+';base64,'+base64.b64encode(image.data).decode()}} for image in images]]
-        return await self.chat([{'role':'user','content':content}],json_mode=True,max_tokens=1600,temperature=.1,tag='workshop_vision')
+        return await self.chat([{'role':'user','content':content}],json_mode=True,max_tokens=2200,temperature=.1,tag='workshop_vision',thinking=False)
 
     def __init__(self, api_key: str, base_url: str, model: str, timeout: float = 60.0):
         if not api_key:
@@ -47,6 +47,7 @@ class DeepSeekClient(LLMClient):
         temperature: float = 0.3,
         max_tokens: int = 800,
         tag: str = "",
+        thinking: bool | None = None,
     ) -> LLMResponse:
         body: dict = {
             "model": self.model,
@@ -54,6 +55,7 @@ class DeepSeekClient(LLMClient):
             "temperature": temperature,
             "max_tokens": max_tokens,
         }
+        if thinking is not None:body['thinking']={'type':'enabled' if thinking else 'disabled'}
         if json_mode or json_schema is not None:
             body["response_format"] = {"type": "json_object"}
         if tools:

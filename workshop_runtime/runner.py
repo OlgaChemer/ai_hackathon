@@ -80,8 +80,9 @@ class InspectPhotos(Tool):
         if 'Фото и состояние' in book:del book['Фото и состояние']
         sheet=book.create_sheet('Фото и состояние');sheet.append(['Квартира','Результат','Дата','Просмотрено фото','Наблюдения','Ограничения'])
         for row in self.results.values():
-            sheet.append([row['address'],row.get('visible_state') or row['status'],row.get('inspected_at'),len(row.get('photos',[])),
-                '\n'.join(row.get('observations',[])),'\n'.join(row.get('limitations',[])) or row.get('note')])
+            values=[row['address'],row.get('visible_state') or row['status'],row.get('inspected_at'),len(row.get('photos',[])),
+                '\n'.join(row.get('observations',[])),'\n'.join(row.get('limitations',[])) or row.get('note')]
+            sheet.append(["'"+value if isinstance(value,str) and value.lstrip().startswith(('=','+','-','@')) else value for value in values])
         book.save(ROOT/'analysis.xlsx')
         return json.dumps(result,ensure_ascii=False)
 
@@ -139,6 +140,7 @@ SYSTEM+='''\nЕсть инструмент inspect_photos: он открывае
 За одну задачу можно изучить до трёх квартир, до четырёх фотографий каждой. Ясно укажи фактический охват.
 Результаты также в /workspace/photo-analysis.json, прошлые наблюдения могут быть в visual_analysis входного файла.
 Наблюдения по фото дополняют описание; это не подтверждение скрытых дефектов. Недоступное фото не означает плохой ремонт.
+Если описание и фото противоречат друг другу, укажи расхождение и предложи уточнить его у продавца.
 При расчёте учитывай видимый объём работ и объясняй сценарные допущения. Не меняй молча заданную ставку ремонта
 или базовые facts: дополнительный сценарий посчитай отдельно и объясни разницу. Не удаляй лист «Фото и состояние».'''
 

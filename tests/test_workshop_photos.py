@@ -76,6 +76,7 @@ class PhotoTests(unittest.IsolatedAsyncioTestCase):
         image=VisionImage(picture(),'image/png');requests=[]
         def deep(request):
             body=json.loads(request.content);self.assertEqual(body['messages'][0]['content'][1]['type'],'image_url')
+            self.assertEqual(body['thinking'],{'type':'disabled'})
             self.assertTrue(body['messages'][0]['content'][1]['image_url']['url'].startswith('data:image/png;base64,'))
             return httpx.Response(200,json={'choices':[{'message':{'content':json.dumps(verdict())}}]})
         d=DeepSeekClient('fixture-key','https://model','vision')

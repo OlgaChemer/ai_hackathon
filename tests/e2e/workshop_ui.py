@@ -3,6 +3,7 @@ import argparse
 import asyncio
 from pathlib import Path
 from playwright.async_api import async_playwright
+from tests.e2e.ui_regressions import PIXEL
 
 
 async def login(page,email):
@@ -19,6 +20,7 @@ async def main(base):
         for width in (1440,390):
             context=await browser.new_context(viewport={'width':width,'height':1000})
             page=await context.new_page();errors=[]
+            await page.route('https://images.cdn-cian.ru/ui-photo.jpg',lambda route:route.fulfill(body=PIXEL,content_type='image/png'))
             page.on('pageerror',lambda e:errors.append(str(e)))
             await page.add_init_script("localStorage.setItem('voice','0');localStorage.setItem('cookieNotice','1')")
             await page.goto(base)
@@ -47,6 +49,8 @@ async def main(base):
                 assert await page.locator('.workshop-report :is(img,script)').count()==0
                 assert not await page.evaluate('Boolean(window.workshopXss)')
                 assert await page.locator('.workshop-report a[href^="javascript:"]').count()==0
+                assert await page.locator('.workshop-photos img').count()==1
+                assert 'Просмотрено 1 из 4' in await page.locator('.workshop-photos').inner_text()
                 csv=await page.request.get(base+(await page.locator('[data-result] a').filter(has_text='Скачать CSV').get_attribute('href')))
                 assert csv.status==200
             await page.locator('[data-question]').fill('Почему медианная цена такая?')
@@ -73,10 +77,12 @@ async def main(base):
             await page.locator('[data-close]').click()
             await page.evaluate("""async()=>{
               const {confirmCard}=await import('/js/cards.js');
+              const {showAgent,setChatExpanded}=await import('/js/shell.js');showAgent();setChatExpanded(true);
               confirmCard({kind:'call',decision_id:'phone-ui-check',title:'Звонок продавцу',text:'Проверка показа телефонного режима',questions:[{question:'Есть ли ремонт?'}],replay:true});
             }""")
             await page.get_by_role('button',name='Позвонить мне на телефон',exact=True).wait_for()
             await page.locator('[data-seller-questions]').fill('Сохрани этот вопрос при обновлении доступа')
+            await page.evaluate("async()=>{const {navigate}=await import('/js/shell.js');navigate('welcome');}")
             await page.locator('[data-account=menu]').click();await page.locator('[data-logout]').click()
             await page.wait_for_function('!document.querySelector(".confirm-call [data-phone]")')
             assert await page.locator('[data-seller-questions]').input_value()=='Сохрани этот вопрос при обновлении доступа'

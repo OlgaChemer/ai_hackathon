@@ -234,12 +234,12 @@ async def speech_to_text(request: Request):
 
 def _check_pin(request: Request):
     if not phone.allowed(request.headers.get("X-Phone-Pin"),auth.current_user(request)):
-        raise HTTPException(403, "Нужен PIN для звонков (PHONE_PIN в .env сервера)")
+        raise HTTPException(403, "Телефонные звонки доступны оператору. Войдите в разрешённый аккаунт или укажите операторский PIN.")
 
 
 @app.post("/api/phone")
 async def phone_config(req:PhoneRequest,request: Request):
-    """SIP-доступ Exolve для звонка из браузера. На публичном сервере — только с PIN."""
+    """SIP-доступ: операторский аккаунт или PIN, затем разрешение конкретной операции."""
     _check_pin(request)
     s=_session(req.chat_id,request)
     who=phone_access.actor(*auth.whoami(request))
