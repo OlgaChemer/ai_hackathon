@@ -13,7 +13,7 @@ from nanobot.agent.tools.base import Tool
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.providers.base import LLMProvider,LLMResponse,ToolCallRequest
 from nanobot.utils.llm_runtime import LLMRuntime
-from history import summary
+from history import summary,context_messages
 
 logger.remove();logger.add(sys.stderr,level='ERROR')
 ROOT=Path('/workspace')
@@ -164,7 +164,7 @@ async def main():
         return summary(data,messages,python.successful)
     try:
         result=await AgentRunner().run(AgentRunSpec(initial_messages=[{'role':'system','content':SYSTEM},
-            *data.get('conversation',[]),
+            *context_messages(data),
             {'role':'user','content':data['prompt']+'\nЗадание и все данные находятся в /input/data.json.\nПроверенные факты:\n'+json.dumps(data['facts'],ensure_ascii=False)}],
             tools=tools,runtime=LLMRuntime.capture(provider,'workshop',context_window_tokens=32000),
             max_iterations=8,max_tool_result_chars=5000,workspace=ROOT,session_key='task',provider_retry_mode='none',

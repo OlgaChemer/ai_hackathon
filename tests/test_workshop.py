@@ -208,6 +208,20 @@ class WorkshopAPI(unittest.TestCase):
 
 
 class WorkshopContracts(unittest.IsolatedAsyncioTestCase):
+    def test_long_research_history_is_bounded_without_losing_source_data(self):
+        from workshop_runtime.history import summary,context_messages
+        history=[]
+        for i in range(4):history.extend([{'role':'user','content':f'Уточнение {i}: '+ 'вопрос '*130},
+                                          {'role':'assistant','content':'Длинный отчёт '+ 'подробности '*500+f' Итог {i}'}])
+        original=deepcopy(history)
+        data={'prompt':'Теперь оцени фотографии','kind':'repair','facts':{'count':20,'total':19000000},'conversation':history}
+        prepared=context_messages(data)
+        self.assertLessEqual(sum(len(m['content']) for m in prepared),8000)
+        self.assertEqual([m['content'] for m in prepared if m['role']=='user'],[m['content'] for m in history if m['role']=='user'])
+        self.assertEqual(json.loads(summary(data,[],3))['facts'],data['facts'])
+        self.assertEqual(history,original)
+        self.assertLess(len(summary(data,[],3)),10000)
+
     def test_compaction_keeps_exact_task_and_facts_but_bounds_observations(self):
         from workshop_runtime.history import summary
         data={'prompt':'Сравни только эти квартиры, резерв 17%, не меняй бюджет',
