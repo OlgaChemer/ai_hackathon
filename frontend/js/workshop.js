@@ -220,7 +220,7 @@ function factTable(facts){
     note.textContent=`Проверенная выборка: ${facts.count} объявлений. Медианная цена ${money(facts.median_price)}, медианная цена метра ${money(facts.median_price_per_m2)}. Это полученная выборка, а не весь рынок.`;
     headers=['Комнаты','Объявлений','Медианная цена'];rows=facts.groups.map(g=>[g.rooms===null?'Не указаны':g.rooms===0?'Студии':g.rooms,g.count,money(g.median_price)]);
   }else{
-    note.textContent=`Сценарий ремонта: ${money(facts.assumptions.repair_per_m2)}/м², запас ${facts.assumptions.reserve_pct}%. Это допущение для сравнения, а не смета подрядчика. Мебель, кредитные и юридические расходы отдельно не оценивались.`;
+    note.textContent=`Архивный формат отчёта. Сценарий ремонта: ${money(facts.assumptions.repair_per_m2)}/м², запас ${facts.assumptions.reserve_pct}%. Новая оценка ремонта считает три варианта, новое сравнение обходится без стоимости ремонта. Мебель, кредитные и юридические расходы отдельно не оценивались.`;
     headers=['Квартира','Площадь','Цена','Ремонт с запасом','Покупка + ремонт'];
     rows=facts.rows.map(r=>[r.address,r.area===null?'Нет данных':r.area+' м²',money(r.price),money(r.repair_with_reserve),money(r.total)]);
   }

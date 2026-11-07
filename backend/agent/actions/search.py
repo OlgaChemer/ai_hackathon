@@ -396,7 +396,7 @@ async def wait_selection(s,effective,result):
         s.request_intent='selection'
         s.selection_operation='more'
     elif d.get('action')=='liked':
-        s.selection_query={**Q.default_query(),'scope':'liked','sort':effective.get('sort',[])}
+        s.selection_query={**Q.default_query(),'scope':'liked','limit':max(1,min(30,len(prefs.liked))),'sort':effective.get('sort',[])}
         s.selection_dirty=True
         s.request_intent='selection'
         s.selection_operation='rank'

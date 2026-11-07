@@ -525,7 +525,7 @@ $("micBtn").hidden = false;
 async function handleResultClick(e) {
   const favorites = e.target.closest('[data-favorites]');
   if (favorites && !favorites.disabled) {
-    return state.awaiting === 'selection' ? selectionAction('liked') : sendText('Покажи понравившиеся квартиры');
+    return state.awaiting === 'selection' ? selectionAction('liked') : sendText(`Покажи ${Math.min(30,state.marks.liked.size)} понравившихся квартир`);
   }
   const page = e.target.closest('[data-selection-page]');
   if (page && !page.disabled && state.results[4]) {
