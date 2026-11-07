@@ -1,24 +1,26 @@
-"""Обратная связь клиента: отметки «нравится / не нравится» и пожелания текстом.
+"""Подборка с обратной связью: отметки «нравится / не то» и пожелания клиента -> поправка к оценке квартиры.
 
-Из отметок выводим простые правила (район, площадь, кухня, этаж, ремонт, цена),
-из текста — то же через LLM (или регулярные выражения без модели).
-Правила дают поправку к оценке объявления, а `learned` объясняет клиенту, что учтено.
+Из отметок код выводит простые правила (район, площадь, кухня, этаж, ремонт, цена). Пожелания текстом разбирает
+агент и передаёт их действием update_request — они попадают сюда через профиль (Prefs.sync).
+`learned` объясняет клиенту, что учтено.
 """
 from __future__ import annotations
 
-import re
 import statistics
 from dataclasses import dataclass, field
 
-from ..llm import LLMClient, LLMError
-from .tools import fmt
+from .. import geo
+from .features import FEATURES, feature_status
+from .numbers import fmt
 
 
 @dataclass
 class Prefs:
+    profile: dict = field(default_factory=dict)
     liked: list[str] = field(default_factory=list)
     disliked: list[str] = field(default_factory=list)
     districts_plus: set[str] = field(default_factory=set)
+    explicit_avoids: set[str] = field(default_factory=set)
     districts_minus: set[str] = field(default_factory=set)
     area_min: float | None = None
     kitchen_min: float | None = None
@@ -27,10 +29,35 @@ class Prefs:
     conditions_plus: set[str] = field(default_factory=set)
     metro_max: int | None = None
     price_focus: int | None = None
-    notes: list[str] = field(default_factory=list)
+    features: list[str] = field(default_factory=list)  # удобства, которые нужны обязательно (features.FEATURES)
+    poi: list[str] = field(default_factory=list)       # что должно быть рядом с домом (geo.POI)
+
+    def sync(self, profile: dict) -> None:
+        """Пожелания из профиля запроса (их задаёт агент) -> правила подборки. Выученное из отметок остаётся."""
+        self.profile = dict(profile)
+        self.features = list(profile.get("features") or [])
+        self.poi = list(profile.get("poi") or [])
+        self.area_min = profile.get("area_min")
+        self.kitchen_min = profile.get("kitchen_min")
+        self.avoid_first = bool(profile.get("not_first_floor"))
+        self.metro_max = profile.get("metro_max_minutes")
+        learned = self.districts_minus - self.explicit_avoids
+        self.explicit_avoids = set(profile.get("avoid_districts") or [])
+        self.districts_minus = learned | self.explicit_avoids
 
     def learned(self) -> list[str]:
         out = []
+        soft = set(self.profile.get("soft_criteria") or [])
+        required_features = [k for k in self.features if f"feature:{k}" not in soft]
+        preferred_features = [k for k in self.features if f"feature:{k}" in soft]
+        required_poi = [k for k in self.poi if f"poi:{k}" not in soft]
+        preferred_poi = [k for k in self.poi if f"poi:{k}" in soft]
+        if preferred_features or preferred_poi:
+            out.append("желательно: " + ", ".join([FEATURES[k][0] for k in preferred_features] + [geo.POI[k][0] for k in preferred_poi]))
+        if required_features:
+            out.append("важно: " + ", ".join(FEATURES[k][0] for k in required_features))
+        if required_poi:
+            out.append("обязательно рядом: " + ", ".join(geo.POI[k][0] for k in required_poi))
         if self.districts_plus:
             out.append("нравятся районы: " + ", ".join(sorted(self.districts_plus)))
         if self.districts_minus:
@@ -105,64 +132,15 @@ def adjust(x: dict, p: Prefs) -> float:
         s -= 6
     if x.get("condition") in p.conditions_plus:
         s += 5
+    for key in p.features:
+        if f"feature:{key}" in p.profile.get("soft_criteria", []):
+            continue
+        status = feature_status(x, key)
+        s += 12 if status else -8 if status is False else 0
+    s += geo.score(x, [k for k in p.poi if f"poi:{k}" not in p.profile.get("soft_criteria", [])])
     m = (x.get("metro") or {}).get("minutes")
     if p.metro_max and m is not None and m > p.metro_max:
         s -= 8
     if p.price_focus:
         s -= min(10, abs(x["price"] - p.price_focus) / p.price_focus * 50)
     return s
-
-
-PARSE_FEEDBACK = """Клиент подбирает квартиру и пишет пожелание к подборке. Извлеки JSON:
-{"area_min": число или null, "kitchen_min": число или null, "avoid_first_floor": true/false,
- "avoid_last_floor": true/false, "metro_max_minutes": число или null,
- "districts_plus": [районы, которые хочет], "districts_minus": [районы, которые не хочет],
- "budget_max": число в рублях или null, "condition": "евроремонт"|"косметика"|null}
-Районы пиши в именительном падеже, как в списке: {districts}."""
-
-
-async def apply_text(p: Prefs, text: str, llm: LLMClient, districts: list[str]) -> dict:
-    """Разбирает пожелание текстом. Возвращает распознанные поля (budget_max — для профиля)."""
-    p.notes.append(text)
-    try:
-        d = await llm.chat_json(
-            [{"role": "system", "content": PARSE_FEEDBACK.replace("{districts}", ", ".join(districts) or "—")},
-             {"role": "user", "content": text}],
-            temperature=0.0, tag="feedback",
-        )
-    except (LLMError, KeyError, TypeError, ValueError):
-        d = _rules(text, districts)
-    if d.get("area_min"):
-        p.area_min = float(d["area_min"])
-    if d.get("kitchen_min"):
-        p.kitchen_min = float(d["kitchen_min"])
-    p.avoid_first |= bool(d.get("avoid_first_floor"))
-    p.avoid_last |= bool(d.get("avoid_last_floor"))
-    if d.get("metro_max_minutes"):
-        p.metro_max = int(d["metro_max_minutes"])
-    p.districts_plus |= {x for x in d.get("districts_plus") or [] if isinstance(x, str)}
-    p.districts_minus |= {x for x in d.get("districts_minus") or [] if isinstance(x, str)}
-    if d.get("condition") in ("евроремонт", "косметика"):
-        p.conditions_plus.add(d["condition"])
-    return d
-
-
-def _rules(text: str, districts: list[str]) -> dict:
-    t = text.lower()
-    d: dict = {}
-    if m := re.search(r"кухн\w*\D{0,12}(\d{1,2})", t):
-        d["kitchen_min"] = float(m.group(1))
-    elif "кухн" in t and ("больш" in t or "просторн" in t):
-        d["kitchen_min"] = 10.0
-    if (m := re.search(r"(?:от|больше|не меньше)\s*(\d{2,3})\s*(?:м|кв)", t)) and int(m.group(1)) >= 20 and "kitchen_min" not in d:
-        d["area_min"] = float(m.group(1))
-    d["avoid_first_floor"] = "не перв" in t or "без перв" in t
-    d["avoid_last_floor"] = "не последн" in t
-    if m := re.search(r"метро\D{0,15}(\d{1,2})", t):
-        d["metro_max_minutes"] = int(m.group(1))
-    if "евро" in t or re.search(r"свеж\w* ремонт", t) or "с ремонтом" in t:
-        d["condition"] = "евроремонт"
-    neg = re.findall(r"не\s+(?:в\s+)?(\w+)", t)
-    d["districts_minus"] = [x for x in districts if any(n[:5] in x.lower() for n in neg)]
-    d["districts_plus"] = [x for x in districts if x.lower()[:5] in t and x not in d["districts_minus"]]
-    return d

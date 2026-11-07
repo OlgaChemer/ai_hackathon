@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -18,10 +19,25 @@ class LLMError(RuntimeError):
     """Ошибка обращения к модели (сеть, авторизация, формат)."""
 
 
+class StructuredOutputError(LLMError):
+    """Модель ответила, но не вернула допустимый JSON."""
+
+
+class LLMBusy(LLMError):
+    """Очередь модели заполнена или истекло время ожидания."""
+
+
+@dataclass
+class VisionImage:
+    data: bytes
+    mime_type: str = 'image/jpeg'
+
+
 @dataclass
 class ToolCall:
     name: str
     arguments: dict[str, Any]
+    id: str = ""  # чтобы вернуть результат именно этому вызову (сообщение role=tool, tool_call_id)
 
 
 @dataclass
@@ -30,6 +46,7 @@ class LLMResponse:
     tool_calls: list[ToolCall] = field(default_factory=list)
     provider: str = ""
     model: str = ""
+    functions_state_id: str | None = None  # непрозрачное состояние функции GigaChat
 
 
 @dataclass
@@ -45,21 +62,26 @@ class LLMClient(ABC):
     name: str = "base"
     model: str = ""
 
+    async def analyze_images(self,prompt:str,images:list[VisionImage]) -> LLMResponse:
+        raise LLMError('Этот провайдер не поддерживает анализ изображений.')
+
     @abstractmethod
     async def chat(
         self,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, Any]],
         *,
         tools: list[Tool] | None = None,
         json_mode: bool = False,
+        json_schema: dict | None = None,
         temperature: float = 0.3,
         max_tokens: int = 800,
         tag: str = "",
     ) -> LLMResponse:
-        """Один ход диалога. `tag` — подсказка для офлайн-провайдера (какой это шаг)."""
+        """Один ход диалога. messages — в формате OpenAI: system / user / assistant (в т. ч. с tool_calls) / tool.
+        tag — метка шага для логов."""
 
     async def chat_json(
-        self, messages: list[dict[str, str]], *, temperature: float = 0.2, tag: str = "", **kw
+        self, messages: list[dict[str, Any]], *, temperature: float = 0.2, tag: str = "", **kw
     ) -> dict[str, Any]:
         """Ответ модели в виде JSON-объекта. Устойчив к ```json-обёрткам и тексту вокруг."""
         resp = await self.chat(messages, json_mode=True, temperature=temperature, tag=tag, **kw)
@@ -76,13 +98,13 @@ def parse_json_loose(text: str) -> dict[str, Any]:
     except json.JSONDecodeError:
         start, end = text.find("{"), text.rfind("}")
         if start == -1 or end <= start:
-            raise LLMError(f"Модель вернула не JSON: {text[:200]}")
+            raise StructuredOutputError(f"Модель вернула не JSON: {text[:200]}")
         try:
             data = json.loads(text[start : end + 1])
         except json.JSONDecodeError as exc:
-            raise LLMError(f"Модель вернула не JSON: {text[:200]}") from exc
+            raise StructuredOutputError(f"Модель вернула не JSON: {text[:200]}") from exc
     if not isinstance(data, dict):
-        raise LLMError("Ожидался JSON-объект")
+        raise StructuredOutputError("Ожидался JSON-объект")
     return data
 
 
@@ -102,5 +124,8 @@ async def post_with_retry(http, url: str, *, attempts: int = 3, provider: str = 
             last = LLMError(f"{provider} {r.status_code}")
         except httpx.TransportError as exc:  # таймауты, обрыв keep-alive, DNS
             last = exc
-        await asyncio.sleep(0.5 * (i + 1))
+            logging.getLogger(__name__).warning('%s transport failure: %s (attempt %s/%s)',
+                                                provider, type(exc).__name__, i + 1, attempts)
+        if i < attempts - 1:
+            await asyncio.sleep(0.5 * (i + 1))
     raise LLMError(f"{provider} недоступен: {type(last).__name__} {last}".strip())

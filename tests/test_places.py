@@ -1,168 +1,178 @@
-"""Локация: расстояния, «рядом» по карте и кеш запросов к Nominatim."""
-import os
+"""Контракт 2GIS, бюджет времени, источник данных и сохранение частичных результатов."""
+import asyncio
 import tempfile
 import unittest
-from pathlib import Path
+from dataclasses import replace
+from unittest.mock import AsyncMock, patch
 
-from backend.sources import places
+import httpx
 
-
-class DistanceTest(unittest.TestCase):
-    def test_haversine_one_km_north(self):
-        d = places.haversine(55.796, 49.106, 55.805, 49.106)
-        self.assertAlmostEqual(d, 1000, delta=25)
-
-    def test_walk_minutes(self):
-        self.assertEqual(places.walk_minutes(20), 1)    # минимум минута
-        self.assertEqual(places.walk_minutes(400), 5)
-        self.assertEqual(places.walk_minutes(1200), 15)
-
-    def test_map_link(self):
-        link = places.map_link(55.796, 49.106)
-        self.assertIn("yandex.ru/maps", link)
-        self.assertIn("55.796000", link)
-        self.assertIsNone(places.map_link(None, None))
+from backend import db, geo
+from backend.config import settings
+from backend.db import repo
+from backend.sources import places, store
+from tests.test_store import flat
 
 
-class NearbyTest(unittest.TestCase):
+class PlacesTest(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.mkdtemp()
-        self._orig_cache = places.CACHE
-        self._orig_fetch = places._fetch_osm
-        self._orig_key = places.TWOGIS_KEY
-        places.CACHE = Path(self.tmp)
-        places.TWOGIS_KEY = ""              # тесты не ходят в 2GIS и не ждут таймаут
-        self.calls = []
+        db.configure('sqlite://')
+        geo._live_cache.clear()
+        places._retry_at = 0
+        places._last_provider = 'auto'
+        self.config = replace(settings, twogis_api_key='synthetic-key', places_budget_s=.3)
+        self.client_type = httpx.AsyncClient
+        self.ids = 0
 
-        async def fake_fetch(lat, lng, kind):
-            self.calls.append(kind)
-            data = {
-                "садик": [{"name": "Детский сад № 1", "lat": 55.8000, "lng": 49.1060}],   # ~450 м
-                "школа": [{"name": "Школа № 1", "lat": 55.7975, "lng": 49.1060}],         # ~170 м
-                "парк": [{"name": "Дальний парк", "lat": 55.8300, "lng": 49.1060}],       # ~3,8 км
-            }
-            return data.get(kind, [])
+    def row(self, **kwargs):
+        self.ids += 1
+        x = flat(id_=f'cian-{self.ids}', lat=55.796, lng=49.106, **kwargs)
+        store.remember([x])
+        return x
 
-        places._fetch_osm = fake_fetch
+    def transport(self, handler):
+        return patch.object(places.httpx, 'AsyncClient', lambda **kwargs: self.client_type(transport=httpx.MockTransport(handler), **kwargs))
 
-    def tearDown(self):
-        places.CACHE = self._orig_cache
-        places._fetch_osm = self._orig_fetch
-        places.TWOGIS_KEY = self._orig_key
-        for f in os.listdir(self.tmp):
-            os.unlink(Path(self.tmp) / f)
+    def test_success_is_cached_with_source_timestamp_and_coordinates(self):
+        calls = []
+        def handler(request):
+            calls.append(request)
+            self.assertEqual(request.url.params['rubric_id'], '245')
+            self.assertEqual(request.url.params['point'], '49.106,55.796')
+            return httpx.Response(200, json={'meta': {'code': 200}, 'result': {'total': 1, 'items': [
+                {'name': 'Школа № 1', 'point': {'lat': 55.797, 'lon': 49.106}}]}})
+        x = self.row()
+        async def go():
+            with self.transport(handler), patch.object(geo, 'settings', self.config), patch.object(places, 'settings', self.config), \
+                 patch.object(geo, '_live', AsyncMock(side_effect=AssertionError('OSM not required'))):
+                self.assertTrue(await geo.nearby([x], ['school']))
+                again = {k: v for k, v in x.items() if k not in ('nearby', 'nearby_evidence')}
+                self.assertTrue(await geo.nearby([again], ['school']))
+                self.assertEqual(again['nearby_evidence']['school']['source'], '2gis')
+        asyncio.run(go())
+        self.assertEqual(len(calls), 1)
+        record = db.safe(repo.load_features, [x['id']])[x['id']]['poi:school']
+        self.assertEqual(record['coords'], [55.796, 49.106])
+        self.assertTrue(record['evidence']['checked_at'])
+        self.assertEqual(geo.summary(x, ['school'])[0]['source'], '2gis')
 
-    def test_nearest_picked(self):
-        res = places.nearby(55.796, 49.106, ["школа", "садик", "парк"])
-        res = __import__("asyncio").run(res)
-        self.assertIn("школа", res)
-        self.assertIn("садик", res)
-        self.assertNotIn("парк", res)                     # дальше радиуса «рядом»
-        self.assertLess(res["школа"]["distance_m"], res["садик"]["distance_m"])
-        self.assertEqual(res["школа"]["walk_min"], places.walk_minutes(res["школа"]["distance_m"]))
+    def test_empty_success_is_absent_not_an_error(self):
+        def handler(request):
+            return httpx.Response(200, json={'meta': {'code': 200}, 'result': {'total': 0, 'items': []}})
+        x = self.row()
+        async def go():
+            with self.transport(handler), patch.object(geo, 'settings', self.config), patch.object(places, 'settings', self.config):
+                self.assertTrue(await geo.nearby([x], ['school']))
+        asyncio.run(go())
+        self.assertIn('school', x['nearby'])
+        self.assertIsNone(x['nearby']['school'])
+        self.assertEqual(x['nearby_evidence']['school']['source'], '2gis')
 
-    def test_cache_avoids_second_request(self):
-        import asyncio
-        asyncio.run(places.nearby(55.796, 49.106, ["школа"]))
-        first = len(self.calls)
-        asyncio.run(places.nearby(55.796, 49.106, ["школа"]))
-        self.assertEqual(len(self.calls), first)          # второй раз — из кеша
+    def test_http_200_error_uses_osm_and_recovers_after_cooldown(self):
+        attempts = []
+        def handler(request):
+            attempts.append(request)
+            return httpx.Response(200, json={'meta': {'code': 403}})
+        async def osm(rows, kinds):
+            for x in rows:
+                x.setdefault('nearby', {})['school'] = {'name': 'Школа OSM', 'dist': 100}
+                x.setdefault('nearby_evidence', {})['school'] = {'source': 'osm'}
+            return True
+        async def go():
+            with self.transport(handler), patch.object(geo, 'settings', self.config), patch.object(places, 'settings', self.config), patch.object(geo, '_live', osm):
+                self.assertTrue(await geo.nearby([self.row()], ['school']))
+                self.assertTrue(await geo.nearby([self.row()], ['school']))
+                self.assertEqual(len(attempts), 1)
+                places._retry_at = 0
+                self.assertTrue(await geo.nearby([self.row()], ['school']))
+        asyncio.run(go())
+        self.assertEqual(len(attempts), 2)
 
-    def test_no_coords_returns_empty(self):
-        import asyncio
-        self.assertEqual(asyncio.run(places.nearby(None, None, ["школа"])), {})
+    def test_malformed_points_never_cached_as_absence(self):
+        def handler(request):
+            return httpx.Response(200, json={'meta': {'code': 200}, 'result': {'total': 1, 'items': [{'name': 'Без координат'}]}})
+        x = self.row()
+        async def go():
+            with self.transport(handler), patch.object(geo, 'settings', self.config), patch.object(places, 'settings', self.config), \
+                 patch.object(geo, '_live', AsyncMock(return_value=False)):
+                self.assertFalse(await geo.nearby([x], ['school']))
+        asyncio.run(go())
+        self.assertNotIn('school', x.get('nearby', {}))
+        self.assertNotIn('poi:school', db.safe(repo.load_features, [x['id']]).get(x['id'], {}))
+
+    def test_deadline_preserves_completed_results(self):
+        async def enrich(rows, kinds, radius):
+            rows[0].setdefault('nearby', {})['school'] = {'name': 'Школа', 'dist': 100}
+            rows[0].setdefault('nearby_evidence', {})['school'] = {'source': '2gis'}
+            await asyncio.sleep(10)
+        async def osm(rows, kinds):
+            await asyncio.sleep(10)
+        x = self.row()
+        async def go():
+            with patch.object(geo, 'settings', self.config), patch.object(places, 'enrich', enrich), patch.object(geo, '_live', osm):
+                start = asyncio.get_running_loop().time()
+                self.assertFalse(await geo.nearby([x], ['school', 'park'], budget_s=.03))
+                self.assertLess(asyncio.get_running_loop().time() - start, .3)
+        asyncio.run(go())
+        self.assertIn('school', x['nearby'])
+        self.assertNotIn('park', x['nearby'])
+        cached = db.safe(repo.load_features, [x['id']])[x['id']]
+        self.assertIn('poi:school', cached)
+        self.assertNotIn('poi:park', cached)
+
+    def test_no_coordinates_are_unknown(self):
+        self.assertFalse(asyncio.run(geo.nearby([{'id': 'missing'}], ['school'])))
+
+    def test_clinic_uses_places_search_and_reports_measured_distance(self):
+        def handler(request):
+            self.assertEqual(request.url.params['q'],'поликлиника')
+            self.assertEqual(request.url.params['type'],'branch')
+            return httpx.Response(200,json={'meta':{'code':200},'result':{'total':1,'items':[
+                {'name':'Городская поликлиника','point':{'lat':55.797,'lon':49.106}}]}})
+        x=self.row()
+        async def go():
+            with self.transport(handler),patch.object(geo,'settings',self.config),patch.object(places,'settings',self.config), \
+                 patch.object(geo,'_live',AsyncMock(side_effect=AssertionError('OSM not needed'))):
+                self.assertTrue(await geo.nearby([x],['clinic']))
+        asyncio.run(go())
+        self.assertGreater(x['nearby']['clinic']['dist'],50)
+        self.assertLess(x['nearby']['clinic']['dist'],200)
+        self.assertEqual(x['nearby_evidence']['clinic']['source'],'2gis')
+
+    def test_changed_coordinates_invalidate_cached_poi(self):
+        x = self.row()
+        record = {'version': 2, 'coords': [0, 0], 'value': {'name': 'Другой город', 'dist': 10}, 'evidence': {'source': '2gis'}}
+        db.safe(repo.save_features, [(x['id'], 'poi:school', record, 'map')])
+        self.assertFalse(asyncio.run(geo.nearby([x], ['school'], budget_s=0)))
+        self.assertNotIn('school', x.get('nearby', {}))
+
+    def test_no_key_still_uses_osm(self):
+        async def osm(rows, kinds):
+            for x in rows:
+                x['nearby'] = {'school': None}
+            return True
+        async def go():
+            with patch.object(geo, 'settings', replace(self.config, twogis_api_key='')), patch.object(geo, '_live', osm):
+                self.assertTrue(await geo.nearby([self.row()], ['school']))
+        asyncio.run(go())
 
 
-class MunicipalTest(unittest.TestCase):
-    """«Просто садик» = муниципальный садик, а не частный центр развития."""
-
-    def test_municipal_names_kept(self):
-        for name in ("Детский сад № 49 комбинированного вида", "МБДОУ «Детский сад № 188»", "Школа № 1"):
-            self.assertTrue(places.is_municipal("садик", name) or "Школа" in name)
-
-    def test_private_kindergartens_dropped(self):
-        for name in ("Бала-Сити, полилингвальный детский сад и международная школа",
-                     "Дар, частный детский сад",
-                     "Индивид.ум, Монтессори-школа и детский сад",
-                     "Глобокидс, центр детского развития-частный детский сад"):
-            self.assertFalse(places.is_municipal("садик", name), name)
-
-    def test_rubric_ids(self):
-        self.assertEqual(places.twogis_params(55.7, 49.1, "садик")["rubric_id"], "237")
-        self.assertEqual(places.twogis_params(55.7, 49.1, "школа")["rubric_id"], "245")
-        self.assertEqual(places.twogis_params(55.7, 49.1, "парк")["rubric_id"], "168")
-        self.assertEqual(places.twogis_params(55.7, 49.1, "садик")["radius"], 1200)
-
-    def test_osm_results_filtered(self):
-        import asyncio
-        from unittest.mock import patch
-
-        class FakeResp:
-            status_code = 200
-
-            def json(self):
-                return [
-                    {"display_name": "Детский сад № 49, улица Баумана", "lat": "55.79", "lon": "49.10"},
-                    {"display_name": "Дар, частный детский сад, улица Пушкина", "lat": "55.79", "lon": "49.11"},
-                ]
-
-        class FakeClient:
-            def __init__(self, *a, **kw): ...
+class CianFingerprintTest(unittest.TestCase):
+    def test_safari_challenge_falls_back_to_chrome_without_automatic_redirects(self):
+        from backend.sources import cian
+        calls = []
+        class FakeSession:
+            def __init__(self, **kwargs): self.profile = kwargs['impersonate']
             async def __aenter__(self): return self
-            async def __aexit__(self, *a): return False
-            async def get(self, *a, **kw): return FakeResp()
-
-        with patch.object(places.httpx, "AsyncClient", FakeClient):
-            pois = asyncio.run(places._fetch_osm(55.796, 49.106, "садик"))
-        self.assertEqual([p["name"] for p in pois], ["Детский сад № 49"])
-
-
-class TwoGisFallbackTest(unittest.TestCase):
-    """2GIS с зарубежного IP недоступен — молча уходим на OSM, а не ломаем подборку."""
-
-    def setUp(self):
-        self.tmp = tempfile.mkdtemp()
-        self._orig = (places.CACHE, places.TWOGIS_KEY, places._fetch_2gis, places._fetch_osm, places._2gis)
-        places.CACHE = Path(self.tmp)
-        places.TWOGIS_KEY = "test-key"
-
-        async def boom(lat, lng, kind):
-            raise TimeoutError("2gis timeout")
-
-        async def osm(lat, lng, kind):
-            return [{"name": "Школа из OSM", "lat": lat, "lng": lng}]
-
-        places._fetch_2gis = boom
-        places._fetch_osm = osm
-
-    def tearDown(self):
-        places.CACHE, places.TWOGIS_KEY, places._fetch_2gis, places._fetch_osm, places._2gis = self._orig
-        for f in os.listdir(self.tmp):
-            os.unlink(Path(self.tmp) / f)
-
-    def test_falls_back_to_osm_and_stops_trying(self):
-        import asyncio
-        res = asyncio.run(places.nearby(55.796, 49.106, ["школа"]))
-        self.assertIn("школа", res)
-        self.assertEqual(places._2gis, "down")
-        self.assertIn("OSM", res["школа"]["name"])
-
-
-class InfraCriterionTest(unittest.TestCase):
-    """Школа рядом считается по карте, а не по словам в описании."""
-
-    def test_school_close_and_far(self):
-        from backend.agent import criteria as C
-        p = {"city": "Казань", "rooms": 2, "budget_max": 9_000_000,
-             "condition": "any", "metro_any": True, "infra": ["школа"]}
-        base = {"city": "Казань", "rooms": 2, "price": 8_000_000}
-        near = {**base, "nearby": {"школа": {"name": "Школа № 1", "distance_m": 280}}}
-        far = {**base, "nearby": {"школа": {"name": "Школа № 9", "distance_m": 1600}}}
-        none = {**base, "nearby": {}}
-        self.assertEqual(C.check(p, near)["failed"], [])
-        self.assertEqual(C.check(p, far)["failed"], ["infra"])
-        self.assertEqual(C.check(p, none)["unknown"], ["infra"])
-
-
-if __name__ == "__main__":
-    unittest.main()
+            async def __aexit__(self, *args): pass
+            async def get(self, url, **kwargs):
+                calls.append((self.profile, kwargs['allow_redirects']))
+                class Response:
+                    status_code = 200
+                    headers = {}
+                    text = 'challenge' if self.profile == 'safari17_0' else '<title>Квартиры в Казани</title>'
+                return Response()
+        with patch('curl_cffi.requests.AsyncSession', FakeSession):
+            result = asyncio.run(cian._get_browser_like('https://kazan.cian.ru/cat.php'))
+        self.assertIn('<title>', result[2])
+        self.assertEqual(calls, [('safari17_0', False), ('chrome', False)])

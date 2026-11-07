@@ -3,24 +3,28 @@ import { api } from "./api.js";
 import { html, rub, pct } from "./format.js";
 
 const CONTROLS = [
-  { key: "savings_pct", label: "Экономия на торге", min: 0.005, max: 0.06, step: 0.005, value: 0.03, fmt: (v) => pct(v) },
-  { key: "fee_pct", label: "Плата за результат", min: 0.05, max: 0.3, step: 0.01, value: 0.15, fmt: (v) => pct(v, 0) },
-  { key: "incrementality", label: "Инкрементальность ипотеки", min: 0.05, max: 0.6, step: 0.05, value: 0.3, fmt: (v) => pct(v, 0) },
-  { key: "conversion", label: "Конверсия кейс → сделка", min: 0.05, max: 0.5, step: 0.01, value: 0.25, fmt: (v) => pct(v, 0) },
-  { key: "deals", label: "Сделок в год", min: 500, max: 30000, step: 500, value: 2000, fmt: (v) => Number(v).toLocaleString("ru-RU") },
-  { key: "fixed_costs", label: "Постоянные затраты", min: 50e6, max: 300e6, step: 10e6, value: 150e6, fmt: (v) => `${v / 1e6} млн ₽` },
-  { key: "fin_deposit_share", group: "fin", label: "Доля клиентов, открывших вклад", min: 0.05, max: 0.7, step: 0.05, value: 0.35, fmt: (v) => pct(v, 0) },
-  { key: "fin_avg_deposit", group: "fin", label: "Средний остаток на вкладе", min: 200000, max: 3000000, step: 100000, value: 1200000, fmt: (v) => rub(v) },
-  { key: "fin_deposit_margin", group: "fin", label: "Маржа банка на вкладах, годовых", min: 0.005, max: 0.04, step: 0.005, value: 0.02, fmt: (v) => pct(v) },
+  { key: "savings_pct", label: "Экономия на торге", min: 0.005, max: 0.06, step: 0.005, fmt: (v) => pct(v) },
+  { key: "fee_pct", label: "Плата за результат", min: 0.05, max: 0.3, step: 0.01, fmt: (v) => pct(v, 0) },
+  { key: "incrementality", label: "Инкрементальность ипотеки", min: 0.05, max: 0.6, step: 0.05, fmt: (v) => pct(v, 0) },
+  { key: "conversion", label: "Конверсия кейс → сделка", min: 0.05, max: 0.5, step: 0.01, fmt: (v) => pct(v, 0) },
+  { key: "deals", label: "Сделок в год", min: 500, max: 30000, step: 500, fmt: (v) => Number(v).toLocaleString("ru-RU") },
+  { key: "fixed_costs", label: "Постоянные затраты", min: 50e6, max: 300e6, step: 10e6, fmt: (v) => `${v / 1e6} млн ₽` },
+  { key: "fin_deposit_share", group: "fin", label: "Доля клиентов, открывших вклад", min: 0.05, max: 0.7, step: 0.05, fmt: (v) => pct(v, 0) },
+  { key: "fin_avg_deposit", group: "fin", label: "Средний остаток на вкладе", min: 200000, max: 3000000, step: 100000, fmt: (v) => rub(v) },
+  { key: "fin_deposit_margin", group: "fin", label: "Маржа банка на вкладах, годовых", min: 0.005, max: 0.04, step: 0.005, fmt: (v) => pct(v) },
 ];
 
 const fmtRoi = (r) => (r == null ? "—" : r >= 1 ? `${r.toLocaleString("ru-RU", { maximumFractionDigits: 1 })}×` : pct(r, 0));
 
-export function mountEconomics(root) {
+export async function mountEconomics(root) {
   if (root.dataset.ready) return;
   root.dataset.ready = "1";
-  const values = Object.fromEntries(CONTROLS.map((c) => [c.key, c.value]));
-  values.fin_enabled = true;
+  let initial;
+  try { initial = await api.economics({}); }
+  catch { root.dataset.ready = ""; root.textContent = "Не удалось загрузить расчёт экономики. Откройте раздел ещё раз."; return; }
+  const controls = CONTROLS.map(c => ({...c, value: initial.defaults[c.key]}));
+  const values = Object.fromEntries(controls.map((c) => [c.key, c.value]));
+  values.fin_enabled = initial.defaults.fin_enabled;
   const control = (c) => html`
         <div class="control">
           <label for="ec-${c.key}">${c.label}<output id="out-${c.key}">${c.fmt(c.value)}</output></label>
@@ -29,14 +33,14 @@ export function mountEconomics(root) {
   root.innerHTML = html`
     <aside class="controls">
       <h2>Допущения</h2>
-      ${html.raw(CONTROLS.filter((c) => !c.group).map(control).join(""))}
-      <label class="toggle"><input type="checkbox" data-fin checked> Учитывать финансового помощника</label>
-      <div class="fin-controls">${html.raw(CONTROLS.filter((c) => c.group === "fin").map(control).join(""))}</div>
+      ${html.raw(controls.filter((c) => !c.group).map(control).join(""))}
+      <label class="toggle"><input type="checkbox" data-fin ${values.fin_enabled ? "checked" : ""}> Учитывать финансового помощника</label>
+      <div class="fin-controls">${html.raw(controls.filter((c) => c.group === "fin").map(control).join(""))}</div>
       <button class="btn btn-ghost btn-small" data-reset>Вернуть базовый сценарий</button>
     </aside>
     <div class="econ-main">
       <div class="kpis" data-kpis></div>
-      <section class="panel"><h2 class="panel-title">Одна закрытая сделка</h2><p class="panel-lead">Квартира 9 млн ₽, ипотека 80%. Главный доход — не плата клиента, а ипотека и продукты вокруг сделки.</p><div class="bars" data-bars></div><p class="hint" data-conflict></p></section>
+      <section class="panel"><h2 class="panel-title">Одна закрытая сделка</h2><p class="panel-lead">Квартира ${rub(initial.defaults.price)}, ипотека ${pct(initial.defaults.ltv)}. Главный доход — не плата клиента, а ипотека и продукты вокруг сделки.</p><div class="bars" data-bars></div><p class="hint" data-conflict></p></section>
       <section class="panel"><h2 class="panel-title">Финансовый помощник</h2><p class="panel-lead">Клиенты, которые копят на взнос, открывают вклады и брокерские счета в Сбере — в том числе те, кто квартиру так и не купил. Банк зарабатывает маржу на привлечённых средствах и комиссии.</p><div data-fin-block></div></section>
       <section class="panel"><h2 class="panel-title">Сценарии</h2><p class="panel-lead">ROI = (сделки × вклад − постоянные затраты) / постоянные затраты. Сильнее всего ROI двигают инкрементальность ипотеки и конверсия.</p><div style="overflow-x:auto"><table class="scen" data-scen></table></div></section>
     </div>`;
@@ -51,7 +55,7 @@ export function mountEconomics(root) {
     fill(input);
     input.addEventListener("input", () => {
       fill(input);
-      const c = CONTROLS.find((x) => x.key === input.dataset.key);
+      const c = controls.find((x) => x.key === input.dataset.key);
       values[c.key] = Number(input.value);
       root.querySelector(`#out-${c.key}`).textContent = c.fmt(values[c.key]);
       clearTimeout(timer);
@@ -64,7 +68,9 @@ export function mountEconomics(root) {
     refresh();
   });
   root.querySelector("[data-reset]").addEventListener("click", () => {
-    CONTROLS.forEach((c) => {
+    values.fin_enabled = initial.defaults.fin_enabled;
+    root.querySelector("[data-fin]").checked = values.fin_enabled;
+    controls.forEach((c) => {
       values[c.key] = c.value;
       root.querySelector(`#ec-${c.key}`).value = c.value;
       fill(root.querySelector(`#ec-${c.key}`));
@@ -72,7 +78,7 @@ export function mountEconomics(root) {
     });
     refresh();
   });
-  refresh();
+  render(root, initial);
 }
 
 function render(root, { unit, scenarios }) {

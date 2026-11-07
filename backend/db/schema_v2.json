@@ -1,0 +1,60 @@
+{
+  "sqlite": [
+    {
+      "name": "phone_grants",
+      "create": "\nCREATE TABLE phone_grants (\n\tid VARCHAR(40) NOT NULL, \n\tchat_id VARCHAR(32) NOT NULL, \n\tactor VARCHAR(64) NOT NULL, \n\toperation_id VARCHAR(80) NOT NULL, \n\tlisting_id VARCHAR(80) NOT NULL, \n\tdecision_id VARCHAR(40) NOT NULL, \n\ttoken_hash VARCHAR(64) NOT NULL, \n\tstatus VARCHAR(20) NOT NULL, \n\ttts_chars INTEGER NOT NULL, \n\tcreated_at DATETIME NOT NULL, \n\texpires_at DATETIME NOT NULL, \n\tPRIMARY KEY (id), \n\tUNIQUE (chat_id, decision_id), \n\tFOREIGN KEY(chat_id) REFERENCES chats (id) ON DELETE CASCADE\n)\n\n",
+      "columns": {
+        "id": "VARCHAR(40)",
+        "chat_id": "VARCHAR(32)",
+        "actor": "VARCHAR(64)",
+        "operation_id": "VARCHAR(80)",
+        "listing_id": "VARCHAR(80)",
+        "decision_id": "VARCHAR(40)",
+        "token_hash": "VARCHAR(64)",
+        "status": "VARCHAR(20)",
+        "tts_chars": "INTEGER",
+        "created_at": "DATETIME",
+        "expires_at": "DATETIME"
+      },
+      "indexes": [
+        {
+          "name": "ix_phone_grants_actor",
+          "create": "CREATE INDEX ix_phone_grants_actor ON phone_grants (actor)"
+        },
+        {
+          "name": "ix_phone_grants_chat_id",
+          "create": "CREATE INDEX ix_phone_grants_chat_id ON phone_grants (chat_id)"
+        }
+      ]
+    }
+  ],
+  "postgresql": [
+    {
+      "name": "phone_grants",
+      "create": "\nCREATE TABLE phone_grants (\n\tid VARCHAR(40) NOT NULL, \n\tchat_id VARCHAR(32) NOT NULL, \n\tactor VARCHAR(64) NOT NULL, \n\toperation_id VARCHAR(80) NOT NULL, \n\tlisting_id VARCHAR(80) NOT NULL, \n\tdecision_id VARCHAR(40) NOT NULL, \n\ttoken_hash VARCHAR(64) NOT NULL, \n\tstatus VARCHAR(20) NOT NULL, \n\ttts_chars INTEGER NOT NULL, \n\tcreated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, \n\texpires_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, \n\tPRIMARY KEY (id), \n\tUNIQUE (chat_id, decision_id), \n\tFOREIGN KEY(chat_id) REFERENCES chats (id) ON DELETE CASCADE\n)\n\n",
+      "columns": {
+        "id": "VARCHAR(40)",
+        "chat_id": "VARCHAR(32)",
+        "actor": "VARCHAR(64)",
+        "operation_id": "VARCHAR(80)",
+        "listing_id": "VARCHAR(80)",
+        "decision_id": "VARCHAR(40)",
+        "token_hash": "VARCHAR(64)",
+        "status": "VARCHAR(20)",
+        "tts_chars": "INTEGER",
+        "created_at": "TIMESTAMP WITHOUT TIME ZONE",
+        "expires_at": "TIMESTAMP WITHOUT TIME ZONE"
+      },
+      "indexes": [
+        {
+          "name": "ix_phone_grants_actor",
+          "create": "CREATE INDEX ix_phone_grants_actor ON phone_grants (actor)"
+        },
+        {
+          "name": "ix_phone_grants_chat_id",
+          "create": "CREATE INDEX ix_phone_grants_chat_id ON phone_grants (chat_id)"
+        }
+      ]
+    }
+  ]
+}

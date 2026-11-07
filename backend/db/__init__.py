@@ -1,0 +1,111 @@
+"""База данных: SQLAlchemy 2. По умолчанию SQLite (backend/data/app.db), в проде — PostgreSQL через DATABASE_URL.
+
+Схема — models.py, запросы — repo.py. Только явные версионированные миграции
+из migrations.py изменяют структуру. Изменение модели без миграции отклоняется.
+
+Работа синхронная. Критические изменения диалога используют required(): при ошибке
+записи успех не подтверждается. safe() предназначена для необязательного кэша и чтения.
+"""
+from __future__ import annotations
+
+import logging
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Any, Callable, Iterator, TypeVar
+
+from sqlalchemy import create_engine, event, inspect, text
+from sqlalchemy.engine import Engine
+from sqlalchemy.orm import Session, sessionmaker
+
+from .models import Base
+
+log = logging.getLogger(__name__)
+T = TypeVar("T")
+
+
+class PersistenceError(RuntimeError):
+    """Критическое изменение не зафиксировано; подтверждать успех нельзя."""
+
+
+class StateConflict(PersistenceError):
+    """Другой владелец уже изменил сохранённый снимок."""
+
+
+class CommandCapacityError(RuntimeError):
+    """Команда не принята: очередь уже заполнена."""
+
+
+def required(fn: Callable[..., T], *args: Any, **kw: Any) -> T:
+    try:
+        with session() as connection:
+            return fn(connection, *args, **kw)
+    except (PersistenceError,CommandCapacityError):
+        raise
+    except Exception as exc:
+        from ..telemetry import count,dependency
+        count('persistence_failed');dependency('database','degraded')
+        log.exception('critical database operation failed: %s', getattr(fn, '__name__', 'operation'))
+        raise PersistenceError('Не удалось сохранить изменение. Успех не подтверждён; повторите отправку с тем же ID.') from exc
+
+_engine: Engine | None = None
+_factory: sessionmaker | None = None
+
+
+def configure(url: str | None = None) -> Engine:
+    """Подключиться к базе и создать таблицы. url по умолчанию — DATABASE_URL из .env."""
+    global _engine, _factory
+    from ..config import settings
+
+    url = url or settings.database_url
+    kw: dict[str, Any] = {}
+    if url.startswith("sqlite"):
+        path = url.split("sqlite:///", 1)[1] if "sqlite:///" in url else ""
+        if path and path != ":memory:":
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+        else:  # база в памяти (тесты): одно соединение на всех, иначе каждый увидит пустую базу
+            from sqlalchemy.pool import StaticPool
+            kw["poolclass"] = StaticPool
+        kw["connect_args"] = {"check_same_thread": False}
+    if _engine is not None:
+        _engine.dispose()
+    engine = create_engine(url, **kw)
+    if url.startswith("sqlite"):
+        in_memory = ":memory:" in url or url in ("sqlite://", "sqlite:///")
+
+        @event.listens_for(engine, "connect")
+        def _pragmas(conn, _):  # внешние ключи; WAL — чтение не ждёт записи (сервер + обход объявлений)
+            cur = conn.cursor()
+            cur.execute("PRAGMA foreign_keys=ON")
+            if not in_memory:
+                cur.execute("PRAGMA journal_mode=WAL")
+            cur.close()
+    from .migrations import upgrade
+    upgrade(engine,Base.metadata)
+    _engine, _factory = engine, sessionmaker(engine, expire_on_commit=False)
+    return engine
+
+
+@contextmanager
+def session() -> Iterator[Session]:
+    """with db.session() as s: ... — коммит в конце, откат при ошибке."""
+    if _factory is None:
+        configure()
+    s = _factory()  # type: ignore[misc]
+    try:
+        yield s
+        s.commit()
+    except Exception:
+        s.rollback()
+        raise
+    finally:
+        s.close()
+
+
+def safe(fn: Callable[..., T], *args: Any, default: T | None = None, **kw: Any) -> T | None:
+    """fn(db, *args) в своей транзакции. Ошибка базы не останавливает агента: пишем в лог и возвращаем default."""
+    try:
+        with session() as s:
+            return fn(s, *args, **kw)
+    except Exception:  # noqa: BLE001 — база вспомогательная: без неё агент работает, только без истории
+        log.exception("база: %s не выполнено", getattr(fn, "__name__", fn))
+        return default

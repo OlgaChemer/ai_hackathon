@@ -1,0 +1,74 @@
+{
+  "sqlite": [
+    {
+      "name": "users",
+      "create": "",
+      "columns": {
+        "premium": "BOOLEAN NOT NULL DEFAULT 0"
+      },
+      "indexes": []
+    },
+    {
+      "name": "workshop_jobs",
+      "create": "\nCREATE TABLE workshop_jobs (\n\tid VARCHAR(32) NOT NULL, \n\tuser_id INTEGER NOT NULL, \n\tchat_id VARCHAR(32) NOT NULL, \n\tcommand_id VARCHAR(64) NOT NULL, \n\tkind VARCHAR(20) NOT NULL, \n\tprompt TEXT NOT NULL, \n\tprovider VARCHAR(20) NOT NULL, \n\tstatus VARCHAR(20) NOT NULL, \n\tsnapshot JSON NOT NULL, \n\tevents JSON NOT NULL, \n\tresult JSON, \n\terror TEXT, \n\tcreated_at DATETIME NOT NULL, \n\tupdated_at DATETIME NOT NULL, \n\tPRIMARY KEY (id), \n\tUNIQUE (user_id, command_id), \n\tFOREIGN KEY(user_id) REFERENCES users (id), \n\tFOREIGN KEY(chat_id) REFERENCES chats (id)\n)\n\n",
+      "columns": {
+        "id": "VARCHAR(32)",
+        "user_id": "INTEGER",
+        "chat_id": "VARCHAR(32)",
+        "command_id": "VARCHAR(64)",
+        "kind": "VARCHAR(20)",
+        "prompt": "TEXT",
+        "provider": "VARCHAR(20)",
+        "status": "VARCHAR(20)",
+        "snapshot": "JSON",
+        "events": "JSON",
+        "result": "JSON",
+        "error": "TEXT",
+        "created_at": "DATETIME",
+        "updated_at": "DATETIME"
+      },
+      "indexes": [
+        {
+          "name": "ix_workshop_jobs_user_id",
+          "create": "CREATE INDEX ix_workshop_jobs_user_id ON workshop_jobs (user_id)"
+        }
+      ]
+    }
+  ],
+  "postgresql": [
+    {
+      "name": "users",
+      "create": "",
+      "columns": {
+        "premium": "BOOLEAN NOT NULL DEFAULT FALSE"
+      },
+      "indexes": []
+    },
+    {
+      "name": "workshop_jobs",
+      "create": "\nCREATE TABLE workshop_jobs (\n\tid VARCHAR(32) NOT NULL, \n\tuser_id INTEGER NOT NULL, \n\tchat_id VARCHAR(32) NOT NULL, \n\tcommand_id VARCHAR(64) NOT NULL, \n\tkind VARCHAR(20) NOT NULL, \n\tprompt TEXT NOT NULL, \n\tprovider VARCHAR(20) NOT NULL, \n\tstatus VARCHAR(20) NOT NULL, \n\tsnapshot JSON NOT NULL, \n\tevents JSON NOT NULL, \n\tresult JSON, \n\terror TEXT, \n\tcreated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, \n\tupdated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, \n\tPRIMARY KEY (id), \n\tUNIQUE (user_id, command_id), \n\tFOREIGN KEY(user_id) REFERENCES users (id), \n\tFOREIGN KEY(chat_id) REFERENCES chats (id)\n)\n\n",
+      "columns": {
+        "id": "VARCHAR(32)",
+        "user_id": "INTEGER",
+        "chat_id": "VARCHAR(32)",
+        "command_id": "VARCHAR(64)",
+        "kind": "VARCHAR(20)",
+        "prompt": "TEXT",
+        "provider": "VARCHAR(20)",
+        "status": "VARCHAR(20)",
+        "snapshot": "JSON",
+        "events": "JSON",
+        "result": "JSON",
+        "error": "TEXT",
+        "created_at": "TIMESTAMP WITHOUT TIME ZONE",
+        "updated_at": "TIMESTAMP WITHOUT TIME ZONE"
+      },
+      "indexes": [
+        {
+          "name": "ix_workshop_jobs_user_id",
+          "create": "CREATE INDEX ix_workshop_jobs_user_id ON workshop_jobs (user_id)"
+        }
+      ]
+    }
+  ]
+}

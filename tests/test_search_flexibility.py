@@ -1,0 +1,144 @@
+"""Регрессии реального зависания и подбора по альтернативным комнатам/территориям."""
+import asyncio
+import json
+import unittest
+from unittest.mock import AsyncMock, patch
+
+from backend import db, sources
+from backend.agent import actions, session
+from backend.agent.actions import search as search_actions
+from backend.agent.pricing import fair_price, value_rank
+from backend.agent.profile import merge_profile, passes_hard_filters
+from backend.llm.gigachat import to_gigachat_messages
+from backend.sources.base import normalize_city
+from tests.fakes import ScriptedLLM, call, drive, say
+from tests.test_llm_and_agent import listing
+
+
+class FlexibleSearchTest(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        db.configure('sqlite://')
+        self.collect = patch.object(sources, 'collect', AsyncMock(return_value=([listing()], [])))
+        self.more = patch.object(sources, 'more', AsyncMock(return_value=[]))
+        self.collect_mock = self.collect.start()
+        self.more.start()
+        self.addCleanup(self.collect.stop)
+        self.addCleanup(self.more.stop)
+
+    def agent(self, *steps):
+        s = session.create_session('Подберите квартиру', ScriptedLLM(*steps))
+        s.profile = merge_profile({'city': 'Казань', 'rooms': 2, 'budget_max': 9_000_000})
+        s.prefs.sync(s.profile)
+        s.llm.review_intent = 'search'
+        return s
+
+    async def test_narration_without_tool_runs_search_and_selection(self):
+        s = self.agent(say('Сейчас начну поиск подходящих квартир.'))
+        await drive(s, until=lambda ev: ev['type'] == 'confirm' and ev['kind'] == 'selection')
+        self.assertTrue(s.shown)
+        self.assertTrue(s.red_lines_ok)  # отдельная карточка принята тестовым клиентом до поиска
+        self.assertIsNone(s.profile['payment'])  # чтение объявлений не требует анкеты оплаты
+        self.collect_mock.assert_awaited_once()
+        messages = [e.get('text', '') for e in s.history if e['type'] == 'message']
+        self.assertNotIn('Сейчас начну поиск подходящих квартир.', messages)
+        self.assertTrue(any(e['type'] == 'search_progress' and e['on'] for e in s.history))
+        self.assertTrue(any(e['type'] == 'search_progress' and not e['on'] for e in s.history))
+        to_gigachat_messages(s.messages, False)  # автоматическое продолжение сохраняет валидные пары вызов/результат
+        self.assertNotIn('confirm_red_lines', [t.name for t in actions.tools(s)])
+
+    async def test_repeated_known_request_recovers_without_more_from_user(self):
+        s = self.agent(*[call('update_request', poi=[]) for _ in range(3)], say('Показываю подборку.'))
+        await drive(s, until=lambda ev: ev['type'] == 'confirm' and ev['kind'] == 'selection')
+        self.assertTrue(s.shown)
+        self.assertFalse(any('остановился' in e.get('text', '') for e in s.history))
+        to_gigachat_messages(s.messages, False)
+
+    async def test_empty_secondary_offers_new_buildings_with_buttons_without_switching(self):
+        self.collect_mock.return_value = ([], [])
+        s = self.agent(call('search_listings'), say('Ничего не нашёл.'))
+        s.profile['housing'] = 'secondary'
+        events = await drive(s, until=lambda ev: ev['type'] == 'confirm' and ev['kind']=='clarify')
+        question = next(e for e in events if e['type'] == 'confirm' and e['kind']=='clarify')
+        self.assertIn('Посмотреть новостройки', question['chips'])
+        self.assertEqual(s.profile['housing'], 'secondary')
+        self.assertEqual(s.profile['budget_max'], 9_000_000)
+
+    async def test_finances_are_required_for_deal_preparation_but_not_for_search(self):
+        s = self.agent()
+        s.chosen, s.red_lines_ok = 'cian-1', True
+        self.assertTrue(actions.available(s, 'search_listings'))
+        self.assertFalse(actions.available(s, 'prepare_deal'))
+        s.profile['payment'] = 'cash'
+        self.assertTrue(actions.available(s, 'search_listings'))
+        self.assertTrue(actions.available(s, 'prepare_deal'))
+
+    async def test_knowledge_answer_does_not_start_a_new_search(self):
+        s = self.agent(say('Эскроу — специальный счёт для безопасной сделки.'))
+        s.query = 'Что такое эскроу?'
+        await drive(s)
+        self.collect_mock.assert_not_awaited()
+
+
+class QueryAndRankingTest(unittest.IsolatedAsyncioTestCase):
+
+    def test_room_and_city_variants_survive_normalization_and_filters(self):
+        p = merge_profile({'city': 'Москва', 'cities': ['Подмосковье'], 'rooms_options': [2, 1, 1], 'budget_max': 10_000_000})
+        self.assertEqual(p['rooms_options'], [1, 2])
+        self.assertEqual(p['cities'], ['Московская область'])
+        self.assertTrue(passes_hard_filters(listing(city='Московская область', rooms=1), p))
+        self.assertFalse(passes_hard_filters(listing(city='Москва', rooms=3), p))
+        self.assertFalse(passes_hard_filters(listing(city='Казань', rooms=1), p))
+        self.assertEqual(merge_profile({'rooms': 3}, p)['rooms_options'], [])
+        self.assertEqual(normalize_city('Московская область'), 'Московская область')
+        self.assertEqual(normalize_city('Подмосковье'), 'Московская область')
+        self.assertIn('region=4593', sources.cian.build_url('Московская область', 1, 10_000_000))
+
+
+
+
+
+    async def test_all_variants_are_queried_and_deduplicated(self):
+        p = {'city': 'Москва', 'cities': ['Московская область'], 'rooms': 1, 'rooms_options': [1, 2], 'budget_max': 10_000_000}
+        got = []
+        async def collect(q):
+            got.append((q['city'], q['rooms']))
+            return [listing()], [{'status': 'live', 'count': 1}]
+        with patch.object(sources, '_collect_one', collect):
+            items, reports = await sources.collect(p)
+        self.assertEqual(set(got), {('Москва',1),('Москва',2),('Московская область',1),('Московская область',2)})
+        self.assertEqual(len(items), 1)
+        self.assertEqual(len(reports), 4)
+
+    def test_central_one_room_can_beat_distant_two_room(self):
+        profile = merge_profile({'city':'Самара','rooms_options':[1,2],'budget_max':10_000_000,'prefer_center':True})
+        prefs = session.P.Prefs(); prefs.sync(profile)
+        center = listing(id='center',city='Самара',rooms=1,price=8_500_000,lat=53.195,lng=50.11)
+        outer = listing(id='outer',city='Самара',rooms=2,price=3_000_000,lat=53.27,lng=50.29)
+        meta = {x['id']:{'score':50,'fair':{'fair':x['price'],'comps_count':8}} for x in (center,outer)}
+        self.assertEqual(search_actions.ranked([outer,center],meta,prefs)[0]['id'],'center')
+        self.assertLess(meta['center']['ranking']['center_km'],1)
+
+    def test_better_relative_market_value_wins_for_equal_match(self):
+        profile = {'city':'Казань'}
+        match = {'checks':[]}
+        cheap = value_rank(listing(price=7_000_000),profile,{'fair':8_000_000,'comps_count':8},match)
+        dear = value_rank(listing(price=8_000_000),profile,{'fair':7_500_000,'comps_count':8},match)
+        self.assertGreater(cheap['value_score'],dear['value_score'])
+        self.assertGreater(cheap['discount_pct'],0)
+
+    def test_no_discount_claim_with_sparse_comparables_or_fake_center(self):
+        r = value_rank(listing(lat=None,lng=None),{'prefer_center':True},{'fair':10_000_000,'comps_count':1},{'checks':[]})
+        self.assertIsNone(r['discount_pct'])
+        self.assertIsNone(r['center_km'])
+
+    def test_far_regional_comparables_do_not_prove_a_market_discount(self):
+        x = listing(city='Московская область',price=4_000_000,lat=55.2,lng=38.2,district=None)
+        pool = [listing(id=f'far{i}',city='Московская область',price=9_000_000,lat=56.2+i*.01,lng=37.2,district=None) for i in range(5)]
+        fp = fair_price(x,pool)
+        self.assertFalse(fp['value_supported'])
+        self.assertIsNone(value_rank(x,{},fp,{'checks':[]})['discount_pct'])
+
+    def test_fair_price_does_not_mix_moscow_and_region(self):
+        x = listing(city='Москва',price=10_000_000)
+        fp = fair_price(x,[listing(id='region',city='Московская область',price=3_000_000)])
+        self.assertGreater(fp['fair'],9_000_000)

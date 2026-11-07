@@ -1,0 +1,490 @@
+{
+  "sqlite": [
+    {
+      "name": "crawl_runs",
+      "create": "\nCREATE TABLE crawl_runs (\n\tid INTEGER NOT NULL, \n\tstarted_at DATETIME NOT NULL, \n\tfinished_at DATETIME, \n\tstatus VARCHAR(10) NOT NULL, \n\tsearches INTEGER NOT NULL, \n\tseen INTEGER NOT NULL, \n\tadded INTEGER NOT NULL, \n\tprice_changed INTEGER NOT NULL, \n\tremoved INTEGER NOT NULL, \n\terrors JSON, \n\tPRIMARY KEY (id)\n)\n\n",
+      "columns": {
+        "id": "INTEGER",
+        "started_at": "DATETIME",
+        "finished_at": "DATETIME",
+        "status": "VARCHAR(10)",
+        "searches": "INTEGER",
+        "seen": "INTEGER",
+        "added": "INTEGER",
+        "price_changed": "INTEGER",
+        "removed": "INTEGER",
+        "errors": "JSON"
+      },
+      "indexes": []
+    },
+    {
+      "name": "listings",
+      "create": "\nCREATE TABLE listings (\n\tid VARCHAR(40) NOT NULL, \n\tsource VARCHAR(20) NOT NULL, \n\tcity VARCHAR(60) NOT NULL, \n\trooms INTEGER NOT NULL, \n\tis_new BOOLEAN NOT NULL, \n\tprice INTEGER NOT NULL, \n\tokrug VARCHAR(20), \n\tstatus VARCHAR(10) NOT NULL, \n\tdata JSON NOT NULL, \n\tfirst_seen_at DATETIME NOT NULL, \n\tlast_seen_at DATETIME NOT NULL, \n\tremoved_at DATETIME, \n\tpage_checked_at DATETIME, \n\tpage_alive BOOLEAN, \n\tpage_note VARCHAR(160), \n\tPRIMARY KEY (id)\n)\n\n",
+      "columns": {
+        "id": "VARCHAR(40)",
+        "source": "VARCHAR(20)",
+        "city": "VARCHAR(60)",
+        "rooms": "INTEGER",
+        "is_new": "BOOLEAN",
+        "price": "INTEGER",
+        "okrug": "VARCHAR(20)",
+        "status": "VARCHAR(10)",
+        "data": "JSON",
+        "first_seen_at": "DATETIME",
+        "last_seen_at": "DATETIME",
+        "removed_at": "DATETIME",
+        "page_checked_at": "DATETIME",
+        "page_alive": "BOOLEAN",
+        "page_note": "VARCHAR(160)"
+      },
+      "indexes": [
+        {
+          "name": "ix_listings_search",
+          "create": "CREATE INDEX ix_listings_search ON listings (city, rooms, is_new, status, price)"
+        }
+      ]
+    },
+    {
+      "name": "security_events",
+      "create": "\nCREATE TABLE security_events (\n\tid INTEGER NOT NULL, \n\tchat_id VARCHAR(32), \n\tvisitor_id VARCHAR(36), \n\tuser_id INTEGER, \n\t\"where\" VARCHAR(20) NOT NULL, \n\tcategory VARCHAR(20) NOT NULL, \n\tsample TEXT, \n\tcreated_at DATETIME NOT NULL, \n\tPRIMARY KEY (id)\n)\n\n",
+      "columns": {
+        "id": "INTEGER",
+        "chat_id": "VARCHAR(32)",
+        "visitor_id": "VARCHAR(36)",
+        "user_id": "INTEGER",
+        "where": "VARCHAR(20)",
+        "category": "VARCHAR(20)",
+        "sample": "TEXT",
+        "created_at": "DATETIME"
+      },
+      "indexes": [
+        {
+          "name": "ix_security_events_chat_id",
+          "create": "CREATE INDEX ix_security_events_chat_id ON security_events (chat_id)"
+        },
+        {
+          "name": "ix_security_events_created_at",
+          "create": "CREATE INDEX ix_security_events_created_at ON security_events (created_at)"
+        },
+        {
+          "name": "ix_security_events_user_id",
+          "create": "CREATE INDEX ix_security_events_user_id ON security_events (user_id)"
+        },
+        {
+          "name": "ix_security_events_visitor_id",
+          "create": "CREATE INDEX ix_security_events_visitor_id ON security_events (visitor_id)"
+        }
+      ]
+    },
+    {
+      "name": "tracked_searches",
+      "create": "\nCREATE TABLE tracked_searches (\n\tid INTEGER NOT NULL, \n\tcity VARCHAR(60) NOT NULL, \n\trooms INTEGER NOT NULL, \n\tis_new BOOLEAN NOT NULL, \n\tokrug VARCHAR(20) NOT NULL, \n\tbudget_max INTEGER, \n\trequested_count INTEGER NOT NULL, \n\tlast_requested_at DATETIME NOT NULL, \n\tlast_crawled_at DATETIME, \n\tPRIMARY KEY (id), \n\tUNIQUE (city, rooms, is_new, okrug)\n)\n\n",
+      "columns": {
+        "id": "INTEGER",
+        "city": "VARCHAR(60)",
+        "rooms": "INTEGER",
+        "is_new": "BOOLEAN",
+        "okrug": "VARCHAR(20)",
+        "budget_max": "INTEGER",
+        "requested_count": "INTEGER",
+        "last_requested_at": "DATETIME",
+        "last_crawled_at": "DATETIME"
+      },
+      "indexes": []
+    },
+    {
+      "name": "users",
+      "create": "\nCREATE TABLE users (\n\tid INTEGER NOT NULL, \n\temail VARCHAR(254) NOT NULL, \n\tpassword_hash VARCHAR(255) NOT NULL, \n\tname VARCHAR(120), \n\tcreated_at DATETIME NOT NULL, \n\tlast_login_at DATETIME, \n\tPRIMARY KEY (id)\n)\n\n",
+      "columns": {
+        "id": "INTEGER",
+        "email": "VARCHAR(254)",
+        "password_hash": "VARCHAR(255)",
+        "name": "VARCHAR(120)",
+        "created_at": "DATETIME",
+        "last_login_at": "DATETIME"
+      },
+      "indexes": [
+        {
+          "name": "ix_users_email",
+          "create": "CREATE UNIQUE INDEX ix_users_email ON users (email)"
+        }
+      ]
+    },
+    {
+      "name": "auth_sessions",
+      "create": "\nCREATE TABLE auth_sessions (\n\ttoken_hash VARCHAR(64) NOT NULL, \n\tuser_id INTEGER NOT NULL, \n\tcreated_at DATETIME NOT NULL, \n\texpires_at DATETIME NOT NULL, \n\trevoked_at DATETIME, \n\tPRIMARY KEY (token_hash), \n\tFOREIGN KEY(user_id) REFERENCES users (id) ON DELETE CASCADE\n)\n\n",
+      "columns": {
+        "token_hash": "VARCHAR(64)",
+        "user_id": "INTEGER",
+        "created_at": "DATETIME",
+        "expires_at": "DATETIME",
+        "revoked_at": "DATETIME"
+      },
+      "indexes": [
+        {
+          "name": "ix_auth_sessions_user_id",
+          "create": "CREATE INDEX ix_auth_sessions_user_id ON auth_sessions (user_id)"
+        }
+      ]
+    },
+    {
+      "name": "listing_features",
+      "create": "\nCREATE TABLE listing_features (\n\tlisting_id VARCHAR(40) NOT NULL, \n\t\"key\" VARCHAR(40) NOT NULL, \n\tvalue JSON, \n\tsource VARCHAR(10) NOT NULL, \n\tobserved_at DATETIME NOT NULL, \n\tPRIMARY KEY (listing_id, \"key\"), \n\tFOREIGN KEY(listing_id) REFERENCES listings (id) ON DELETE CASCADE\n)\n\n",
+      "columns": {
+        "listing_id": "VARCHAR(40)",
+        "key": "VARCHAR(40)",
+        "value": "JSON",
+        "source": "VARCHAR(10)",
+        "observed_at": "DATETIME"
+      },
+      "indexes": [
+        {
+          "name": "ix_listing_features_key",
+          "create": "CREATE INDEX ix_listing_features_key ON listing_features (\"key\")"
+        }
+      ]
+    },
+    {
+      "name": "listing_prices",
+      "create": "\nCREATE TABLE listing_prices (\n\tid INTEGER NOT NULL, \n\tlisting_id VARCHAR(40) NOT NULL, \n\tprice INTEGER NOT NULL, \n\tobserved_at DATETIME NOT NULL, \n\tPRIMARY KEY (id), \n\tFOREIGN KEY(listing_id) REFERENCES listings (id) ON DELETE CASCADE\n)\n\n",
+      "columns": {
+        "id": "INTEGER",
+        "listing_id": "VARCHAR(40)",
+        "price": "INTEGER",
+        "observed_at": "DATETIME"
+      },
+      "indexes": [
+        {
+          "name": "ix_listing_prices_listing_id",
+          "create": "CREATE INDEX ix_listing_prices_listing_id ON listing_prices (listing_id)"
+        }
+      ]
+    },
+    {
+      "name": "visitors",
+      "create": "\nCREATE TABLE visitors (\n\tid VARCHAR(36) NOT NULL, \n\tuser_id INTEGER, \n\tcreated_at DATETIME NOT NULL, \n\tPRIMARY KEY (id), \n\tFOREIGN KEY(user_id) REFERENCES users (id) ON DELETE SET NULL\n)\n\n",
+      "columns": {
+        "id": "VARCHAR(36)",
+        "user_id": "INTEGER",
+        "created_at": "DATETIME"
+      },
+      "indexes": [
+        {
+          "name": "ix_visitors_user_id",
+          "create": "CREATE INDEX ix_visitors_user_id ON visitors (user_id)"
+        }
+      ]
+    },
+    {
+      "name": "chats",
+      "create": "\nCREATE TABLE chats (\n\tid VARCHAR(32) NOT NULL, \n\tvisitor_id VARCHAR(36), \n\tuser_id INTEGER, \n\ttitle VARCHAR(120) NOT NULL, \n\tstatus VARCHAR(20) NOT NULL, \n\tprofile JSON, \n\tmemory JSON, \n\tstate JSON, \n\tstate_version INTEGER, \n\tlast_seq INTEGER NOT NULL, \n\tcreated_at DATETIME NOT NULL, \n\tupdated_at DATETIME NOT NULL, \n\tPRIMARY KEY (id), \n\tFOREIGN KEY(visitor_id) REFERENCES visitors (id) ON DELETE SET NULL, \n\tFOREIGN KEY(user_id) REFERENCES users (id) ON DELETE SET NULL\n)\n\n",
+      "columns": {
+        "id": "VARCHAR(32)",
+        "visitor_id": "VARCHAR(36)",
+        "user_id": "INTEGER",
+        "title": "VARCHAR(120)",
+        "status": "VARCHAR(20)",
+        "profile": "JSON",
+        "memory": "JSON",
+        "state": "JSON",
+        "state_version": "INTEGER",
+        "last_seq": "INTEGER",
+        "created_at": "DATETIME",
+        "updated_at": "DATETIME"
+      },
+      "indexes": [
+        {
+          "name": "ix_chats_updated_at",
+          "create": "CREATE INDEX ix_chats_updated_at ON chats (updated_at)"
+        },
+        {
+          "name": "ix_chats_user_id",
+          "create": "CREATE INDEX ix_chats_user_id ON chats (user_id)"
+        },
+        {
+          "name": "ix_chats_visitor_id",
+          "create": "CREATE INDEX ix_chats_visitor_id ON chats (visitor_id)"
+        }
+      ]
+    },
+    {
+      "name": "chat_commands",
+      "create": "\nCREATE TABLE chat_commands (\n\tid INTEGER NOT NULL, \n\tchat_id VARCHAR(32) NOT NULL, \n\tcommand_id VARCHAR(64) NOT NULL, \n\tkind VARCHAR(30) NOT NULL, \n\tfingerprint VARCHAR(64) NOT NULL, \n\tpayload JSON NOT NULL, \n\tstatus VARCHAR(20) NOT NULL, \n\tprogress JSON NOT NULL, \n\tresult JSON, \n\tcreated_at DATETIME NOT NULL, \n\tPRIMARY KEY (id), \n\tUNIQUE (chat_id, command_id), \n\tFOREIGN KEY(chat_id) REFERENCES chats (id) ON DELETE CASCADE\n)\n\n",
+      "columns": {
+        "id": "INTEGER",
+        "chat_id": "VARCHAR(32)",
+        "command_id": "VARCHAR(64)",
+        "kind": "VARCHAR(30)",
+        "fingerprint": "VARCHAR(64)",
+        "payload": "JSON",
+        "status": "VARCHAR(20)",
+        "progress": "JSON",
+        "result": "JSON",
+        "created_at": "DATETIME"
+      },
+      "indexes": [
+        {
+          "name": "ix_chat_commands_chat_id",
+          "create": "CREATE INDEX ix_chat_commands_chat_id ON chat_commands (chat_id)"
+        }
+      ]
+    },
+    {
+      "name": "chat_events",
+      "create": "\nCREATE TABLE chat_events (\n\tid INTEGER NOT NULL, \n\tchat_id VARCHAR(32) NOT NULL, \n\tseq INTEGER NOT NULL, \n\ttype VARCHAR(30) NOT NULL, \n\tpayload JSON NOT NULL, \n\tcreated_at DATETIME NOT NULL, \n\tPRIMARY KEY (id), \n\tUNIQUE (chat_id, seq), \n\tFOREIGN KEY(chat_id) REFERENCES chats (id) ON DELETE CASCADE\n)\n\n",
+      "columns": {
+        "id": "INTEGER",
+        "chat_id": "VARCHAR(32)",
+        "seq": "INTEGER",
+        "type": "VARCHAR(30)",
+        "payload": "JSON",
+        "created_at": "DATETIME"
+      },
+      "indexes": []
+    }
+  ],
+  "postgresql": [
+    {
+      "name": "crawl_runs",
+      "create": "\nCREATE TABLE crawl_runs (\n\tid SERIAL NOT NULL, \n\tstarted_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, \n\tfinished_at TIMESTAMP WITHOUT TIME ZONE, \n\tstatus VARCHAR(10) NOT NULL, \n\tsearches INTEGER NOT NULL, \n\tseen INTEGER NOT NULL, \n\tadded INTEGER NOT NULL, \n\tprice_changed INTEGER NOT NULL, \n\tremoved INTEGER NOT NULL, \n\terrors JSON, \n\tPRIMARY KEY (id)\n)\n\n",
+      "columns": {
+        "id": "INTEGER",
+        "started_at": "TIMESTAMP WITHOUT TIME ZONE",
+        "finished_at": "TIMESTAMP WITHOUT TIME ZONE",
+        "status": "VARCHAR(10)",
+        "searches": "INTEGER",
+        "seen": "INTEGER",
+        "added": "INTEGER",
+        "price_changed": "INTEGER",
+        "removed": "INTEGER",
+        "errors": "JSON"
+      },
+      "indexes": []
+    },
+    {
+      "name": "listings",
+      "create": "\nCREATE TABLE listings (\n\tid VARCHAR(40) NOT NULL, \n\tsource VARCHAR(20) NOT NULL, \n\tcity VARCHAR(60) NOT NULL, \n\trooms INTEGER NOT NULL, \n\tis_new BOOLEAN NOT NULL, \n\tprice INTEGER NOT NULL, \n\tokrug VARCHAR(20), \n\tstatus VARCHAR(10) NOT NULL, \n\tdata JSON NOT NULL, \n\tfirst_seen_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, \n\tlast_seen_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, \n\tremoved_at TIMESTAMP WITHOUT TIME ZONE, \n\tpage_checked_at TIMESTAMP WITHOUT TIME ZONE, \n\tpage_alive BOOLEAN, \n\tpage_note VARCHAR(160), \n\tPRIMARY KEY (id)\n)\n\n",
+      "columns": {
+        "id": "VARCHAR(40)",
+        "source": "VARCHAR(20)",
+        "city": "VARCHAR(60)",
+        "rooms": "INTEGER",
+        "is_new": "BOOLEAN",
+        "price": "INTEGER",
+        "okrug": "VARCHAR(20)",
+        "status": "VARCHAR(10)",
+        "data": "JSON",
+        "first_seen_at": "TIMESTAMP WITHOUT TIME ZONE",
+        "last_seen_at": "TIMESTAMP WITHOUT TIME ZONE",
+        "removed_at": "TIMESTAMP WITHOUT TIME ZONE",
+        "page_checked_at": "TIMESTAMP WITHOUT TIME ZONE",
+        "page_alive": "BOOLEAN",
+        "page_note": "VARCHAR(160)"
+      },
+      "indexes": [
+        {
+          "name": "ix_listings_search",
+          "create": "CREATE INDEX ix_listings_search ON listings (city, rooms, is_new, status, price)"
+        }
+      ]
+    },
+    {
+      "name": "security_events",
+      "create": "\nCREATE TABLE security_events (\n\tid SERIAL NOT NULL, \n\tchat_id VARCHAR(32), \n\tvisitor_id VARCHAR(36), \n\tuser_id INTEGER, \n\t\"where\" VARCHAR(20) NOT NULL, \n\tcategory VARCHAR(20) NOT NULL, \n\tsample TEXT, \n\tcreated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, \n\tPRIMARY KEY (id)\n)\n\n",
+      "columns": {
+        "id": "INTEGER",
+        "chat_id": "VARCHAR(32)",
+        "visitor_id": "VARCHAR(36)",
+        "user_id": "INTEGER",
+        "where": "VARCHAR(20)",
+        "category": "VARCHAR(20)",
+        "sample": "TEXT",
+        "created_at": "TIMESTAMP WITHOUT TIME ZONE"
+      },
+      "indexes": [
+        {
+          "name": "ix_security_events_chat_id",
+          "create": "CREATE INDEX ix_security_events_chat_id ON security_events (chat_id)"
+        },
+        {
+          "name": "ix_security_events_created_at",
+          "create": "CREATE INDEX ix_security_events_created_at ON security_events (created_at)"
+        },
+        {
+          "name": "ix_security_events_user_id",
+          "create": "CREATE INDEX ix_security_events_user_id ON security_events (user_id)"
+        },
+        {
+          "name": "ix_security_events_visitor_id",
+          "create": "CREATE INDEX ix_security_events_visitor_id ON security_events (visitor_id)"
+        }
+      ]
+    },
+    {
+      "name": "tracked_searches",
+      "create": "\nCREATE TABLE tracked_searches (\n\tid SERIAL NOT NULL, \n\tcity VARCHAR(60) NOT NULL, \n\trooms INTEGER NOT NULL, \n\tis_new BOOLEAN NOT NULL, \n\tokrug VARCHAR(20) NOT NULL, \n\tbudget_max INTEGER, \n\trequested_count INTEGER NOT NULL, \n\tlast_requested_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, \n\tlast_crawled_at TIMESTAMP WITHOUT TIME ZONE, \n\tPRIMARY KEY (id), \n\tUNIQUE (city, rooms, is_new, okrug)\n)\n\n",
+      "columns": {
+        "id": "INTEGER",
+        "city": "VARCHAR(60)",
+        "rooms": "INTEGER",
+        "is_new": "BOOLEAN",
+        "okrug": "VARCHAR(20)",
+        "budget_max": "INTEGER",
+        "requested_count": "INTEGER",
+        "last_requested_at": "TIMESTAMP WITHOUT TIME ZONE",
+        "last_crawled_at": "TIMESTAMP WITHOUT TIME ZONE"
+      },
+      "indexes": []
+    },
+    {
+      "name": "users",
+      "create": "\nCREATE TABLE users (\n\tid SERIAL NOT NULL, \n\temail VARCHAR(254) NOT NULL, \n\tpassword_hash VARCHAR(255) NOT NULL, \n\tname VARCHAR(120), \n\tcreated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, \n\tlast_login_at TIMESTAMP WITHOUT TIME ZONE, \n\tPRIMARY KEY (id)\n)\n\n",
+      "columns": {
+        "id": "INTEGER",
+        "email": "VARCHAR(254)",
+        "password_hash": "VARCHAR(255)",
+        "name": "VARCHAR(120)",
+        "created_at": "TIMESTAMP WITHOUT TIME ZONE",
+        "last_login_at": "TIMESTAMP WITHOUT TIME ZONE"
+      },
+      "indexes": [
+        {
+          "name": "ix_users_email",
+          "create": "CREATE UNIQUE INDEX ix_users_email ON users (email)"
+        }
+      ]
+    },
+    {
+      "name": "auth_sessions",
+      "create": "\nCREATE TABLE auth_sessions (\n\ttoken_hash VARCHAR(64) NOT NULL, \n\tuser_id INTEGER NOT NULL, \n\tcreated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, \n\texpires_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, \n\trevoked_at TIMESTAMP WITHOUT TIME ZONE, \n\tPRIMARY KEY (token_hash), \n\tFOREIGN KEY(user_id) REFERENCES users (id) ON DELETE CASCADE\n)\n\n",
+      "columns": {
+        "token_hash": "VARCHAR(64)",
+        "user_id": "INTEGER",
+        "created_at": "TIMESTAMP WITHOUT TIME ZONE",
+        "expires_at": "TIMESTAMP WITHOUT TIME ZONE",
+        "revoked_at": "TIMESTAMP WITHOUT TIME ZONE"
+      },
+      "indexes": [
+        {
+          "name": "ix_auth_sessions_user_id",
+          "create": "CREATE INDEX ix_auth_sessions_user_id ON auth_sessions (user_id)"
+        }
+      ]
+    },
+    {
+      "name": "listing_features",
+      "create": "\nCREATE TABLE listing_features (\n\tlisting_id VARCHAR(40) NOT NULL, \n\tkey VARCHAR(40) NOT NULL, \n\tvalue JSON, \n\tsource VARCHAR(10) NOT NULL, \n\tobserved_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, \n\tPRIMARY KEY (listing_id, key), \n\tFOREIGN KEY(listing_id) REFERENCES listings (id) ON DELETE CASCADE\n)\n\n",
+      "columns": {
+        "listing_id": "VARCHAR(40)",
+        "key": "VARCHAR(40)",
+        "value": "JSON",
+        "source": "VARCHAR(10)",
+        "observed_at": "TIMESTAMP WITHOUT TIME ZONE"
+      },
+      "indexes": [
+        {
+          "name": "ix_listing_features_key",
+          "create": "CREATE INDEX ix_listing_features_key ON listing_features (key)"
+        }
+      ]
+    },
+    {
+      "name": "listing_prices",
+      "create": "\nCREATE TABLE listing_prices (\n\tid SERIAL NOT NULL, \n\tlisting_id VARCHAR(40) NOT NULL, \n\tprice INTEGER NOT NULL, \n\tobserved_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, \n\tPRIMARY KEY (id), \n\tFOREIGN KEY(listing_id) REFERENCES listings (id) ON DELETE CASCADE\n)\n\n",
+      "columns": {
+        "id": "INTEGER",
+        "listing_id": "VARCHAR(40)",
+        "price": "INTEGER",
+        "observed_at": "TIMESTAMP WITHOUT TIME ZONE"
+      },
+      "indexes": [
+        {
+          "name": "ix_listing_prices_listing_id",
+          "create": "CREATE INDEX ix_listing_prices_listing_id ON listing_prices (listing_id)"
+        }
+      ]
+    },
+    {
+      "name": "visitors",
+      "create": "\nCREATE TABLE visitors (\n\tid VARCHAR(36) NOT NULL, \n\tuser_id INTEGER, \n\tcreated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, \n\tPRIMARY KEY (id), \n\tFOREIGN KEY(user_id) REFERENCES users (id) ON DELETE SET NULL\n)\n\n",
+      "columns": {
+        "id": "VARCHAR(36)",
+        "user_id": "INTEGER",
+        "created_at": "TIMESTAMP WITHOUT TIME ZONE"
+      },
+      "indexes": [
+        {
+          "name": "ix_visitors_user_id",
+          "create": "CREATE INDEX ix_visitors_user_id ON visitors (user_id)"
+        }
+      ]
+    },
+    {
+      "name": "chats",
+      "create": "\nCREATE TABLE chats (\n\tid VARCHAR(32) NOT NULL, \n\tvisitor_id VARCHAR(36), \n\tuser_id INTEGER, \n\ttitle VARCHAR(120) NOT NULL, \n\tstatus VARCHAR(20) NOT NULL, \n\tprofile JSON, \n\tmemory JSON, \n\tstate JSON, \n\tstate_version INTEGER, \n\tlast_seq INTEGER NOT NULL, \n\tcreated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, \n\tupdated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, \n\tPRIMARY KEY (id), \n\tFOREIGN KEY(visitor_id) REFERENCES visitors (id) ON DELETE SET NULL, \n\tFOREIGN KEY(user_id) REFERENCES users (id) ON DELETE SET NULL\n)\n\n",
+      "columns": {
+        "id": "VARCHAR(32)",
+        "visitor_id": "VARCHAR(36)",
+        "user_id": "INTEGER",
+        "title": "VARCHAR(120)",
+        "status": "VARCHAR(20)",
+        "profile": "JSON",
+        "memory": "JSON",
+        "state": "JSON",
+        "state_version": "INTEGER",
+        "last_seq": "INTEGER",
+        "created_at": "TIMESTAMP WITHOUT TIME ZONE",
+        "updated_at": "TIMESTAMP WITHOUT TIME ZONE"
+      },
+      "indexes": [
+        {
+          "name": "ix_chats_updated_at",
+          "create": "CREATE INDEX ix_chats_updated_at ON chats (updated_at)"
+        },
+        {
+          "name": "ix_chats_user_id",
+          "create": "CREATE INDEX ix_chats_user_id ON chats (user_id)"
+        },
+        {
+          "name": "ix_chats_visitor_id",
+          "create": "CREATE INDEX ix_chats_visitor_id ON chats (visitor_id)"
+        }
+      ]
+    },
+    {
+      "name": "chat_commands",
+      "create": "\nCREATE TABLE chat_commands (\n\tid SERIAL NOT NULL, \n\tchat_id VARCHAR(32) NOT NULL, \n\tcommand_id VARCHAR(64) NOT NULL, \n\tkind VARCHAR(30) NOT NULL, \n\tfingerprint VARCHAR(64) NOT NULL, \n\tpayload JSON NOT NULL, \n\tstatus VARCHAR(20) NOT NULL, \n\tprogress JSON NOT NULL, \n\tresult JSON, \n\tcreated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, \n\tPRIMARY KEY (id), \n\tUNIQUE (chat_id, command_id), \n\tFOREIGN KEY(chat_id) REFERENCES chats (id) ON DELETE CASCADE\n)\n\n",
+      "columns": {
+        "id": "INTEGER",
+        "chat_id": "VARCHAR(32)",
+        "command_id": "VARCHAR(64)",
+        "kind": "VARCHAR(30)",
+        "fingerprint": "VARCHAR(64)",
+        "payload": "JSON",
+        "status": "VARCHAR(20)",
+        "progress": "JSON",
+        "result": "JSON",
+        "created_at": "TIMESTAMP WITHOUT TIME ZONE"
+      },
+      "indexes": [
+        {
+          "name": "ix_chat_commands_chat_id",
+          "create": "CREATE INDEX ix_chat_commands_chat_id ON chat_commands (chat_id)"
+        }
+      ]
+    },
+    {
+      "name": "chat_events",
+      "create": "\nCREATE TABLE chat_events (\n\tid SERIAL NOT NULL, \n\tchat_id VARCHAR(32) NOT NULL, \n\tseq INTEGER NOT NULL, \n\ttype VARCHAR(30) NOT NULL, \n\tpayload JSON NOT NULL, \n\tcreated_at TIMESTAMP WITHOUT TIME ZONE NOT NULL, \n\tPRIMARY KEY (id), \n\tUNIQUE (chat_id, seq), \n\tFOREIGN KEY(chat_id) REFERENCES chats (id) ON DELETE CASCADE\n)\n\n",
+      "columns": {
+        "id": "INTEGER",
+        "chat_id": "VARCHAR(32)",
+        "seq": "INTEGER",
+        "type": "VARCHAR(30)",
+        "payload": "JSON",
+        "created_at": "TIMESTAMP WITHOUT TIME ZONE"
+      },
+      "indexes": []
+    }
+  ]
+}

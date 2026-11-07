@@ -1,0 +1,261 @@
+{
+  "version": "demo-2026-11-v1",
+  "mode": "demo",
+  "note": "Демо-расчёт: ставки, доходности и расходы — допущения. Итоговые условия подтверждает банк; инвестиционная доходность не гарантирована.",
+  "mortgage": {
+    "market_base": 0.155,
+    "market_surcharges": [
+      [
+        0.3,
+        0.02
+      ],
+      [
+        0.5,
+        0.01
+      ]
+    ],
+    "family_scale": {
+      "capital": {
+        "1": [
+          0.12,
+          12000000
+        ],
+        "2": [
+          0.1,
+          15000000
+        ],
+        "3": [
+          0.08,
+          18000000
+        ],
+        "4": [
+          0.06,
+          18000000
+        ],
+        "5": [
+          0.04,
+          18000000
+        ]
+      },
+      "regions": {
+        "1": [
+          0.1,
+          6000000
+        ],
+        "2": [
+          0.08,
+          8000000
+        ],
+        "3": [
+          0.06,
+          10000000
+        ],
+        "4": [
+          0.04,
+          10000000
+        ],
+        "5": [
+          0.02,
+          10000000
+        ]
+      }
+    },
+    "family_min_down": 0.2,
+    "family_child_age": 7,
+    "subsidy_years": 15,
+    "post_subsidy_rate": 0.12,
+    "capital_cities": [
+      "Москва",
+      "Санкт-Петербург"
+    ],
+    "big_cities": [
+      "Воронеж",
+      "Екатеринбург",
+      "Казань",
+      "Краснодар",
+      "Москва",
+      "Нижний Новгород",
+      "Новосибирск",
+      "Пермь",
+      "Ростов-на-Дону",
+      "Самара",
+      "Санкт-Петербург",
+      "Тюмень",
+      "Уфа",
+      "Челябинск"
+    ],
+    "matcap_first": 737200,
+    "years": 30,
+    "default_down_share": 0.2,
+    "costs": {
+      "appraisal": 6000,
+      "insurance_rate": 0.0095,
+      "settlement": 6900,
+      "registration": 2000,
+      "new_insurance_rate": 0.004
+    },
+    "scenarios": [
+      [
+        0.2,
+        30
+      ],
+      [
+        0.2,
+        20
+      ],
+      [
+        0.3,
+        25
+      ]
+    ]
+  },
+  "savings": {
+    "products": {
+      "savings_account": {
+        "name": "Накопительный счёт",
+        "rate": 0.1,
+        "low": 0.1,
+        "high": 0.1,
+        "note": "снять можно в любой момент"
+      },
+      "deposit": {
+        "name": "Вклад на 6–12 месяцев",
+        "rate": 0.12,
+        "low": 0.12,
+        "high": 0.12,
+        "note": "ставка фиксирована, застрахован АСВ"
+      },
+      "bonds": {
+        "name": "Облигации (СберИнвестиции)",
+        "rate": 0.13,
+        "low": 0.09,
+        "high": 0.16,
+        "note": "доход выше вклада, цена может колебаться"
+      },
+      "equity": {
+        "name": "Фонд акций (СберИнвестиции)",
+        "rate": 0.16,
+        "low": -0.1,
+        "high": 0.3,
+        "note": "высокий потенциал и высокий риск"
+      }
+    },
+    "profiles": {
+      "conservative": {
+        "title": "Консервативная",
+        "gen": "консервативной",
+        "mix": {
+          "savings_account": 0.4,
+          "deposit": 0.6
+        }
+      },
+      "moderate": {
+        "title": "Умеренная",
+        "gen": "умеренной",
+        "mix": {
+          "savings_account": 0.2,
+          "deposit": 0.5,
+          "bonds": 0.3
+        }
+      },
+      "aggressive": {
+        "title": "Агрессивная",
+        "gen": "агрессивной",
+        "mix": {
+          "savings_account": 0.1,
+          "deposit": 0.3,
+          "bonds": 0.35,
+          "equity": 0.25
+        }
+      }
+    },
+    "aggressive_min_months": 24,
+    "cushion_months": 3,
+    "contribution_share": 0.7,
+    "search_months": 2,
+    "payment_income_share": 0.5,
+    "bank_margins": {
+      "savings_account": 0.02,
+      "deposit": 0.02,
+      "bonds": 0.008,
+      "equity": 0.015
+    }
+  },
+  "economics": {
+    "price": 9000000,
+    "ltv": 0.8,
+    "savings_pct": 0.03,
+    "fee_pct": 0.15,
+    "mortgage_margin_pct": 0.03,
+    "incrementality": 0.3,
+    "insurance": 15000,
+    "services": 10000,
+    "manager_hours": 4,
+    "manager_rate": 1500,
+    "case_cost": 8000,
+    "conversion": 0.25,
+    "reserve": 3000,
+    "deals": 2000,
+    "fixed_costs": 150000000,
+    "fin_enabled": true,
+    "fin_deposit_share": 0.35,
+    "fin_avg_deposit": 1200000,
+    "fin_deposit_margin": 0.02,
+    "fin_invest_share": 0.1,
+    "fin_avg_invest": 400000,
+    "fin_invest_fee": 0.012
+  },
+  "pricing": {
+    "bargain_discount": 0.97,
+    "condition": {
+      "дизайнерский": 1.08,
+      "евроремонт": 1.06,
+      "косметика": 1.0,
+      "чистовая отделка": 0.98,
+      "предчистовая": 0.94,
+      "без отделки": 0.9,
+      "требует ремонта": 0.92
+    },
+    "year": [
+      [
+        2015,
+        1.03
+      ],
+      [
+        2000,
+        1.0
+      ],
+      [
+        1990,
+        0.97
+      ],
+      [
+        0,
+        0.93
+      ]
+    ],
+    "first_floor": 0.95,
+    "last_floor": 0.97,
+    "rank": {
+      "base": 20,
+      "fit_weight": 80,
+      "learned_limit": 10,
+      "center_weight": 80,
+      "center_scale_km": 3,
+      "relative_min": 0.7,
+      "relative_max": 1.3,
+      "center_radius_km": 5
+    },
+    "comparables": {
+      "area_min_ratio": 0.7,
+      "area_max_ratio": 1.4,
+      "radius_km": 4,
+      "nearby_limit": 8,
+      "city_limit": 12,
+      "minimum": 4,
+      "min_band": 0.025,
+      "target_fair_ratio": 0.985,
+      "target_price_ratio": 0.975
+    }
+  }
+}

@@ -1,0 +1,102 @@
+"""Деньги и числа: форматирование для людей и разбор сумм из речи («23 600», «9,5 млн»)."""
+from __future__ import annotations
+
+import re
+
+
+MONEY_MENTION=re.compile(r'\d+(?:[.,]\d+)?\s*(?:млн\.?|миллион[а-яё]*|лям[а-яё]*)(?:\s*\d{1,3}\s*тыс[а-яё]*\.?)?'
+                         r'|\d[\d ]*\s*тыс[а-яё]*\.?|\d{1,3}(?:[ .]\d{3}){2,}|\d{6,}',re.IGNORECASE)
+
+
+def word_numbers(text):
+    """Числовые свидетельства для смешанной записи «две комнаты до 12 млн».
+
+    Не определяет поле или намерение; это остаётся задачей разбора. Отдельные
+    числительные и непрерывная составная запись дают допустимые значения.
+    """
+    roots={'нул':0,'один':1,'одна':1,'одну':1,'одног':1,'перв':1,'два':2,'две':2,'двух':2,'втор':2,
+           'три':3,'трех':3,'трет':3,'четыр':4,'четверт':4,'пят':5,'шест':6,'сем':7,'восем':8,'девят':9,
+           'десят':10,'одиннадцат':11,'двенадцат':12,'тринадцат':13,'четырнадцат':14,'пятнадцат':15,
+           'шестнадцат':16,'семнадцат':17,'восемнадцат':18,'девятнадцат':19,'двадцат':20,'тридцат':30,
+           'сорок':40,'пятьдесят':50,'пятидесят':50,'шестьдесят':60,'шестидесят':60,'семьдесят':70,
+           'семидесят':70,'восемьдесят':80,'восьмидесят':80,'девяност':90,'сто':100,'сот':100,
+           'двест':200,'двухсот':200,'трист':300,'трехсот':300,'четырест':400,'четырехсот':400,
+           'пятьсот':500,'шестьсот':600,'семьсот':700,'восемьсот':800,'девятьсот':900}
+    endings={'','ь','а','е','и','у','ю','я','ой','ый','ий','ая','ое','ые','ую','ого','ому','ом','ым','ыми','ых','м','ми','ью','ьмя'}
+    values=set();group=0
+    for word in re.findall(r'[а-яё]+|\S',text.casefold().replace('ё','е')):
+        root=next((r for r in sorted(roots,key=len,reverse=True) if word.startswith(r) and word[len(r):] in endings),None)
+        if root is None:
+            if group:values.add(group)
+            group=0
+        else:
+            value=roots[root];values.add(value);group+=value;values.add(group)
+    return values
+
+
+def ground_money(actual,quote,messages):
+    """Числовая сумма привязана к исходной цитате, а не к предложению агента."""
+    values=set()
+    for message in messages:
+        text=message['text']
+        citations=list(re.finditer(re.escape(quote),text,re.IGNORECASE))
+        for mention in MONEY_MENTION.finditer(text):
+            if not any(mention.start()<c.end() and mention.end()>c.start() for c in citations):continue
+            # Не принимай хвост неоднозначно разбитого числа за отдельную сумму.
+            if re.search(r'\d[ .]+$',text[:mention.start()]):continue
+            amount=parse_money(mention.group())
+            if amount is not None:values.add(amount)
+    if not values or actual in values:return actual
+    if len(values)==1:return next(iter(values))
+    raise ValueError('Сумма не совпадает с цитатой клиента. Привяжи значение к конкретной названной сумме, не к предложению агента.')
+
+
+def parse_money(text: str) -> int | None:
+    """'9 млн' -> 9000000, '8,7 млн' -> 8700000, '8 700 000' -> 8700000, '8700 тыс' -> 8700000."""
+    t = text.lower()
+    m = re.search(r"(\d+(?:[.,]\d+)?)\s*(?:млн|миллион|лям)", t)
+    if m:
+        value = float(m.group(1).replace(",", "."))
+        tail = re.search(r"(?:млн|миллион\w*)\s*(\d{1,3})\s*(?:тыс|тысяч)", t[m.start():])
+        extra = int(tail.group(1)) * 1000 if tail else 0
+        return int(round(value * 1_000_000)) + extra
+    m = re.search(r"(\d[\d ]{2,})\s*(?:тыс|тысяч)", t)
+    if m:
+        return int(m.group(1).replace(" ", "")) * 1000
+    m = re.search(r"\d{1,3}(?:[ .]\d{3}){2,}|\d{6,}", t)
+    if m:
+        return int(re.sub(r"\D", "", m.group(0)))
+    return None
+
+
+def parse_price_near(text: str, ref: int) -> int | None:
+    """Цена в реплике, если она похожа на цену этой квартиры (0,5–1,2 от ref).
+
+    В разговоре «млн» опускают: «давай 23 600», «23,6», «двадцать три шестьсот» (Whisper пишет «23 600»).
+    Год, этаж, метры и минуты ценой не считаются.
+    """
+    lo, hi = 0.5 * ref, 1.2 * ref
+    full = parse_money(text)
+    if full and lo <= full <= hi:
+        return full
+    t = text.lower().replace(" ", " ")
+    for m in re.finditer(r"(?<![\d.,])\d+(?: \d{3})*(?:[.,]\d+)?(?![\d.,]*\d)(?!\s*(?:год|г\.|этаж|кв|метр|м²|м2|минут|мин|лет|сот|%))", t):
+        try:
+            v = float(m.group(0).replace(" ", "").replace(",", "."))
+        except ValueError:
+            continue
+        for scale in (1, 1_000, 1_000_000):
+            if lo <= v * scale <= hi:
+                return int(round(v * scale))
+    return None
+
+
+def fmt(v: int | float) -> str:
+    return f"{int(round(v)):,}".replace(",", " ") + " ₽"
+
+
+def plural(n: int, one: str, few: str, many: str) -> str:
+    n = abs(n) % 100
+    if 11 <= n <= 14:
+        return many
+    return one if n % 10 == 1 else few if 2 <= n % 10 <= 4 else many
