@@ -21,7 +21,15 @@ def setup():
         root=Path(service.settings.workshop_root)/job_id/'artifacts';root.mkdir(parents=True)
         (root/'analysis.csv').write_text('Квартира,Стоимость\nТестовая,11725000\n')
         (root/'analysis.xlsx').write_bytes(b'UI fixture only - not a real generated workbook')
-        return {'text':'Сравнил квартиры и затраты на ремонт. Все исходные ставки — сценарные допущения.',
+        text=('## Вывод по квартирам\n\n**Сравнил варианты** по стоимости.\n\n'
+              '| Показатель | Значение |\n| --- | --- |\n| Цена метра | 200 000 ₽ |\n\n'
+              '- Данные сохранены.\n- Условия не менялись.\n\n'
+              '<img src=x onerror="window.workshopXss=true"><script>window.workshopXss=true</script>\n\n'
+              '[опасная ссылка](javascript:alert(1))')
+        if snapshot.get('parent_job_id'):
+            assert snapshot.get('conversation')
+            text='### Ответ по сохранённой выборке\n\n**Учитываю предыдущий ответ.** Вопрос: '+snapshot['prompt']
+        return {'text':text,
             'facts':snapshot['facts'],'artifacts':['analysis.csv','analysis.xlsx'],'code_runs':1,
             'source_time':snapshot['source_time']}
     service.sandbox.run=run

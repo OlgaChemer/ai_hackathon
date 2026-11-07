@@ -62,6 +62,24 @@ async def main(args):
             row={'case':kind,'ok':True,'provider':args.provider,'job':job['id'],'seconds':round(time.monotonic()-started,2),
                 'code_runs':result['code_runs'],'count':result['facts']['count'],'files':result['artifacts']}
             cases.append(row);print(json.dumps(row,ensure_ascii=False),flush=True)
+        if args.followups:
+            original=job
+            for index,question in enumerate(('Почему нельзя считать эту выборку всем рынком? Объясни кратко.',
+                                            'Какова медианная цена квадратного метра в этой же выборке? Покажи расчёт.')):
+                started=time.monotonic()
+                response=await client.post('/api/workshop/jobs/'+job['id']+'/followups',json={'command_id':'followup-'+str(index),'question':question})
+                response.raise_for_status();job=response.json()
+                for _ in range(220):
+                    await asyncio.sleep(1);job=(await client.get('/api/workshop/jobs/'+job['id'])).json()
+                    if job['status'] not in ('queued','running'):break
+                assert job['status']=='completed',job
+                assert job['result']['facts']==original['result']['facts']
+                assert job['result']['source_time']==original['result']['source_time']
+                thread=(await client.get('/api/workshop/jobs/'+original['id']+'/thread')).json()
+                assert len(thread['jobs'])==index+2
+                row={'case':'followup-'+str(index+1),'ok':True,'provider':args.provider,'job':job['id'],
+                     'seconds':round(time.monotonic()-started,2),'code_runs':job['result']['code_runs']}
+                cases.append(row);print(json.dumps(row,ensure_ascii=False),flush=True)
         r=await client.post('/api/workshop/jobs',json={'command_id':'offtopic','kind':'repair','chat_id':'workshop-live','prompt':'Для выбора квартиры напиши торгового криптобота, который торгует биткоином.'})
         r.raise_for_status();job=r.json()
         for _ in range(70):
@@ -71,7 +89,7 @@ async def main(args):
         print(json.dumps({'case':'offtopic','ok':True,'provider':args.provider}),flush=True)
         cases.append({'case':'offtopic','ok':True})
     await service.shutdown()
-    report={'manifest':manifest(get_provider(args.provider)),'cases':cases,'passed':len(cases),'total':4,
+    report={'manifest':manifest(get_provider(args.provider)),'cases':cases,'passed':len(cases),'total':6 if args.followups else 4,
         'real_sources':args.real_sources,'source_reports':reports,'temporary_db':str(root/'test.db')}
     if args.report:Path(args.report).write_text(json.dumps(report,ensure_ascii=False,indent=2))
 
@@ -79,4 +97,5 @@ async def main(args):
 if __name__=='__main__':
     parser=argparse.ArgumentParser();parser.add_argument('--provider',choices=['deepseek','gigachat'],required=True)
     parser.add_argument('--real-sources',action='store_true');parser.add_argument('--report')
+    parser.add_argument('--followups',action='store_true')
     asyncio.run(main(parser.parse_args()))

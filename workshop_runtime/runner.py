@@ -105,6 +105,9 @@ Excel содержит только готовые значения, без фо
 Затем дай содержательный ответ по-русски: выводы, сравнение, ограничения и следующий полезный шаг.
 Все денежные значения и ссылки бери из данных. Не придумывай объявления, рыночные ставки, прогнозы или проверки документов.
 Отчёт должен содержать смысловые выводы по запросу, а не только обещание создать файл. Не называй провайдера модели.'''
+SYSTEM+='''\nЕсли передана история исследования, отвечай на текущий уточняющий вопрос с учётом прошлых ответов.
+Используй сохранённую выборку и дату снимка; не представляй их как заново проверенный рынок.
+Не повторяй весь отчёт, если пользователь задал узкий вопрос. Объясняй по-человечески, не печатай внутренние ключи, имена полей и статусы вроде coverage.whole_market или unverified.'''
 
 
 async def main():
@@ -125,6 +128,7 @@ async def main():
         return summary(data,messages,python.successful)
     try:
         result=await AgentRunner().run(AgentRunSpec(initial_messages=[{'role':'system','content':SYSTEM},
+            *data.get('conversation',[]),
             {'role':'user','content':data['prompt']+'\nЗадание и все данные находятся в /input/data.json.\nПроверенные факты:\n'+json.dumps(data['facts'],ensure_ascii=False)}],
             tools=tools,runtime=LLMRuntime.capture(provider,'workshop',context_window_tokens=32000),
             max_iterations=8,max_tool_result_chars=5000,workspace=ROOT,session_key='task',provider_retry_mode='none',

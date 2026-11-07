@@ -30,14 +30,39 @@ async def main(base):
             assert await page.locator('dialog.workshop input[type=file]').count()==0
             for kind in ('repair','compare','market'):
                 await page.locator('[data-kind='+kind+']').click()
-                if kind=='market':await page.locator('[data-wide]').check()
+                if kind=='market':
+                    await page.locator('[data-wide]').check()
+                    checkbox=await page.locator('[data-wide]').bounding_box()
+                    label=await page.locator('[data-wide-wrap] span').bounding_box()
+                    assert checkbox['x']+checkbox['width']<=label['x']
+                    assert abs(checkbox['y']-label['y'])<12
                 await page.locator('[data-start]').click()
                 await page.locator('.workshop-report').wait_for()
                 await page.locator('[data-start]').wait_for(state='visible')
                 await page.wait_for_function("!document.querySelector('[data-start]').disabled")
                 assert await page.locator('.workshop-facts table tr').count()>=2
+                assert await page.locator('.workshop-report h2').count()==1
+                assert await page.locator('.workshop-report strong').first.text_content()=='Сравнил варианты'
+                assert await page.locator('.workshop-report table tbody tr').count()==1
+                assert await page.locator('.workshop-report :is(img,script)').count()==0
+                assert not await page.evaluate('Boolean(window.workshopXss)')
+                assert await page.locator('.workshop-report a[href^="javascript:"]').count()==0
                 csv=await page.request.get(base+(await page.locator('[data-result] a').filter(has_text='Скачать CSV').get_attribute('href')))
                 assert csv.status==200
+            await page.locator('[data-question]').fill('Почему медианная цена такая?')
+            await page.locator('[data-ask]').click()
+            await page.locator('.workshop-report h3').filter(has_text='Ответ по сохранённой выборке').wait_for()
+            await page.wait_for_function('!document.querySelector("[data-ask]").disabled')
+            assert await page.locator('.workshop-question').count()==1
+            await page.locator('[data-question]').fill('А теперь сравни только двухкомнатные')
+            await page.locator('[data-ask]').click()
+            await page.wait_for_function('document.querySelectorAll(".workshop-report h3").length===2 && !document.querySelector("[data-ask]").disabled')
+            await page.locator('[data-close]').click()
+            await page.reload();await page.locator('#workshopButton').click()
+            await page.locator('[data-history] button').first.click()
+            await page.locator('.workshop-question').nth(1).wait_for()
+            assert await page.locator('.workshop-question').first.inner_text()=='Вы\n\nПочему медианная цена такая?'
+            await page.locator('[data-result]').screenshot(path=f'/tmp/workshop-thread-{width}.png')
             await page.locator('[data-kind=repair]').click()
             await page.locator('[data-prompt]').fill('Напиши шахматную игру для квартиры')
             await page.locator('[data-start]').click()

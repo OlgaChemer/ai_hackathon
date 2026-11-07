@@ -25,6 +25,12 @@ class JobRequest(BaseModel):
     whole_city:StrictBool=False
 
 
+class FollowupRequest(BaseModel):
+    model_config={'extra':'forbid'}
+    command_id:str=Field(min_length=1,max_length=64,pattern=r'^[a-zA-Z0-9_-]+$')
+    question:str=Field(min_length=1,max_length=1000)
+
+
 @router.get('/context')
 def context(request:Request,chat_id:str|None=None):
     uid=service.premium(request)
@@ -34,7 +40,8 @@ def context(request:Request,chat_id:str|None=None):
 @router.get('/jobs')
 def jobs(request:Request):
     uid=service.premium(request)
-    return store.required(lambda s:{'jobs':[store.public(r) for r in s.scalars(select(WorkshopJob).where(WorkshopJob.user_id==uid).order_by(WorkshopJob.created_at.desc()).limit(20))]})
+    return store.required(lambda s:{'jobs':[store.public(r) for r in s.scalars(select(WorkshopJob).where(WorkshopJob.user_id==uid,
+        WorkshopJob.snapshot['parent_job_id'].as_string().is_(None)).order_by(WorkshopJob.updated_at.desc()).limit(20))]})
 
 
 @router.post('/jobs',status_code=202)
@@ -50,6 +57,20 @@ async def create_job(body:JobRequest,request:Request):
 def job(job_id:str,request:Request):
     uid=service.premium(request)
     return store.required(lambda s:store.public(store.owned(s,uid,job_id)))
+
+
+@router.get('/jobs/{job_id}/thread')
+def thread(job_id:str,request:Request):
+    uid=service.premium(request)
+    return store.required(service.thread,uid,job_id)
+
+
+@router.post('/jobs/{job_id}/followups',status_code=202)
+async def followup(job_id:str,body:FollowupRequest,request:Request):
+    uid=service.premium(request)
+    result=store.required(service.followup,uid,job_id,body.command_id,body.question.strip())
+    if result['status']=='queued':service.launch(result['id'])
+    return result
 
 
 @router.post('/jobs/{job_id}/cancel')

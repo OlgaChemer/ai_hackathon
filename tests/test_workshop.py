@@ -107,6 +107,55 @@ class WorkshopAPI(unittest.TestCase):
         self.assertEqual(second.json()['id'],first['id']);self.assertEqual(len(self.calls),1)
         self.assertEqual(self.client.post('/api/workshop/jobs',json={**body,'rate':50000}).status_code,409)
 
+    def test_followup_uses_saved_data_and_restores_conversation_without_research(self):
+        root=self.wait(self.client.post('/api/workshop/jobs',json=self.payload()).json()['id'])
+        with db.session() as s:
+            chat=s.get(Chat,'own');chat.state={};chat.profile=merge_profile({'city':'Казань'})
+        question={'command_id':'followup-one','question':'Почему первая квартира выгоднее?'}
+        response=self.client.post('/api/workshop/jobs/'+root['id']+'/followups',json=question)
+        self.assertEqual(response.status_code,202,response.text)
+        child=self.wait(response.json()['id']);self.assertEqual(child['status'],'completed',child)
+        snapshot=self.calls[-1];self.assertEqual(snapshot['listings'],self.calls[0]['listings'])
+        self.assertEqual(snapshot['source_time'],self.calls[0]['source_time'])
+        self.assertEqual(snapshot['conversation'][-1]['content'],root['result']['text'])
+        self.assertEqual(snapshot['prompt'],question['question'])
+        same=self.client.post('/api/workshop/jobs/'+root['id']+'/followups',json=question)
+        self.assertEqual(same.json()['id'],child['id']);self.assertEqual(len(self.calls),2)
+        second=self.client.post('/api/workshop/jobs/'+child['id']+'/followups',json={'command_id':'followup-two','question':'А если учитывать площадь?'})
+        self.wait(second.json()['id'])
+        thread=self.client.get('/api/workshop/jobs/'+root['id']+'/thread').json()
+        self.assertEqual(len(thread['jobs']),3)
+        self.assertEqual(thread['jobs'][1]['prompt'],question['question'])
+        self.assertEqual(len(self.client.get('/api/workshop/jobs').json()['jobs']),1)
+        self.assertEqual(self.calls[-1]['conversation'][-2]['content'],question['question'])
+
+    def test_market_followup_does_not_fetch_new_listings(self):
+        rows=[listing(id=str(i),city='Москва',rooms=2,price=8_000_000+i*100000) for i in range(8)]
+        with patch.object(service.sources,'collect',new=AsyncMock(return_value=(rows,[]))) as collect:
+            root=self.wait(self.client.post('/api/workshop/jobs',json=self.payload('market')).json()['id'])
+            self.assertEqual(root['status'],'completed',root)
+            child=self.client.post('/api/workshop/jobs/'+root['id']+'/followups',json={'command_id':'market-question','question':'Какая медианная цена?'})
+            result=self.wait(child.json()['id']);self.assertEqual(result['status'],'completed',result)
+            self.assertEqual(collect.await_count,1)
+            self.assertEqual(result['result']['facts'],root['result']['facts'])
+
+    def test_followup_rejects_foreign_pending_empty_and_offtopic_requests(self):
+        root=self.wait(self.client.post('/api/workshop/jobs',json=self.payload()).json()['id'])
+        with db.session() as s:
+            u=User(email='foreign@example.ru',password_hash='unused');s.add(u);s.flush()
+            s.add(Chat(id='foreign',user_id=u.id,title='Закрытый'));s.flush()
+            s.add(WorkshopJob(id='foreign-job',user_id=u.id,chat_id='foreign',command_id='old',kind='repair',prompt='',provider='deepseek',status='completed',snapshot={},events=[],result={'text':'private'}))
+        body={'command_id':'question','question':'Почему?'}
+        self.assertEqual(self.client.get('/api/workshop/jobs/foreign-job/thread').status_code,404)
+        self.assertEqual(self.client.post('/api/workshop/jobs/foreign-job/followups',json=body).status_code,404)
+        self.assertEqual(self.client.post('/api/workshop/jobs/'+root['id']+'/followups',json={**body,'question':'   '}).status_code,422)
+        with db.session() as s:s.get(WorkshopJob,root['id']).status='running'
+        self.assertEqual(self.client.post('/api/workshop/jobs/'+root['id']+'/followups',json=body).status_code,409)
+        with db.session() as s:s.get(WorkshopJob,root['id']).status='completed'
+        child=self.client.post('/api/workshop/jobs/'+root['id']+'/followups',json={**body,'question':'Напиши шахматную игру'})
+        self.assertEqual(self.wait(child.json()['id'])['status'],'refused')
+        self.assertEqual(len(self.calls),1)
+
     def test_foreign_chat_job_and_download_are_not_accessible(self):
         with db.session() as s:
             u=User(email='foreign@example.ru',password_hash='unused');s.add(u);s.flush()

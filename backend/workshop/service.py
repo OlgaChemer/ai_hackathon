@@ -73,6 +73,37 @@ def create(connection,uid,payload):
     return store.create(connection,uid,payload,settings.workshop_provider,snapshot)
 
 
+def thread(connection,uid,job_id):
+    job=store.owned(connection,uid,job_id)
+    root_id=job.snapshot.get('root_job_id') or job.id
+    root=store.owned(connection,uid,root_id)
+    children=list(connection.scalars(select(WorkshopJob).where(WorkshopJob.user_id==uid,
+        WorkshopJob.snapshot['root_job_id'].as_string()==root_id).order_by(WorkshopJob.created_at,WorkshopJob.id).limit(60)))
+    return {'root_id':root_id,'jobs':[store.public(root),*[store.public(row) for row in children]]}
+
+
+def followup(connection,uid,parent_id,command_id,question):
+    parent=store.owned(connection,uid,parent_id)
+    if not question:raise HTTPException(422,'Напишите вопрос по исследованию.')
+    payload={'command_id':command_id,'kind':parent.kind,'chat_id':parent.chat_id,'prompt':question,'parent_job_id':parent_id}
+    old=connection.scalar(select(WorkshopJob).where(WorkshopJob.user_id==uid,WorkshopJob.command_id==command_id))
+    if old:
+        if old.snapshot.get('command_fingerprint')!=store.fingerprint(payload):raise HTTPException(409,'ID команды уже использован.')
+        return store.public(old)
+    if parent.status!='completed' or not parent.result:raise HTTPException(409,'Дождитесь готового исследования, чтобы задать вопрос по нему.')
+    if not parent.snapshot.get('facts'):raise HTTPException(409,'Исходные данные исследования недоступны. Запустите новое исследование.')
+    jobs=thread(connection,uid,parent_id)['jobs']
+    if any(row['status'] in ('queued','running') for row in jobs):raise HTTPException(409,'Дождитесь ответа на предыдущий вопрос.')
+    if len(jobs)>=60:raise HTTPException(422,'В этом исследовании уже много вопросов. Начните новое исследование.')
+    snapshot=deepcopy(parent.snapshot)
+    conversation=[*snapshot.get('conversation',[]),{'role':'user','content':parent.snapshot['prompt']},
+                  {'role':'assistant','content':parent.result['text'][:6000]}][-8:]
+    snapshot.update(prompt=question,conversation=conversation,parent_job_id=parent_id,
+        root_job_id=parent.snapshot.get('root_job_id') or parent.id)
+    store.owned(connection,uid,snapshot['root_job_id']).updated_at=utcnow()
+    return store.create(connection,uid,payload,parent.provider,snapshot)
+
+
 def update(connection,job_id,status,*,result=None,error=None,snapshot=None):
     row=connection.get(WorkshopJob,job_id)
     if row.status=='cancelled':return
@@ -93,10 +124,13 @@ async def execute(job_id):
             db.required(update,job_id,'running')
             record('workshop_started',job=job_id,provider=provider)
             llm=get_provider(provider)
-            verdict=await scope(llm,snapshot['prompt'])
+            question_context=''
+            if snapshot.get('parent_job_id'):
+                question_context='Контекст исследования недвижимости:\n'+ '\n'.join(m['content'][:1500] for m in snapshot.get('conversation',[])[-4:])+'\nТекущий вопрос:\n'
+            verdict=await scope(llm,question_context+snapshot['prompt'])
             if verdict['decision']!='allow':
                 db.required(update,job_id,'needs_input' if verdict['decision']=='clarify' else 'refused',error=verdict['message']);return
-            if snapshot['kind']=='market':
+            if snapshot['kind']=='market' and not snapshot.get('parent_job_id'):
                 progress('Получаю реальные объявления по условиям исследования.')
                 def batch(rows):progress(f'Источник вернул ещё {len(rows)} объявлений. Проверяю условия.')
                 rows,reports=await sources.collect(snapshot['profile'],on_batch=batch)
@@ -114,7 +148,7 @@ async def execute(job_id):
             db.required(update,job_id,'running',snapshot=snapshot)
             progress('Запускаю изолированного аналитика. Он подготовит расчёт и Excel.')
             result=await asyncio.wait_for(sandbox.run(job_id,snapshot,llm,progress),180)
-            verdict=await scope(llm,'Задание: '+snapshot['prompt']+'\nОтвет: '+result['text'],output=True)
+            verdict=await scope(llm,question_context+'Задание: '+snapshot['prompt']+'\nОтвет: '+result['text'],output=True)
             if verdict['decision']!='allow':raise RuntimeError('Ответ вышел за рамки задания по недвижимости. Результат не опубликован; уточните запрос.')
             db.required(update,job_id,'completed',result=result)
             record('workshop_completed',job=job_id,provider=provider,code_runs=result['code_runs'])
