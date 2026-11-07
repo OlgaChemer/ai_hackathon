@@ -52,6 +52,9 @@ class PhotoTests(unittest.IsolatedAsyncioTestCase):
             model.analyze_images.return_value=LLMResponse(json.dumps(value))
             result=(await photos.Inspector(snapshot,'deepseek',lambda t:None).inspect(['a']))[0]
             self.assertEqual(result['visible_state'],'unknown')
+            value['image_kind']='render';model.analyze_images.return_value=LLMResponse(json.dumps(value))
+            result=(await photos.Inspector(snapshot,'deepseek',lambda t:None).inspect(['a']))[0]
+            self.assertEqual(result['visible_state'],'unknown')
 
     async def test_no_photos_and_invalid_model_response_do_not_invent_condition(self):
         model=type('Model',(),{'model':'vision-test','analyze_images':AsyncMock(return_value=LLMResponse('{"bad":"schema"}'))})()
@@ -61,6 +64,10 @@ class PhotoTests(unittest.IsolatedAsyncioTestCase):
             row={'id':'a','photos':['https://cdn-p.cian.site/a.jpg']}
             result=(await photos.Inspector({'listings':[row]},'deepseek',lambda t:None).inspect(['a']))[0]
             self.assertEqual(result['status'],'unavailable');self.assertNotIn('visible_state',result)
+            model.analyze_images.reset_mock()
+            model.analyze_images.side_effect=[LLMResponse('{"bad":"schema"}'),LLMResponse(json.dumps(verdict()))]
+            result=(await photos.Inspector({'listings':[row]},'deepseek',lambda t:None).inspect(['a']))[0]
+            self.assertEqual(result['status'],'analyzed');self.assertEqual(model.analyze_images.await_count,2)
 
     async def test_bridge_limits_photo_payload_and_checks_known_ids(self):
         inspector=photos.Inspector({'listings':[{'id':'a'}]},'deepseek',lambda t:None)

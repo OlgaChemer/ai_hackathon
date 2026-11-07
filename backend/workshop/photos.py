@@ -11,14 +11,14 @@ from PIL import Image,ImageOps
 
 from ..agent import validation
 from ..db.models import utcnow
-from ..llm.base import VisionImage,parse_json_loose,LLMError
+from ..llm.base import VisionImage,parse_json_loose,LLMError,StructuredOutputError
 from ..llm.factory import get_vision_provider
 from ..sources import cian
 from ..runtime import record
 
 SCHEMA={'type':'object','additionalProperties':False,'properties':{
     'visible_state':{'type':'string','enum':['good','cosmetic','major','unfinished','unknown']},
-    'image_kind':{'type':'string','enum':['interior','mixed','not_interior','unknown']},
+    'image_kind':{'type':'string','enum':['interior','mixed','not_interior','render','floorplan','exterior','unknown']},
     'observations':{'type':'array','maxItems':8,'items':{'type':'string','maxLength':800}},
     'issues':{'type':'array','maxItems':8,'items':{'type':'object','additionalProperties':False,'properties':{
         'photo':{'type':'integer','minimum':1,'maximum':4},'observation':{'type':'string','maxLength':800},
@@ -33,7 +33,7 @@ PROMPT='''Оцени только видимое состояние отделк
 Рендер не доказывает фактическое состояние квартиры. Указывай номер фотографии для каждого замечания.
 Не выдавай возможный дефект за установленный. Ответ по-русски строго JSON со следующими полями:
 visible_state: good/cosmetic/major/unfinished/unknown;
-image_kind: interior/mixed/not_interior/unknown;
+image_kind: interior/mixed/not_interior/render/floorplan/exterior/unknown;
 observations: короткие видимые признаки (список строк);
 issues: список {photo: номер 1..4, observation: замечание, certainty: visible/uncertain};
 limitations: что невозможно определить или что требует осмотра (список строк).
@@ -106,7 +106,7 @@ class Inspector:
                 result.update(await asyncio.wait_for(self.one(row),min(40,remaining)))
             except asyncio.TimeoutError:result['note']='Не удалось проверить фото за отведённое время. Состояние по ним не установлено.'
             except (httpx.HTTPError,ValueError,LLMError,Image.UnidentifiedImageError) as exc:
-                record('workshop_photo_failed',listing=identifier,error=type(exc).__name__)
+                record('workshop_photo_failed',listing=identifier,error=type(exc).__name__,reason=str(exc)[:180])
                 result['note']='Не удалось надёжно получить или проанализировать фотографии. Состояние по ним не установлено.'
             self.results[identifier]=result
         return [self.results[i] for i in dict.fromkeys(ids)]
@@ -129,9 +129,16 @@ class Inspector:
             images.append(VisionImage(raw));references.append({'url':urls[position],'sha256':hashlib.sha256(raw).hexdigest(),'gallery_position':position+1})
         if not images:return {'status':'unavailable','note':'Не удалось загрузить фотографии объявления. Визуальная оценка не выполнена.','gallery_count':len(urls)}
         model=get_vision_provider(self.provider)
-        response=await model.analyze_images(PROMPT,images)
-        value=parse_json_loose(response.text);validation.validate(value,SCHEMA)
-        if any(issue['photo']>len(images) for issue in value['issues']):raise ValueError('Модель сослалась на отсутствующую фотографию.')
-        if value['image_kind'] in ('not_interior','unknown'):value['visible_state']='unknown'
+        prompt=PROMPT+f'\nВ запросе ровно {len(images)} фотографий; допустимые номера 1..{len(images)}.'
+        for attempt in range(2):
+            response=await model.analyze_images(prompt,images)
+            try:
+                value=parse_json_loose(response.text);validation.validate(value,SCHEMA)
+                if any(issue['photo']>len(images) for issue in value['issues']):raise ValueError('Указан номер отсутствующей фотографии.')
+                break
+            except (ValueError,StructuredOutputError) as exc:
+                if attempt:raise
+                prompt+='\nИсправь формат ответа: '+str(exc)[:200]+'. Верни только короткий JSON по указанной схеме.'
+        if value['image_kind'] in ('not_interior','render','floorplan','exterior','unknown'):value['visible_state']='unknown'
         record('workshop_photos_analyzed',provider=self.provider,model=model.model,listing=row['id'],count=len(images))
         return {'status':'analyzed','photos':references,'gallery_count':len(urls),**value}
