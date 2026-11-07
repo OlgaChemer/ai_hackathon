@@ -65,6 +65,43 @@ def context(connection,uid,chat_id=None,liked=None):
             'updating':any(i['seq']>state.get('request_review_seq',0) for i in state.get('request_inputs') or [])}
 
 
+def market_sample(profile,rows,reports,origin):
+    """Единая проверка условий; статистика только по подтверждённым объектам."""
+    from ..agent import criteria
+    from ..agent.profile import passes_hard_filters
+    rows=list({x['id']:x for x in rows if x.get('id')}.values())
+    groups={'confirmed':[],'unverified':[]}
+    for x in rows:
+        if not passes_hard_filters(x,profile):continue
+        match=criteria.evaluate(profile,x)
+        if match['status'] in groups:
+            groups[match['status']].append({**clean_listing(x),'match':match})
+    confirmed,unknown=groups['confirmed'],groups['unverified']
+    return {'listings':confirmed[:150],'unverified_listings':unknown[:150],
+            'coverage':{'received':len(rows),'confirmed':len(confirmed),'unverified':len(unknown),
+                'analyzed':min(len(confirmed),150),'small_sample':len(confirmed)<6,
+                'sample_truncated':len(confirmed)>150,'origin':origin,
+                'reports':deepcopy(reports),'whole_market':False,'limited_sample':True}}
+
+
+def market_input(connection,uid,chat_id,profile):
+    """Зафиксировать текущий поиск, не подменяя его лайками или новым узким сбором."""
+    chat=connection.get(Chat,chat_id)
+    if chat is None or chat.user_id!=uid:raise HTTPException(404,'Диалог недоступен.')
+    state=(chat.state or {}).get('data',{});search=state.get('search') or {}
+    rows={x['id']:x for x in search.get('listings') or [] if x.get('id')}
+    for x in state.get('shown') or []:
+        if x.get('id'):rows.setdefault(x['id'],x)
+    if not rows:
+        from ..db import repo
+        last=repo.last_nonempty_selection(connection,chat.id) or {}
+        rows={x['id']:x for x in last.get('cards') or [] if x.get('id')}
+    sample=market_sample(profile,list(rows.values()),search.get('report',[])+search.get('page_reports',[]),'current_search')
+    if not sample['listings']:return None
+    sample['source_time']=chat.updated_at.isoformat()+'Z'
+    return sample
+
+
 def assumptions(rate,reserve):
     if not math.isfinite(rate) or not 0<=rate<=300_000:raise HTTPException(422,'Цена ремонта за м²: от 0 до 300 000 ₽.')
     if not math.isfinite(reserve) or not 0<=reserve<=100:raise HTTPException(422,'Запас: от 0 до 100%.')

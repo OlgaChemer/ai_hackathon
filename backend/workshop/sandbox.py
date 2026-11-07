@@ -94,7 +94,13 @@ async def run(job_id,snapshot,llm,progress):
     socket=bridge_dir/'model.sock'
     from .photos import Inspector
     inspector=Inspector(snapshot,llm.name,progress)
-    bridge=Bridge(llm,snapshot['prompt'],progress,inspector)
+    prompt=snapshot['prompt']
+    if snapshot['kind']=='market':
+        prompt+='\nДля исследования используй охват coverage: отдельно назови подтверждённые и непроверенные квартиры. '+\
+            'В listings и основных метриках только подтверждённые; unverified_listings в статистику не входят. '+\
+            'Если small_sample=true, это небольшая выборка: сравни найденное, но не делай выводов о всём рынке или трендах. '+\
+            'origin=current_search означает сохранённые данные текущего подбора, а не новый обход объявлений.'
+    bridge=Bridge(llm,prompt,progress,inspector)
     server=uvicorn.Server(uvicorn.Config(bridge.app,uds=str(socket),log_level='error',access_log=False,lifespan='off',timeout_graceful_shutdown=2))
     server.install_signal_handlers=lambda:None
     server.capture_signals=lambda:nullcontext()

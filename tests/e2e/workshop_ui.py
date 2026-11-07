@@ -39,7 +39,7 @@ async def main(base):
                 if kind=='compare':
                     assert not await page.locator('[data-repair-scenarios]').is_visible()
                 if kind=='market':
-                    await page.request.post(base+'/_test/profile',data={'rooms':3})
+                    await page.request.post(base+'/_test/profile',data={'rooms':3,'market_sample':True})
                     await page.evaluate("document.dispatchEvent(new CustomEvent('profilechange',{detail:{chat_id:'ui-workshop'}}))")
                     await page.locator('[data-context]').filter(has_text='3-комнат').wait_for()
                     await page.locator('[data-wide]').check()
@@ -61,7 +61,13 @@ async def main(base):
                     assert 'Метро' in await page.locator('.workshop-facts table').inner_text()
                     assert 'Ремонт с запасом' not in await page.locator('.workshop-facts table').inner_text()
                     assert 'Минимальная цена за м²' in await page.locator('.workshop-facts').inner_text()
-                if kind=='market':assert '3-комнат' in await page.locator('[data-report-scope]').inner_text()
+                if kind=='market':
+                    assert '3-комнат' in await page.locator('[data-report-scope]').inner_text()
+                    summary=await page.locator('.workshop-facts').inner_text()
+                    assert 'Данные текущего подбора' in summary
+                    assert 'Подтверждено по условиям: 4; требуют проверки: 2' in summary
+                    assert 'В расчёте: 4' in summary
+                    assert 'Небольшая выборка' in summary
                 assert await page.locator('.workshop-report h2').count()==1
                 assert await page.locator('.workshop-report strong').first.text_content()=='Сравнил варианты'
                 assert await page.locator('.workshop-report table tbody tr').count()==1

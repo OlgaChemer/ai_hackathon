@@ -219,7 +219,10 @@ function factTable(facts){
       r.metro?[r.metro.name,r.metro.minutes?`${r.metro.minutes} мин`:null,r.metro.mode].filter(Boolean).join(' · '):'Нет данных',
       r.nearby?.length?r.nearby.map(p=>`${p.label}: ${p.dist===null?'не найдено в радиусе 1 км':Math.round(p.dist)+' м по прямой'}`).join('; '):'Нет проверенных данных']);
   }else if(facts.kind==='market'){
-    note.textContent=`Проверенная выборка: ${facts.count} объявлений. Медианная цена ${money(facts.median_price)}, медианная цена метра ${money(facts.median_price_per_m2)}. Это полученная выборка, а не весь рынок.`;
+    const coverage=facts.coverage;
+    const scope=coverage ? `${coverage.origin==='current_search'?'Данные текущего подбора. ':''}Подтверждено по условиям: ${coverage.confirmed}; требуют проверки: ${coverage.unverified}. Непроверенные не включены в расчёт. ` : '';
+    const warning=coverage?.small_sample ? ' Небольшая выборка: выводы относятся только к этим квартирам.' : '';
+    note.textContent=`${scope}В расчёте: ${facts.count} объявлений. Медианная цена ${money(facts.median_price)}, медианная цена метра ${money(facts.median_price_per_m2)}. Это полученная выборка, а не весь рынок.${warning}`;
     headers=['Комнаты','Объявлений','Медианная цена'];rows=facts.groups.map(g=>[g.rooms===null?'Не указаны':g.rooms===0?'Студии':g.rooms,g.count,money(g.median_price)]);
   }else{
     note.textContent=`Архивный формат отчёта. Сценарий ремонта: ${money(facts.assumptions.repair_per_m2)}/м², запас ${facts.assumptions.reserve_pct}%. Новая оценка ремонта считает три варианта, новое сравнение обходится без стоимости ремонта. Мебель, кредитные и юридические расходы отдельно не оценивались.`;

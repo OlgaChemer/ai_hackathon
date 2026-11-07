@@ -161,6 +161,85 @@ class WorkshopAPI(unittest.TestCase):
         self.assertEqual(r.status_code,409,r.text)
         self.assertEqual(self.calls,[])
 
+    def test_market_reuses_all_search_results_and_keeps_unknowns_out_of_statistics(self):
+        profile=merge_profile({'city':'Москва','rooms':2,'poi':['park']})
+        rows=[listing(id=str(i),city='Москва',nearby={'park':{'name':'Парк','dist':400}} if i<4 else {},
+                      price=8_000_000+i*100000) for i in range(6)]
+        # Релевантные квартиры за пределами старого лимита первых 150 строк.
+        irrelevant=[listing(id='other-'+str(i),city='Москва',rooms=1) for i in range(160)]
+        with db.session() as s:
+            chat=s.get(Chat,'own');saved=deepcopy(chat.state)
+            saved['data'].update(profile=profile,shown=rows,search={'listings':irrelevant+rows},prefs={'liked':['0']})
+            chat.state=saved
+        with patch.object(service.sources,'collect',new=AsyncMock()) as collect:
+            result=self.wait(self.client.post('/api/workshop/jobs',json=self.payload('market',liked=[])).json()['id'])
+            collect.assert_not_awaited()
+        self.assertEqual(result['status'],'completed',result)
+        sample=self.calls[-1];facts=result['result']['facts'];coverage=facts['coverage']
+        self.assertEqual((coverage['received'],coverage['confirmed'],coverage['unverified']),(166,4,2))
+        self.assertEqual(facts['count'],4)
+        self.assertEqual(facts['median_price'],8_150_000)
+        self.assertEqual({x['id'] for x in sample['listings']},{'0','1','2','3'})
+        self.assertEqual({x['id'] for x in sample['unverified_listings']},{'4','5'})
+        self.assertEqual(coverage['origin'],'current_search')
+        self.assertTrue(coverage['small_sample'])
+        service.geo.nearby.assert_not_awaited()
+
+    def test_market_current_conditions_and_snapshot_survive_later_profile_changes(self):
+        with patch.object(service,'launch'):
+            root=self.client.post('/api/workshop/jobs',json=self.payload('market')).json()
+        with db.session() as s:
+            chat=s.get(Chat,'own');saved=deepcopy(chat.state)
+            saved['data']['profile']=merge_profile({'rooms_options':[3]},saved['data']['profile'])
+            saved['data']['search']={'listings':[]};saved['data']['shown']=[];chat.state=saved
+        with patch.object(service.sources,'collect',new=AsyncMock()) as collect:
+            self.client.portal.call(service.execute,root['id'])
+            collect.assert_not_awaited()
+        result=self.wait(root['id']);self.assertEqual(result['status'],'completed',result)
+        self.assertEqual(result['result']['facts']['count'],2)
+        self.assertEqual(self.calls[-1]['profile']['rooms'],2)
+
+    def test_market_fresh_search_filters_before_map_and_sample_limit(self):
+        profile=merge_profile({'city':'Москва','rooms_options':[3],'poi':['park']})
+        with db.session() as s:
+            chat=s.get(Chat,'own');saved=deepcopy(chat.state);saved['data']['profile']=profile;chat.state=saved
+        irrelevant=[listing(id='other-'+str(i),city='Москва',rooms=1) for i in range(160)]
+        candidates=[listing(id='new-'+str(i),city='Москва',rooms=3,nearby={}) for i in range(6)]
+        async def nearby(rows,kinds,**kw):
+            self.assertEqual({x['id'] for x in rows},{x['id'] for x in candidates})
+            for x in rows:x['nearby']={'park':{'name':'Парк','dist':400}}
+            return True
+        with patch.object(service.sources,'collect',new=AsyncMock(return_value=(irrelevant+candidates,[]))),\
+             patch.object(service.geo,'nearby',new=AsyncMock(side_effect=nearby)):
+            result=self.wait(self.client.post('/api/workshop/jobs',json=self.payload('market')).json()['id'])
+        self.assertEqual(result['status'],'completed',result)
+        self.assertEqual(result['result']['facts']['count'],6)
+        self.assertEqual(result['result']['facts']['coverage']['origin'],'fresh_search')
+
+    def test_market_one_confirmation_is_small_sample_not_failure(self):
+        rows=[listing(id='one',city='Москва')]
+        with patch.object(service.sources,'collect',new=AsyncMock(return_value=(rows,[]))):
+            result=self.wait(self.client.post('/api/workshop/jobs',json=self.payload('market',whole_city=True)).json()['id'])
+        self.assertEqual(result['status'],'completed',result)
+        self.assertEqual(result['result']['facts']['count'],1)
+        self.assertTrue(result['result']['facts']['coverage']['small_sample'])
+
+    def test_market_empty_confirmation_preserves_coverage_and_names_unknowns(self):
+        profile=merge_profile({'city':'Москва','rooms':2,'poi':['park']})
+        with db.session() as s:
+            chat=s.get(Chat,'own');saved=deepcopy(chat.state);saved['data']['profile']=profile;chat.state=saved
+        rows=[listing(id='unknown',city='Москва',nearby={})]
+        with patch.object(service.sources,'collect',new=AsyncMock(return_value=(rows,[]))):
+            result=self.wait(self.client.post('/api/workshop/jobs',json=self.payload('market')).json()['id'])
+        self.assertEqual(result['status'],'failed',result)
+        self.assertIn('требуют проверки: 1',result['error'])
+        self.assertNotIn('хотя бы 6',result['error'])
+        with db.session() as s:
+            sample=s.get(WorkshopJob,result['id']).snapshot
+            self.assertEqual(sample['coverage']['unverified'],1)
+            self.assertEqual(sample['listings'],[])
+        self.assertEqual(self.calls,[])
+
     def test_duplicate_id_returns_same_job_and_changed_payload_conflicts(self):
         body=self.payload();first=self.client.post('/api/workshop/jobs',json=body).json()
         self.wait(first['id'])
@@ -193,7 +272,7 @@ class WorkshopAPI(unittest.TestCase):
     def test_market_followup_does_not_fetch_new_listings(self):
         rows=[listing(id=str(i),city='Москва',rooms=2,price=8_000_000+i*100000) for i in range(8)]
         with patch.object(service.sources,'collect',new=AsyncMock(return_value=(rows,[]))) as collect:
-            root=self.wait(self.client.post('/api/workshop/jobs',json=self.payload('market')).json()['id'])
+            root=self.wait(self.client.post('/api/workshop/jobs',json=self.payload('market',whole_city=True)).json()['id'])
             self.assertEqual(root['status'],'completed',root)
             child=self.client.post('/api/workshop/jobs/'+root['id']+'/followups',json={'command_id':'market-question','question':'Какая медианная цена?'})
             result=self.wait(child.json()['id']);self.assertEqual(result['status'],'completed',result)

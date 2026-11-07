@@ -11,7 +11,7 @@ from ..config import settings
 from ..db.models import WorkshopJob,User,utcnow
 from ..llm import Tool,LLMError
 from ..llm.factory import get_provider
-from ..agent import validation,criteria
+from ..agent import validation
 from ..agent.profile import passes_hard_filters,merge_profile
 from ..runtime import record
 from . import data,store,sandbox
@@ -77,6 +77,9 @@ def create(connection,uid,payload):
     snapshot.update(kind=payload['kind'],prompt=payload['prompt'] or DEFAULTS[payload['kind']],
         analysis_version=2,profile=profile,listings=ctx['liked'],assumptions=data.analysis_assumptions(payload['kind']),
         source_time=utcnow().isoformat()+'Z',whole_city=payload['whole_city'])
+    if payload['kind']=='market' and not payload['whole_city']:
+        sample=data.market_input(connection,uid,ctx['chat_id'],profile)
+        if sample:snapshot.update(sample)
     return store.create(connection,uid,payload,settings.workshop_provider,snapshot)
 
 
@@ -141,19 +144,23 @@ async def execute(job_id):
                 progress('Проверяю школы, детские сады и парки рядом с выбранными квартирами.')
                 await geo.nearby(snapshot['listings'][:30],['school','kindergarten','park'],budget_s=settings.places_budget_s)
             if snapshot['kind']=='market' and not snapshot.get('parent_job_id'):
-                progress('Получаю реальные объявления по условиям исследования.')
-                def batch(rows):progress(f'Источник вернул ещё {len(rows)} объявлений. Проверяю условия.')
-                rows,reports=await sources.collect(snapshot['profile'],on_batch=batch)
-                rows=list({x['id']:x for x in rows}.values())[:150]
-                kinds=list({*snapshot['profile'].get('poi',[]),*[f['field'].split(':',1)[1] for f in snapshot['profile'].get('filters') or [] if f['field'].startswith('nearby:')]})
-                if kinds:await geo.nearby(rows[:30],kinds,budget_s=settings.places_budget_s)
-                eligible=[x for x in rows if passes_hard_filters(x,snapshot['profile'])]
-                confirmed=[x for x in eligible if criteria.evaluate(snapshot['profile'],x)['status']=='confirmed']
-                snapshot['listings']=[data.clean_listing(x) for x in confirmed]
-                snapshot['coverage']={'received':len(rows),'confirmed':len(confirmed),'unverified':sum(criteria.evaluate(snapshot['profile'],x)['status']=='unverified' for x in eligible),
-                    'reports':reports,'whole_market':False,'limited_sample':True}
-                if len(confirmed)<6:raise RuntimeError(f"По текущим условиям: {snapshot['profile'].get('summary','выбранный профиль')} Подтверждено только {len(confirmed)} объявлений; для исследования нужно хотя бы 6. Можно явно выбрать исследование всего города без фильтров.")
-                progress(f'Для исследования подтверждено {len(confirmed)} объявлений. Готовлю анализ.')
+                if not snapshot.get('coverage'):
+                    progress('Получаю реальные объявления по условиям исследования.')
+                    def batch(rows):progress(f'Источник вернул ещё {len(rows)} объявлений. Проверяю условия.')
+                    rows,reports=await sources.collect(snapshot['profile'],on_batch=batch)
+                    rows=list({x['id']:x for x in rows}.values())
+                    # Карту проверяем только для кандидатов по текущим условиям,
+                    # а не для первых 30 объектов произвольной выдачи города.
+                    candidates=[x for x in rows if passes_hard_filters(x,snapshot['profile'])]
+                    kinds=list({*snapshot['profile'].get('poi',[]),*[f['field'].split(':',1)[1] for f in snapshot['profile'].get('filters') or [] if f['field'].startswith('nearby:')]})
+                    if kinds:await geo.nearby(candidates[:30],kinds,budget_s=settings.places_budget_s)
+                    snapshot.update(data.market_sample(snapshot['profile'],rows,reports,'fresh_search'))
+                coverage=snapshot['coverage'];count=len(snapshot['listings'])
+                progress(f"По условиям исследования подтверждено {coverage['confirmed']} объявлений; требуют проверки: {coverage['unverified']}. В расчёте: {count}.")
+                # Сохраняем охват и при пустом результате, чтобы не терять причину.
+                db.required(update,job_id,'running',snapshot=snapshot)
+                if not count:raise RuntimeError(f"По текущим условиям подтверждённых объявлений нет; требуют проверки: {coverage['unverified']}. Непроверенные не включены в расчёт. Можно повторить проверку позже или явно выбрать исследование всего города без фильтров.")
+                if coverage['small_sample']:progress('Небольшая выборка: сравню найденные квартиры без обобщений на весь рынок.')
             snapshot['facts']=data.facts(snapshot)
             db.required(update,job_id,'running',snapshot=snapshot)
             progress('Запускаю изолированного аналитика. Он подготовит расчёт и Excel.')
