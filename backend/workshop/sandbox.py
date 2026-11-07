@@ -83,7 +83,7 @@ async def run(job_id,snapshot,llm,progress):
                 if not chunk:break
                 diagnostic.extend(chunk)
                 if len(diagnostic)>16000:del diagnostic[:-16000]
-        errors=asyncio.create_task(stderr());result=None;total=0
+        errors=asyncio.create_task(stderr());result=None;total=0;failure=None
         try:
             while True:
                 line=await process.stdout.readline()
@@ -93,12 +93,13 @@ async def run(job_id,snapshot,llm,progress):
                 try:event=json.loads(line)
                 except (ValueError,UnicodeError):continue
                 if event.get('type')=='progress':progress(event.get('text','Выполняю расчёт.'))
-                if event.get('type')=='failed':raise RuntimeError(event.get('text','Расчёт не завершён.'))
+                if event.get('type')=='failed':failure=event.get('text','Расчёт не завершён.')
                 if event.get('type')=='complete':result=event
             code=await process.wait()
+            await errors
             if code or not result:
                 path=root/'runtime-error.log';path.write_bytes(diagnostic);path.chmod(0o600)
-                raise RuntimeError('Изолированный агент не завершил задание. Попробуйте ещё раз.')
+                raise RuntimeError(failure or 'Изолированный агент не завершил задание. Попробуйте ещё раз.')
             if result.get('metrics')!=snapshot['facts'] or result.get('code_runs',0)<1:raise RuntimeError('Проверка результата не пройдена.')
             artifact_dir=root/'artifacts';artifact_dir.mkdir(exist_ok=True,mode=0o700)
             names=[]

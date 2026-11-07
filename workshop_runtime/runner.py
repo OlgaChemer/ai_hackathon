@@ -83,7 +83,9 @@ async def main():
             tools=tools,runtime=LLMRuntime.capture(provider,'workshop',context_window_tokens=32000),
             max_iterations=8,max_tool_result_chars=16000,workspace=ROOT,session_key='task',provider_retry_mode='none',
             consolidate_history=bounded_history))
-        if result.error or not result.final_content or python.calls<1:raise RuntimeError('Агент не завершил исполнимый расчёт.')
+        if result.error or not result.final_content or python.calls<1:
+            logger.error('Runner stopped: reason={}, error={}, code_runs={}',result.stop_reason,result.error,python.calls)
+            raise RuntimeError('Агент не завершил исполнимый расчёт.')
         metrics=json.loads((ROOT/'metrics.json').read_text())
         if metrics!=data['facts']:raise RuntimeError('Базовые числа отчёта не совпали с проверенным расчётом.')
         artifacts=[]
