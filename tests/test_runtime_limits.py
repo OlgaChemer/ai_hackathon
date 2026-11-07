@@ -164,18 +164,21 @@ class TurnTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await task, 'Согласен')
 
     async def test_deadline_is_shared_by_operations_and_cancels_work(self):
-        turn = runtime.Turn('test', .08)
-        await turn.run(lambda: asyncio.sleep(.05), kind='llm', name='agent')
-        cancelled = asyncio.Event()
-
-        async def stuck():
-            try:
-                await asyncio.Event().wait()
-            finally:
-                cancelled.set()
-        with self.assertRaises(runtime.TurnStopped):
-            await turn.run(stuck, kind='tool', name='search_listings')
-        self.assertTrue(cancelled.is_set())
+        # Виртуальное время проверяет общий бюджет без 30 мс запаса на CI/VPS.
+        from types import SimpleNamespace
+        clock=[100.0];cancelled=asyncio.Event()
+        with patch.object(runtime,'time',SimpleNamespace(monotonic=lambda:clock[0])):
+            turn=runtime.Turn('test',1)
+            async def first():clock[0]+=.6
+            await turn.run(first,kind='llm',name='agent')
+            async def stuck():
+                clock[0]+=.5;turn.changed.set()
+                try:await asyncio.Event().wait()
+                finally:cancelled.set()
+            with self.assertRaises(runtime.TurnStopped):
+                await turn.run(stuck,kind='tool',name='search_listings')
+            self.assertTrue(cancelled.is_set())
+            self.assertAlmostEqual(turn.elapsed,1.1)
 
     async def test_timed_out_batch_has_results_and_can_continue_with_same_state(self):
         entered = asyncio.Event()
