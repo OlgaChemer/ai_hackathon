@@ -109,10 +109,10 @@ class SearchIntegrationTest(unittest.TestCase):
                 return result
         return asyncio.run(go())
 
-    def test_eleven_candidates_ranked_before_cutting_top_ten(self):
-        rows = [listing(id=str(i), price=8_000_000) for i in range(10)] + [listing(id='best', price=6_000_000)]
+    def test_candidates_ranked_before_cutting_three_pages(self):
+        rows = [listing(id=str(i), price=8_000_000) for i in range(30)] + [listing(id='best', price=6_000_000)]
         self.run_search(rows)
-        self.assertEqual(len(self.s.shown), 10)
+        self.assertEqual(len(self.s.shown), 30)
         self.assertIn('best', [x['id'] for x in self.s.shown])
 
     def test_complete_results_precede_unknown_and_rejected_not_shown(self):

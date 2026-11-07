@@ -130,6 +130,8 @@ class ClientMessage(BaseModel):
     text: str = Field(min_length=1, max_length=1000)
     liked: list[str] = []
     disliked: list[str] = []
+    visible_listing_ids: list[str] | None = Field(default=None,max_length=30)
+    selection_revision: int | None = Field(default=None,ge=0)
 
 
 class SpeakRequest(BaseModel):
@@ -439,12 +441,12 @@ async def chat_message(sid: str, req: ClientMessage, request: Request):
     _cooldown(live)
     if live is not None and (live.task is None or O.running(live)):  # агент ещё не запущен или работает
         live.voice_mode = req.voice_mode
-        kind = await live.receive_text(req.text.strip(), {"liked": req.liked, "disliked": req.disliked},req.command_id)
+        kind = await live.receive_text(req.text.strip(), req.model_dump(include={'liked','disliked','visible_listing_ids','selection_revision'}),req.command_id)
         return {"ok": True, "handled_as": kind, "continued": False}
     s = O.restore_session(sid, '', _llm())
     s.voice_mode = req.voice_mode
     after=s.seq
-    kind=await s.receive_text(req.text.strip(),{'liked':req.liked,'disliked':req.disliked},req.command_id)
+    kind=await s.receive_text(req.text.strip(),req.model_dump(include={'liked','disliked','visible_listing_ids','selection_revision'}),req.command_id)
     return {"ok": True, "handled_as": kind, "continued": True, "after": after}
 
 

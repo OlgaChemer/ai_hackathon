@@ -278,6 +278,13 @@ table.scen td.roi { color: var(--green-strong); font-weight: 700; }
 .offer .meta { margin: 2px 0 0; font-size: 13px; color: var(--ink-2); }
 .offer .missing { margin: 8px 0 0; font-size: 12.5px; color: var(--amber); }
 .offer-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.offer-map { grid-column: 1 / -1; }
+.selection-pagination { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:12px; margin:18px 0; scroll-margin-top:20px; }
+.pagination-summary { font-size:13px; color:var(--ink-2); }
+.pagination-buttons { display:flex; flex-wrap:wrap; gap:6px; }
+.pagination-buttons .btn { min-width:40px; min-height:40px; }
+.flat-pin.is-selected span { background:var(--green-strong); color:white; box-shadow:0 0 0 5px rgba(27,160,56,.25); }
+.leaflet-tooltip.flat-tooltip { white-space:normal; max-width:220px; }
 .vote { display: inline-flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer; color: var(--ink-2); }
 .vote-up[aria-pressed="true"] { background: var(--green); border-color: var(--green); color: #fff; }
 .vote-down[aria-pressed="true"] { background: var(--ink-2); border-color: var(--ink-2); color: var(--surface); }

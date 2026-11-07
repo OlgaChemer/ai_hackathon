@@ -184,7 +184,7 @@ class DialogueStateTest(unittest.IsolatedAsyncioTestCase):
         s.prefs.liked=[x['id'] for x in s.search['pool'][:10]]
         s.search['shown_ids']=set(s.prefs.liked)
         s.shown=s.search['pool'][:10]
-        s.selection_query={**Q.default_query(),'mode':'more'}
+        s.selection_query={**Q.default_query(),'mode':'more','limit':10}
         s.ask=AsyncMock(return_value={'approved':True,'data':{'action':'text','liked':s.prefs.liked}})
         await search.show_selection(s)
         self.assertEqual(len(s.shown),10)

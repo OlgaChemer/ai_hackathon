@@ -55,7 +55,8 @@ def build_context(s) -> dict:
         ctx["подборка"] = [{"адрес": x.get("address"), "цена": fmt(x["price"]), "справедливая": fmt(x["fair"]["fair"]),
                             "коридор": f"{fmt(x['fair']['low'])}–{fmt(x['fair']['high'])}", "площадь": x.get("area"),
                             "основа оценки": x["fair"]["basis"], "что_рядом": x.get("nearby", []),
-                            "проверка_условий": x.get("match")} for x in s.shown[:10]]
+                            "проверка_условий": x.get("match")} for x in
+                           [x for x in s.shown if not s.selection_scope_ids or x['id'] in s.selection_scope_ids][:10]]
     if s.current:
         x, fp = s.current["listing"], s.current["fair"]
         ctx["текущая квартира"] = {"адрес": x.get("address"), "цена в объявлении": fmt(x["price"]),

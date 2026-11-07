@@ -292,7 +292,8 @@ async def _prepare(s):
              'workflow':{'has_search':s.search is not None,'has_selection':bool(s.shown),'has_calls':bool(s.calls),'chosen':bool(s.chosen),
                          'selection_query':s.selection_query or s.profile.get('_selection_query'),
                          'unsupported_conditions':s.profile.get('_unsupported_conditions') or [],
-                         'selection':[{'id':x['id'],'number':i+1,'address':x.get('address')} for i,x in enumerate(s.shown)],
+                         'selection':[{'id':x['id'],'number':i+1,'address':x.get('address')} for i,x in enumerate(s.shown)
+                                      if not s.selection_scope_ids or x['id'] in s.selection_scope_ids],
                          'liked':s.prefs.liked,'last_issue':s.last_issue}}
     revision=s.client_revision
     # Буквальный выбор из открытой уточняющей карточки уже имеет адресата.
@@ -423,7 +424,7 @@ async def ensure(s):
         return {'needs_clarification': True, 'question': review['question'], 'client_said': answer['data'].get('text', '')}
     from .actions.request import apply_request
     if review.get('selection') is not None:
-        s.selection_scope_ids = [x['id'] for x in s.shown]
+        s.selection_scope_ids = [i for i in s.selection_scope_ids if any(x['id']==i for x in s.shown)] or [x['id'] for x in s.shown]
         s.selection_operation = review.get('selection_operation','rank')
     changes = deepcopy(review['changes'])
     has_unsupported = any(item['action']=='add' for item in review.get('unsupported') or [])

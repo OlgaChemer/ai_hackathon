@@ -7,7 +7,7 @@ import { savingsChart } from "./chart.js";
 import { initChats, refreshChats } from "./chats.js";
 import { el, html, sleep } from "./format.js";
 import { initShell, navigate, showAgent, showPage, syncShell, refreshContext, setChatExpanded } from "./shell.js";
-import { mountMap, unmountMap } from "./map.js";
+import { mountMap, unmountMap, focusMap } from "./map.js";
 import { $, addMsg, chatLog, config, resetState, stage, state } from "./state.js";
 import * as V from "./views.js";
 import { SELECTION_PROMPT, initVoiceChat, phoneActive, sayPrompt, talk } from "./voicechat.js";
@@ -39,7 +39,7 @@ function viewFor(n) {
 
 function renderStage() {
   unmountMap(stage.querySelector("[data-map]"));
-  stage.innerHTML = state.results[4] ? V.selection(state.results[4], state.marks)
+  stage.innerHTML = state.results[4] ? V.selection(state.results[4], state.marks, state.selectionPage)
     : state.searching ? ""
     : V.waiting("Здесь появятся квартиры", "Расскажите агенту о бюджете, городе и пожеланиях. Профиль и решения останутся в чате.");
   if (state.selectionNotice) stage.prepend(el(html`<p class="hint" role="status">${state.selectionNotice}</p>`));
@@ -48,7 +48,7 @@ function renderStage() {
     stage.prepend(el(html`<div class="search-progress" role="status"><span class="search-spinner" aria-hidden="true"></span><span data-search-progress>${state.searching}</span></div>`));
   } else stage.removeAttribute("aria-busy");
   const map = stage.querySelector("[data-map]");
-  if (map && state.results[4]?.cards) mountMap(map, state.results[4].cards);
+  if (map && state.results[4]?.cards) mountMap(map, V.selectionPage(state.results[4].cards, state.selectionPage).cards);
   syncSelectionButtons();
 }
 
@@ -136,6 +136,7 @@ async function handle(ev, myGen) {
       if (ev.kind === "selection") setChatExpanded(false);
       if (ev.kind === "finance") state.strategy = ev.data.finance?.risk || null;
       if (ev.kind === "selection") {
+        state.selectionPage = 1;
         state.marks = { liked: new Set(ev.data.liked || []), disliked: new Set(ev.data.disliked || []) };
       }
       if (!quiet) renderStage();
@@ -445,6 +446,11 @@ async function sendText(text) {
   if (!state.sid) return start(text);
   $("query").value = "";
   const marks = { liked: [...state.marks.liked], disliked: [...state.marks.disliked] };
+  const selection = state.results[4];
+  if (Number.isInteger(selection?.selection_revision)) {
+    marks.visible_listing_ids = V.selectionPage(selection.cards, state.selectionPage).cards.map(c => c.id);
+    marks.selection_revision = selection.selection_revision;
+  }
   try {
     const r = await api.chatMessage(state.sid, text, marks);
     if (r.continued) {
@@ -516,6 +522,20 @@ bindMic($("micBtn"), $("query"), {
 $("micBtn").hidden = false;
 
 async function handleResultClick(e) {
+  const page = e.target.closest('[data-selection-page]');
+  if (page && !page.disabled && state.results[4]) {
+    state.selectionPage = V.selectionPage(state.results[4].cards, Number(page.dataset.selectionPage)).page;
+    renderStage();
+    const nav = stage.querySelector('[data-pagination="top"]');
+    nav?.scrollIntoView({behavior:'instant', block:'start'});
+    nav?.querySelector('[aria-current="page"]')?.focus({preventScroll:true});
+    return;
+  }
+  const mapButton = e.target.closest('[data-show-map]');
+  if (mapButton && !mapButton.disabled) {
+    await focusMap(stage.querySelector('[data-map]'), mapButton.dataset.showMap);
+    return;
+  }
   const vote = e.target.closest("[data-vote]");
   if (vote) return setVote(vote.closest("[data-id]").dataset.id, vote.dataset.vote, true);
   const sel = e.target.closest("[data-selection]");

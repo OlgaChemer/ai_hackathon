@@ -1,6 +1,6 @@
 // Отрисовка панелей этапов (кроме звонка — он в call.js, и графика — chart.js).
 import { html, rub, mln, pct, shortDate } from "./format.js";
-import { POI_COLORS } from "./map.js";
+import { POI_COLORS, hasCoordinates } from "./map.js";
 
 const ICON_UP = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M7 10v11H3V10h4zm2 11h8.3a2 2 0 0 0 2-1.6l1.4-7A2 2 0 0 0 18.7 10H14l.7-3.6a2 2 0 0 0-.5-1.8L13 3.4 8.6 8.6A2 2 0 0 0 8 10v9a2 2 0 0 0 1 2z" fill="currentColor"/></svg>';
 const ICON_DOWN = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M17 14V3h4v11h-4zm-2-11H6.7a2 2 0 0 0-2 1.6l-1.4 7A2 2 0 0 0 5.3 14H10l-.7 3.6a2 2 0 0 0 .5 1.8l1.2 1.2 4.4-5.2A2 2 0 0 0 16 14V5a2 2 0 0 0-1-2z" fill="currentColor"/></svg>';
@@ -254,6 +254,7 @@ function offerCard(c, vote, no) {
       ${html.raw(c.missing?.length ? html`<p class="missing">Нет в объявлении: ${c.missing.join(", ")} — уточню по телефону</p>` : "")}
     </div>
     <div class="offer-actions">
+      <button class="btn btn-ghost offer-map" data-show-map="${c.id}" ${hasCoordinates(c) ? '' : 'disabled'} title="${hasCoordinates(c) ? 'Приблизить квартиру на карте' : 'В объявлении нет точных координат'}">${hasCoordinates(c) ? 'Показать на карте' : 'Нет координат в объявлении'}</button>
       <button class="vote vote-up" data-vote="up" aria-pressed="${vote === "up"}" title="Нравится">${html.raw(ICON_UP)}<span>Нравится</span></button>
       <button class="vote vote-down" data-vote="down" aria-pressed="${vote === "down"}" title="Не подходит">${html.raw(ICON_DOWN)}<span>Не то</span></button>
     </div>
@@ -266,12 +267,32 @@ function mapBlock(cards) {
   const legend = [html`<span><i class="pin-dot"></i>квартира, цена в млн ₽</span>`,
     ...[...kinds].map(([k, label]) => html`<span><i class="dot" style="background:${POI_COLORS[k]}"></i>${label}</span>`)];
   return html`<div class="map-wrap" data-map-wrap>
-    <div class="map" data-map role="region" aria-label="Карта подборки"></div>
+    <div class="map" data-map role="region" aria-label="Карта подборки" tabindex="-1"></div>
     <p class="map-legend">${html.raw(legend.join(""))}</p>
   </div>`;
 }
 
-export function selection(d, marks) {
+export function selectionPage(cards, requested = 1) {
+  const pages = Math.max(1, Math.ceil(cards.length / 10));
+  const page = Math.max(1, Math.min(pages, Number.isInteger(requested) ? requested : 1));
+  const offset = (page - 1) * 10;
+  return { page, pages, offset, cards: cards.slice(offset, offset + 10) };
+}
+
+function pagination(view, total, position) {
+  if (!total) return '';
+  return html`<nav class="selection-pagination" data-pagination="${position}" aria-label="Страницы подборки${position === 'bottom' ? ' внизу' : ''}">
+    <span class="pagination-summary" role="status">${view.offset + 1}–${view.offset + view.cards.length} из ${total} предложений</span>
+    ${html.raw(view.pages > 1 ? html`<div class="pagination-buttons">
+      <button class="btn btn-ghost btn-small" data-selection-page="${view.page - 1}" ${view.page === 1 ? 'disabled' : ''} aria-label="Предыдущая страница">←</button>
+      ${html.raw(Array.from({length:view.pages}, (_, i) => html`<button class="btn ${i + 1 === view.page ? 'btn-primary' : 'btn-ghost'} btn-small" data-selection-page="${i + 1}" ${html.raw(i + 1 === view.page ? 'aria-current="page"' : '')} aria-label="Страница ${i + 1}">${i + 1}</button>`).join(''))}
+      <button class="btn btn-ghost btn-small" data-selection-page="${view.page + 1}" ${view.page === view.pages ? 'disabled' : ''} aria-label="Следующая страница">→</button>
+    </div>` : '')}
+  </nav>`;
+}
+
+export function selection(d, marks, page = 1) {
+  const view = selectionPage(d.cards, page);
   const vote = (id) => (marks.liked.has(id) ? "up" : marks.disliked.has(id) ? "down" : null);
   const unverified = d.cards.filter(c => c.match?.status === "unverified").length;
   const confirmed = d.cards.filter(c => c.match?.status === "confirmed").length;
@@ -295,12 +316,14 @@ export function selection(d, marks) {
       <p>Свежесть известна у ${d.coverage.freshness?.known || 0} объявлений; неизвестна у ${d.coverage.freshness?.unknown || 0}.</p>
     </details>` : '')}
     ${html.raw(d.learned?.length ? html`<div class="learned"><span>Учёл:</span>${html.raw(d.learned.map((l) => html`<span class="chip">${l}</span>`).join(""))}</div>` : "")}
-    ${html.raw(d.cards.some((c) => c.lat && c.lng) ? mapBlock(d.cards) : "")}
+    ${html.raw(view.cards.some(hasCoordinates) ? mapBlock(view.cards) : "")}
     ${html.raw(d.aggregates?.length ? html`<p class="hint">Расчёт по ${d.total} вариантам: ${d.aggregates.map(a => `${a.function}(${a.field}) = ${a.value == null ? 'нет данных' : Number(a.value).toLocaleString('ru-RU', {maximumFractionDigits:2})}${a.unknown ? `; нет данных у ${a.unknown}` : ''}`).join(' · ')}</p>` : '')}
     ${html.raw(d.groups?.length ? html`<p class="hint">Группы: ${d.groups.map(g => `${g.value ?? 'нет данных'} — ${g.count}${g.aggregates.map(a => `; ${a.function}(${a.field})=${a.value ?? 'нет данных'}`).join('')}`).join(' · ')}</p>` : '')}
     ${html.raw(d.liked?.length ? html`<p class="hint">В избранном ${d.liked.length}. Отметки сохраняются отдельно от новых рекомендаций. Чтобы вернуться к ним, напишите «покажи понравившиеся».</p>` : '')}
     ${html.raw(!d.cards.length ? html`<p class="hint">По текущей команде вариантов нет. Измените условия или попросите показать понравившиеся.</p>` : '')}
-    <div class="offers">${html.raw(d.cards.map((c, i) => offerCard(c, vote(c.id), i + 1)).join(""))}</div>
+    ${html.raw(pagination(view, d.cards.length, 'top'))}
+    <div class="offers">${html.raw(view.cards.map((c, i) => offerCard(c, vote(c.id), view.offset + i + 1)).join(""))}</div>
+    ${html.raw(pagination(view, d.cards.length, 'bottom'))}
     <div class="sel-actions">
       <button class="btn btn-ghost" data-selection="more">Подобрать ещё с учётом отметок</button>
       <button class="btn btn-primary" data-selection="proceed">Звонить по отмеченным <span data-liked-count>(${marks.liked.size})</span></button>
