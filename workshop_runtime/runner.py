@@ -111,6 +111,13 @@ async def main():
     data=json.loads(Path('/input/data.json').read_text())
     base_reports(data)
     provider=PlatformProvider();tools=ToolRegistry();python=RunPython();tools.register(python)
+    continuations=0
+    async def ensure_analysis():
+        nonlocal continuations
+        if python.successful<1 and continuations<2:
+            continuations+=1
+            return 'До итогового ответа выполни run_python: прочитай facts из /input/data.json и рассчитай сравнение по задаче. Текст без выполненного расчёта пока не является результатом.'
+        return None
     async def bounded_history(messages,previous_summary):
         # Сохраняем точное задание, все исходные метрики и последние результаты.
         # Код и файлы остаются доступны; платного пересказа через модель нет.
@@ -121,7 +128,7 @@ async def main():
             {'role':'user','content':data['prompt']+'\nЗадание и все данные находятся в /input/data.json.\nПроверенные факты:\n'+json.dumps(data['facts'],ensure_ascii=False)}],
             tools=tools,runtime=LLMRuntime.capture(provider,'workshop',context_window_tokens=32000),
             max_iterations=8,max_tool_result_chars=5000,workspace=ROOT,session_key='task',provider_retry_mode='none',
-            consolidate_history=bounded_history))
+            consolidate_history=bounded_history,continuation_callback=ensure_analysis))
         if result.error or not result.final_content or python.successful<1:
             logger.error('Runner stopped: reason={}, error={}, code_attempts={}',result.stop_reason,result.error,python.calls)
             raise RuntimeError('Агент не завершил исполнимый расчёт.')
