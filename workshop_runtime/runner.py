@@ -41,7 +41,7 @@ class RunPython(Tool):
     description='Выполнить Python для анализа недвижимости, построения таблиц и отчёта. Данные: /input/data.json. Рабочая папка /workspace. Доступны openpyxl и стандартная библиотека. Сети нет.'
     parameters={'type':'object','properties':{'code':{'type':'string','description':'Полный Python-код расчёта и создания файлов'}},'required':['code'],'additionalProperties':False}
 
-    def __init__(self):self.calls=0
+    def __init__(self):self.calls=0;self.successful=0
 
     async def execute(self,code):
         if len(code)>30000:return json.dumps({'error':'Код слишком длинный.'},ensure_ascii=False)
@@ -53,7 +53,11 @@ class RunPython(Tool):
             output=await asyncio.wait_for(process.communicate(),20)
         except asyncio.TimeoutError:
             process.kill();await process.wait();return json.dumps({'error':'Расчёт превысил 20 секунд. Упростите программу.'},ensure_ascii=False)
-        return json.dumps({'exit_code':process.returncode,'stdout':output[0].decode(errors='replace')[-16000:]},ensure_ascii=False)
+        output=output[0].decode(errors='replace')
+        if process.returncode==0:self.successful+=1
+        else:logger.error('Python failure {}: {}',process.returncode,output[-1200:])
+        return json.dumps({'exit_code':process.returncode,'stdout':output[:4000],
+            'truncated':len(output)>4000},ensure_ascii=False)
 
 
 def base_reports(data):
@@ -91,6 +95,7 @@ SYSTEM='''Ты аналитик недвижимости внутри лично
 Вход — объект: listings (список объявлений), facts (проверенные суммы), assumptions (допущения), profile и coverage.
 Для ремонта/сравнения используй facts.rows, для рынка facts.groups и listings. Списка liked во входе нет: listings уже содержит нужные квартиры.
 При чтении выводи компактные выбранные поля, а не весь файл. При ошибке Python исправь её.
+После успешного анализа дай окончательный ответ. Не повторяй чтение одних данных и не создавай бесконечную цепочку проверок.
 Можно дополнить готовый Excel листом анализа (openpyxl), сохранив исходные таблицы; не трать все шаги на оформление.
 Excel содержит только готовые значения, без формул, гиперссылок и макросов. Строки из объявлений, начинающиеся на =,+,-,@, записывай как обычный текст.
 Базовые факты и расчёты facts проверены сервером. Используй их точно; неизвестное не превращай в ноль.
@@ -113,10 +118,10 @@ async def main():
         result=await AgentRunner().run(AgentRunSpec(initial_messages=[{'role':'system','content':SYSTEM},
             {'role':'user','content':data['prompt']+'\nЗадание и все данные находятся в /input/data.json.\nПроверенные факты:\n'+json.dumps(data['facts'],ensure_ascii=False)}],
             tools=tools,runtime=LLMRuntime.capture(provider,'workshop',context_window_tokens=32000),
-            max_iterations=8,max_tool_result_chars=16000,workspace=ROOT,session_key='task',provider_retry_mode='none',
+            max_iterations=8,max_tool_result_chars=5000,workspace=ROOT,session_key='task',provider_retry_mode='none',
             consolidate_history=bounded_history))
-        if result.error or not result.final_content or python.calls<1:
-            logger.error('Runner stopped: reason={}, error={}, code_runs={}',result.stop_reason,result.error,python.calls)
+        if result.error or not result.final_content or python.successful<1:
+            logger.error('Runner stopped: reason={}, error={}, code_attempts={}',result.stop_reason,result.error,python.calls)
             raise RuntimeError('Агент не завершил исполнимый расчёт.')
         metrics=json.loads((ROOT/'metrics.json').read_text())
         if metrics!=data['facts']:raise RuntimeError('Базовые числа отчёта не совпали с проверенным расчётом.')
@@ -126,7 +131,7 @@ async def main():
             if p.is_file() and not p.is_symlink() and p.stat().st_size<=3_000_000:
                 artifacts.append({'name':name,'data':base64.b64encode(p.read_bytes()).decode()})
         if not {'analysis.xlsx','analysis.csv'}<={a['name'] for a in artifacts}:raise RuntimeError('Не подготовлены Excel и CSV.')
-        event('complete',text=result.final_content[:12000],artifacts=artifacts,metrics=metrics,code_runs=python.calls,
+        event('complete',text=result.final_content[:12000],artifacts=artifacts,metrics=metrics,code_runs=python.successful,
               tools_used=result.tools_used,stop_reason=result.stop_reason)
     finally:await provider.client.aclose()
 
