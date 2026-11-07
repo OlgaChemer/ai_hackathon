@@ -1414,6 +1414,7 @@ body[data-page="agent"]:has(.chat.expanded) :is(.site-header,.stage,.footnote) {
 .workshop-table-scroll{overflow-x:auto;max-width:100%}.workshop-report table{width:100%;border-collapse:collapse;font-size:13px}.workshop-report :is(th,td){padding:9px 12px;text-align:left;border:1px solid #dbe7e0}.workshop-report th{background:#f0f7f2}
 .workshop-turn{min-width:0}.workshop-turn+.workshop-turn{border-top:1px solid #dbe7e0;margin-top:24px;padding-top:20px}.workshop-question{background:#e8f5ed;border-radius:14px;padding:14px 18px;margin-bottom:16px}.workshop-question p{margin:6px 0 0;white-space:pre-wrap}
 .workshop [data-followup]{border-top:1px solid #dbe7e0;margin-top:24px;padding-top:10px}
+.workshop-photos{margin:20px 0}.workshop-photos article{border:1px solid #dbe7e0;border-radius:12px;padding:14px;margin:12px 0}.workshop-photo-strip{display:flex;gap:8px;overflow-x:auto;margin:10px 0}.workshop-photo-strip img{width:112px;height:84px;object-fit:cover;border-radius:8px}
 .workshop-facts table{width:100%;border-collapse:collapse;min-width:520px}.workshop-facts th,.workshop-facts td{padding:10px;text-align:left;border-bottom:1px solid #dbe7e0;font-size:13px}
 .workshop [data-history]{display:flex;gap:10px;flex-wrap:wrap}.workshop [data-result]{margin:14px 0}.workshop [hidden]{display:none!important}
 @media(max-width:600px){.workshop{padding:18px;width:96vw}.workshop-assumptions{grid-template-columns:1fr;gap:0}#workshopButton{font-size:11px;padding:7px}}

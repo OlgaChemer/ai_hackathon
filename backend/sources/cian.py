@@ -298,6 +298,8 @@ def normalize(o: dict, city: str, today: date | None = None, new: bool = False) 
         "days_on_market": days,
         "metro": metro,
         "photo": photo,
+        "photos": list(dict.fromkeys(p.get('fullUrl') or p.get('thumbnail2Url') for p in photos
+            if isinstance(p,dict) and (p.get('fullUrl') or p.get('thumbnail2Url'))))[:30],
         "description": (o.get("description") or "")[:1500],
         "rosreestr_checked": bool(o.get("isRosreestrChecked")) if o.get("isRosreestrChecked") is not None else None,
         "is_apartments": bool(o.get("isApartments")),

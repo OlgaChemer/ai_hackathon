@@ -71,13 +71,22 @@ async def main(base):
             assert await page.evaluate('document.documentElement.scrollWidth<=window.innerWidth'), 'Горизонтальная прокрутка страницы'
             assert not errors,errors
             await page.locator('[data-close]').click()
+            await page.evaluate("""async()=>{
+              const {confirmCard}=await import('/js/cards.js');
+              confirmCard({kind:'call',decision_id:'phone-ui-check',title:'Звонок продавцу',text:'Проверка показа телефонного режима',questions:[{question:'Есть ли ремонт?'}],replay:true});
+            }""")
+            await page.get_by_role('button',name='Позвонить мне на телефон',exact=True).wait_for()
+            await page.locator('[data-seller-questions]').fill('Сохрани этот вопрос при обновлении доступа')
+            await page.locator('[data-account=menu]').click();await page.locator('[data-logout]').click()
+            await page.wait_for_function('!document.querySelector(".confirm-call [data-phone]")')
+            assert await page.locator('[data-seller-questions]').input_value()=='Сохрани этот вопрос при обновлении доступа'
             await context.close()
             context=await browser.new_context(viewport={'width':width,'height':1000});page=await context.new_page()
             await page.goto(base);await login(page,'other@example.ru')
             assert not await page.locator('#workshopButton').is_visible()
             assert (await page.request.get(base+'/api/workshop/context')).status==403
             await context.close()
-            print(f'PASS {width}px: premium-only, three jobs, downloads, off-topic refusal, no uploads',flush=True)
+            print(f'PASS {width}px: premium, Markdown, followups, phone visibility on login/logout, no calls placed',flush=True)
         await browser.close()
 
 

@@ -28,6 +28,7 @@ class Settings:
     deepseek_api_key: str = os.getenv("DEEPSEEK_API_KEY", "")
     deepseek_base_url: str = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
     deepseek_model: str = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+    deepseek_vision_model: str = os.getenv('DEEPSEEK_VISION_MODEL','deepseek-flash')
 
     gigachat_credentials: str = os.getenv("GIGACHAT_CREDENTIALS", "")
     gigachat_scope: str = os.getenv("GIGACHAT_SCOPE", "GIGACHAT_API_PERS")

@@ -12,7 +12,7 @@ KINDS={'repair':'Оценка ремонта','compare':'Сравнение по
 
 def clean_listing(x):
     keys=('id','url','source','source_name','city','district','address','rooms','area','price','kitchen','floor',
-          'floors','condition','year','is_new','deadline','delivery_year','nearby','description','provenance')
+          'floors','condition','year','is_new','deadline','delivery_year','nearby','description','provenance','photo','photos')
     row={k:deepcopy(x[k]) for k in keys if k in x}
     row['description']=str(row.get('description') or '')[:1200]
     return row

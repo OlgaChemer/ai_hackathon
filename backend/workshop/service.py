@@ -150,7 +150,8 @@ async def execute(job_id):
             result=await asyncio.wait_for(sandbox.run(job_id,snapshot,llm,progress),180)
             verdict=await scope(llm,question_context+'Задание: '+snapshot['prompt']+'\nОтвет: '+result['text'],output=True)
             if verdict['decision']!='allow':raise RuntimeError('Ответ вышел за рамки задания по недвижимости. Результат не опубликован; уточните запрос.')
-            db.required(update,job_id,'completed',result=result)
+            snapshot['visual_analysis']=result.get('visual_analysis',snapshot.get('visual_analysis',[]))
+            db.required(update,job_id,'completed',result=result,snapshot=snapshot)
             record('workshop_completed',job=job_id,provider=provider,code_runs=result['code_runs'])
     except asyncio.CancelledError:
         db.required(update,job_id,'interrupted',error='Выполнение остановлено. Данные задания сохранены.')

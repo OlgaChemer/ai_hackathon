@@ -61,6 +61,31 @@ class RunPython(Tool):
             'truncated':len(output)>4000},ensure_ascii=False)
 
 
+class InspectPhotos(Tool):
+    name='inspect_photos'
+    description='Открыть галерею известной квартиры и оценить видимое состояние по фото. Только ID из listings, до трёх квартир за задачу. Сервер получает фото и вызывает модель с поддержкой изображений; возвращает наблюдения, источники и ограничения. Данные также сохраняются в /workspace/photo-analysis.json.'
+    parameters={'type':'object','properties':{'listing_ids':{'type':'array','minItems':1,'maxItems':3,'items':{'type':'string'}}},'required':['listing_ids'],'additionalProperties':False}
+
+    def __init__(self,provider,data):self.provider=provider;self.results={r['listing_id']:r for r in data.get('visual_analysis',[])}
+
+    async def execute(self,listing_ids):
+        event('progress',text='Получаю фотографии и проверяю видимое состояние квартир.')
+        response=await self.provider.client.post('/inspect-photos',json={'listing_ids':listing_ids},timeout=85)
+        if response.status_code!=200:return json.dumps({'error':response.json().get('detail','Фотографии недоступны.')},ensure_ascii=False)
+        result=response.json()
+        self.results.update({r['listing_id']:r for r in result['listings']})
+        (ROOT/'photo-analysis.json').write_text(json.dumps(list(self.results.values()),ensure_ascii=False))
+        from openpyxl import load_workbook
+        book=load_workbook(ROOT/'analysis.xlsx')
+        if 'Фото и состояние' in book:del book['Фото и состояние']
+        sheet=book.create_sheet('Фото и состояние');sheet.append(['Квартира','Результат','Дата','Просмотрено фото','Наблюдения','Ограничения'])
+        for row in self.results.values():
+            sheet.append([row['address'],row.get('visible_state') or row['status'],row.get('inspected_at'),len(row.get('photos',[])),
+                '\n'.join(row.get('observations',[])),'\n'.join(row.get('limitations',[])) or row.get('note')])
+        book.save(ROOT/'analysis.xlsx')
+        return json.dumps(result,ensure_ascii=False)
+
+
 def base_reports(data):
     """Проверенная основа отчёта не зависит от угадывания моделью структуры JSON."""
     from openpyxl import Workbook
@@ -108,12 +133,21 @@ Excel содержит только готовые значения, без фо
 SYSTEM+='''\nЕсли передана история исследования, отвечай на текущий уточняющий вопрос с учётом прошлых ответов.
 Используй сохранённую выборку и дату снимка; не представляй их как заново проверенный рынок.
 Не повторяй весь отчёт, если пользователь задал узкий вопрос. Объясняй по-человечески, не печатай внутренние ключи, имена полей и статусы вроде coverage.whole_market или unverified.'''
+SYSTEM+='''\nЕсть инструмент inspect_photos: он открывает галерею объявления, получает изображения и возвращает визуальный анализ.
+Если просят посмотреть фотографии, обязательно вызови его по ID из listings, прежде чем делать вывод о доступности фото.
+При оценке ремонта используй доступные фотографии, если у квартир есть ссылки на объявления или фото.
+За одну задачу можно изучить до трёх квартир, до четырёх фотографий каждой. Ясно укажи фактический охват.
+Результаты также в /workspace/photo-analysis.json, прошлые наблюдения могут быть в visual_analysis входного файла.
+Наблюдения по фото дополняют описание; это не подтверждение скрытых дефектов. Недоступное фото не означает плохой ремонт.
+При расчёте учитывай видимый объём работ и объясняй сценарные допущения. Не меняй молча заданную ставку ремонта
+или базовые facts: дополнительный сценарий посчитай отдельно и объясни разницу. Не удаляй лист «Фото и состояние».'''
 
 
 async def main():
     data=json.loads(Path('/input/data.json').read_text())
     base_reports(data)
     provider=PlatformProvider();tools=ToolRegistry();python=RunPython();tools.register(python)
+    tools.register(InspectPhotos(provider,data))
     continuations=0
     async def ensure_analysis():
         nonlocal continuations

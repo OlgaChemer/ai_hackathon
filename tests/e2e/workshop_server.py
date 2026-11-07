@@ -14,6 +14,7 @@ def setup():
     from tests.test_llm_and_agent import listing
     from tests.e2e.flexible_server import patch
     patch()
+    main.phone.configured=lambda:True
     service.get_provider=lambda provider:ScopeLLM()
     async def run(job_id,snapshot,llm,progress):
         import asyncio

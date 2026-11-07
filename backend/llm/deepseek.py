@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 
 import httpx
@@ -12,6 +13,11 @@ from .. import runtime
 
 class DeepSeekClient(LLMClient):
     name = "deepseek"
+
+    async def analyze_images(self,prompt,images):
+        content=[{'type':'text','text':prompt},*[{'type':'image_url','image_url':{
+            'url':'data:'+image.mime_type+';base64,'+base64.b64encode(image.data).decode()}} for image in images]]
+        return await self.chat([{'role':'user','content':content}],json_mode=True,max_tokens=1600,temperature=.1,tag='workshop_vision')
 
     def __init__(self, api_key: str, base_url: str, model: str, timeout: float = 60.0):
         if not api_key:

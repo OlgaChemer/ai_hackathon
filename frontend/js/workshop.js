@@ -148,12 +148,35 @@ function renderEntry(job,index,output){
       const note=document.createElement('p');note.className='small muted';note.textContent='Данные на '+new Date(job.result.source_time).toLocaleString('ru-RU')+'. Исследование не изменяет условия покупки.';article.append(note);
     }
     article.append(markdown(job.result.text));
+    if(job.result.visual_analysis?.length)article.append(photoEvidence(job.result.visual_analysis));
     if(!index)article.append(factTable(job.result.facts));
     const files=document.createElement('div');files.className='workshop-actions';
     for(const name of job.result.artifacts){const link=document.createElement('a');link.className='btn btn-ghost';link.textContent=name==='analysis.xlsx'?'Скачать Excel':name==='analysis.csv'?'Скачать CSV':name;link.href='/api/workshop/jobs/'+encodeURIComponent(job.id)+'/files/'+encodeURIComponent(name);files.append(link);}article.append(files);
   }else if(index&&job.error){
     const note=document.createElement('p');note.textContent=job.error;article.append(note);
   }
+}
+
+function photoEvidence(rows){
+  const block=document.createElement('section');block.className='workshop-photos';
+  const heading=document.createElement('h4');heading.textContent='Что проверено по фотографиям';block.append(heading);
+  const states={good:'Отделка выглядит в хорошем состоянии',cosmetic:'Видны косметические недостатки',major:'Видны признаки значительного объёма работ',unfinished:'Видна незавершённая отделка',unknown:'Состояние по этим фото определить нельзя'};
+  for(const row of rows){
+    const card=document.createElement('article');const title=document.createElement('strong');title.textContent=row.address;card.append(title);
+    const note=document.createElement('p');note.textContent=row.status==='analyzed'
+      ? `${states[row.visible_state]||states.unknown}. Просмотрено ${row.photos.length} из ${row.gallery_count} фото · ${new Date(row.inspected_at).toLocaleString('ru-RU')}.`
+      : row.note||'Фотографии недоступны.';card.append(note);
+    if(row.photos?.length){
+      const gallery=document.createElement('div');gallery.className='workshop-photo-strip';
+      row.photos.forEach((photo,index)=>{const link=document.createElement('a');link.href=photo.url;link.target='_blank';link.rel='noopener noreferrer';
+        const img=document.createElement('img');img.src=photo.url;img.alt=`Фото ${index+1}: ${row.address}`;img.loading='lazy';link.append(img);gallery.append(link);});
+      card.append(gallery);
+    }
+    const list=document.createElement('ul');
+    for(const text of [...row.observations||[],...row.limitations||[]]){const li=document.createElement('li');li.textContent=text;list.append(li);}
+    if(list.childElementCount)card.append(list);block.append(card);
+  }
+  return block;
 }
 
 function factTable(facts){

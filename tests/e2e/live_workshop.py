@@ -29,7 +29,7 @@ async def main(args):
         rows,reports=await sources.collect(profile)
         assert len(rows)>=6,'Источник не вернул достаточно объявлений'
     else:
-        rows=[listing(id='demo-'+str(i),city='Москва',area=40+i*4,price=8_000_000+i*300000) for i in range(12)]
+        rows=[listing(id='demo-'+str(i),city='Москва',area=40+i*4,price=8_000_000+i*300000,url=None) for i in range(12)]
         reports=[{'source':'fixture','count':len(rows)}]
         async def collect(profile,on_batch=None):
             if on_batch:on_batch(rows)
@@ -62,8 +62,22 @@ async def main(args):
             row={'case':kind,'ok':True,'provider':args.provider,'job':job['id'],'seconds':round(time.monotonic()-started,2),
                 'code_runs':result['code_runs'],'count':result['facts']['count'],'files':result['artifacts']}
             cases.append(row);print(json.dumps(row,ensure_ascii=False),flush=True)
+        if args.photos:
+            r=await client.post('/api/workshop/jobs/'+job['id']+'/followups',json={'command_id':'photo-review',
+                'question':'Оцени по фотографиям видимое состояние первых двух квартир этой выборки. Используй inspect_photos, укажи какие фото изучил и что надо учесть при ремонте.'})
+            r.raise_for_status();photo_job=r.json()
+            for _ in range(220):
+                await asyncio.sleep(1);photo_job=(await client.get('/api/workshop/jobs/'+photo_job['id'])).json()
+                if photo_job['status'] not in ('queued','running'):break
+            assert photo_job['status']=='completed',photo_job
+            inspected=[r for r in photo_job['result'].get('visual_analysis',[]) if r['status']=='analyzed']
+            assert inspected and all(r.get('photos') for r in inspected),photo_job
+            cases.append({'case':'photo-review','ok':True,'provider':args.provider,'job':photo_job['id'],
+                'listings_analyzed':len(inspected),'photos_seen':sum(len(r['photos']) for r in inspected)})
+            print(json.dumps(cases[-1],ensure_ascii=False),flush=True)
         if args.followups:
             original=job
+            base_thread_size=len((await client.get('/api/workshop/jobs/'+job['id']+'/thread')).json()['jobs'])
             for index,question in enumerate(('Почему нельзя считать эту выборку всем рынком? Объясни кратко.',
                                             'Какова медианная цена квадратного метра в этой же выборке? Покажи расчёт.')):
                 started=time.monotonic()
@@ -76,7 +90,7 @@ async def main(args):
                 assert job['result']['facts']==original['result']['facts']
                 assert job['result']['source_time']==original['result']['source_time']
                 thread=(await client.get('/api/workshop/jobs/'+original['id']+'/thread')).json()
-                assert len(thread['jobs'])==index+2
+                assert len(thread['jobs'])==base_thread_size+index+1
                 row={'case':'followup-'+str(index+1),'ok':True,'provider':args.provider,'job':job['id'],
                      'seconds':round(time.monotonic()-started,2),'code_runs':job['result']['code_runs']}
                 cases.append(row);print(json.dumps(row,ensure_ascii=False),flush=True)
@@ -89,7 +103,7 @@ async def main(args):
         print(json.dumps({'case':'offtopic','ok':True,'provider':args.provider}),flush=True)
         cases.append({'case':'offtopic','ok':True})
     await service.shutdown()
-    report={'manifest':manifest(get_provider(args.provider)),'cases':cases,'passed':len(cases),'total':6 if args.followups else 4,
+    report={'manifest':manifest(get_provider(args.provider)),'cases':cases,'passed':len(cases),'total':4+2*args.followups+args.photos,
         'real_sources':args.real_sources,'source_reports':reports,'temporary_db':str(root/'test.db')}
     if args.report:Path(args.report).write_text(json.dumps(report,ensure_ascii=False,indent=2))
 
@@ -98,4 +112,7 @@ if __name__=='__main__':
     parser=argparse.ArgumentParser();parser.add_argument('--provider',choices=['deepseek','gigachat'],required=True)
     parser.add_argument('--real-sources',action='store_true');parser.add_argument('--report')
     parser.add_argument('--followups',action='store_true')
-    asyncio.run(main(parser.parse_args()))
+    parser.add_argument('--photos',action='store_true')
+    args=parser.parse_args()
+    if args.photos and not args.real_sources:parser.error('--photos requires --real-sources')
+    asyncio.run(main(args))

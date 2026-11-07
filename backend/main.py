@@ -154,7 +154,7 @@ class ProductRequest(BaseModel):
 
 
 @app.get("/api/health")
-async def health():
+async def health(request:Request):
     try:
         llm, reason = get_llm(), None
     except LLMError as exc:  # модель не настроена — агент не работает, интерфейс это покажет
@@ -169,7 +169,7 @@ async def health():
         "featured_cities": sources.FEATURED_CITIES,
         "stt": stt.status(),
         "places": places.status(),
-        "phone": phone.status(),
+        "phone": phone.status(auth.current_user(request)),
     }
 
 
@@ -233,7 +233,7 @@ async def speech_to_text(request: Request):
 
 
 def _check_pin(request: Request):
-    if not phone.allowed(request.headers.get("X-Phone-Pin")):
+    if not phone.allowed(request.headers.get("X-Phone-Pin"),auth.current_user(request)):
         raise HTTPException(403, "Нужен PIN для звонков (PHONE_PIN в .env сервера)")
 
 

@@ -81,6 +81,16 @@ class WorkshopAPI(unittest.TestCase):
         self.assertEqual(self.client.get('/api/workshop/context').status_code,403)
         self.assertEqual(self.client.post('/api/workshop/jobs',json=self.payload()).status_code,403)
 
+    def test_operator_health_enables_phone_without_opening_public_access(self):
+        from backend import phone
+        with patch.object(phone,'settings',replace(phone.settings,phone_pin='',exolve_api_key='fixture')):
+            self.assertTrue(self.client.get('/api/health').json()['phone']['ready'])
+            response=self.client.post('/api/phone',json={'chat_id':'own','decision_id':'not-pending','destination':'79991234567'})
+            self.assertNotEqual(response.status_code,403,response.text)
+            self.client.post('/api/auth/logout')
+            self.assertFalse(self.client.get('/api/health').json()['phone']['ready'])
+            self.assertEqual(self.client.post('/api/phone',json={'chat_id':'own','decision_id':'not-pending','destination':'79991234567'}).status_code,403)
+
     def test_favorites_and_math_come_from_owned_chat_without_uploads(self):
         context=self.client.get('/api/workshop/context?chat_id=own').json()
         self.assertEqual([x['id'] for x in context['liked']],['a','b'])

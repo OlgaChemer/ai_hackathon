@@ -60,7 +60,7 @@ def to_gigachat_messages(messages: list[dict], json_mode: bool) -> list[dict]:
         elif m.get("role") == "tool":
             raise LLMError("Результат функции без соответствующего вызова")
         else:
-            out.append({k: v for k, v in m.items() if k in ("role", "content", "functions_state_id") and v is not None})
+            out.append({k: v for k, v in m.items() if k in ("role", "content", "functions_state_id", "attachments") and v is not None})
     if json_mode:
         if out and out[0]["role"] == "system":
             out[0]["content"] = f"{out[0]['content']}\n\n{JSON_HINT}"
@@ -84,6 +84,30 @@ def parse_function_call(msg: dict) -> list[ToolCall]:
 
 class GigaChatClient(LLMClient):
     name = "gigachat"
+
+    async def analyze_images(self,prompt,images):
+        identifiers=[]
+        try:
+            for index,image in enumerate(images):
+                for attempt in range(2):
+                    token=await self._get_token()
+                    response=await self._http.post('/files',headers={'Authorization':'Bearer '+token},
+                        files={'file':(f'photo-{index}.jpg',image.data,image.mime_type)},data={'purpose':'general'})
+                    if response.status_code!=401:break
+                    self._token=None
+                if response.status_code!=200:raise LLMError(f'Не удалось передать изображение модели: HTTP {response.status_code}')
+                identifiers.append(response.json()['id'])
+            messages=[{'role':'system','content':'Анализируй только видимое на фотографиях. '+prompt},
+                      *[{'role':'user','content':f'Фотография {i+1}.','attachments':[identifier]} for i,identifier in enumerate(identifiers)]]
+            return await self.chat(messages,json_mode=True,max_tokens=1600,temperature=.1,tag='workshop_vision')
+        finally:
+            if identifiers:
+                async def remove(identifier):
+                    try:
+                        token=await self._get_token()
+                        await self._http.post('/files/'+identifier+'/delete',headers={'Authorization':'Bearer '+token},timeout=4)
+                    except Exception:runtime.record('vision_file_cleanup',outcome='failed')
+                await asyncio.gather(*(remove(identifier) for identifier in identifiers),return_exceptions=True)
 
     def __init__(
         self,

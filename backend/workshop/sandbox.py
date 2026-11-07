@@ -21,10 +21,24 @@ DOMAIN='Ты аналитик сервиса недвижимости «Мест
 
 
 class Bridge:
-    def __init__(self,llm,prompt,progress):
+    def __init__(self,llm,prompt,progress,inspector=None):
         self.llm=llm;self.prompt=prompt;self.progress=progress;self.calls=0;self.states={}
         self.app=FastAPI()
         self.app.post('/chat')(self.chat)
+        self.inspector=inspector;self.photo_lock=asyncio.Lock()
+        self.app.post('/inspect-photos')(self.inspect_photos)
+
+    async def inspect_photos(self,request:Request):
+        raw=bytearray()
+        async for chunk in request.stream():
+            raw.extend(chunk)
+            if len(raw)>2000:raise HTTPException(413,'Слишком большой запрос фотографий.')
+        if self.inspector is None:raise HTTPException(503,'Просмотр фото в этой задаче не настроен.')
+        try:
+            data=json.loads(raw)
+            if not isinstance(data,dict) or set(data)!={'listing_ids'}:raise ValueError('Неверный запрос фотографий.')
+            async with self.photo_lock:return {'listings':await self.inspector.inspect(data.get('listing_ids'))}
+        except ValueError as exc:raise HTTPException(422,str(exc)) from exc
 
     async def chat(self,request:Request):
         raw=bytearray()
@@ -34,7 +48,7 @@ class Bridge:
         data=json.loads(raw);messages=data.get('messages');specs=data.get('tools',[])
         if not isinstance(messages,list) or not 1<=len(messages)<=60:raise HTTPException(422,'Неверный контекст.')
         if self.calls>=12:raise HTTPException(429,'Исчерпан бюджет задания.')
-        if len(specs)>1 or any(t.get('function',{}).get('name')!='run_python' for t in specs):raise HTTPException(403,'Инструмент не разрешён.')
+        if len(specs)>2 or any(t.get('function',{}).get('name') not in ('run_python','inspect_photos') for t in specs):raise HTTPException(403,'Инструмент не разрешён.')
         self.calls+=1
         self.progress(f'Аналитик обрабатывает задание · шаг {self.calls}.')
         messages=deepcopy(messages)
@@ -63,7 +77,9 @@ async def run(job_id,snapshot,llm,progress):
     bridge_dir=root/'bridge';bridge_dir.mkdir(exist_ok=True);bridge_dir.chmod(0o755)
     input_path=root/'input.json';input_path.write_text(json.dumps(snapshot,ensure_ascii=False));input_path.chmod(0o444)
     socket=bridge_dir/'model.sock'
-    bridge=Bridge(llm,snapshot['prompt'],progress)
+    from .photos import Inspector
+    inspector=Inspector(snapshot,llm.name,progress)
+    bridge=Bridge(llm,snapshot['prompt'],progress,inspector)
     server=uvicorn.Server(uvicorn.Config(bridge.app,uds=str(socket),log_level='error',access_log=False,lifespan='off',timeout_graceful_shutdown=2))
     server.install_signal_handlers=lambda:None
     server.capture_signals=lambda:nullcontext()
@@ -120,6 +136,7 @@ async def run(job_id,snapshot,llm,progress):
             if not {'analysis.xlsx','analysis.csv'}<=set(names):raise RuntimeError('Отчёт не содержит таблиц.')
             return {'text':result['text'],'facts':snapshot['facts'],'artifacts':names,'code_runs':result['code_runs'],
                     'data_revision':snapshot.get('revision'),'source_time':snapshot['source_time'],
+                    'visual_analysis':list(inspector.results.values()),
                     'scope':{k:snapshot['profile'].get(k) for k in ('city','rooms','rooms_options','budget_max','housing')}}
         finally:
             errors.cancel();await asyncio.gather(errors,return_exceptions=True)

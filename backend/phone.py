@@ -162,14 +162,18 @@ async def synthesize(text: str, voice: int | None = None) -> bytes:
     return audio
 
 
-def status() -> dict:
-    return {"configured":configured(),'ready':configured() and bool(settings.phone_pin),
+def operator(user=None) -> bool:
+    return bool(user and user.get('premium') and str(user.get('email','')).casefold()==settings.workshop_email)
+
+
+def status(user=None) -> dict:
+    return {"configured":configured(),'ready':configured() and (bool(settings.phone_pin) or operator(user)),
             'mode':'restricted_operator','pin':bool(settings.phone_pin),'per_operation_grant':True}
 
 
-def allowed(pin: str | None) -> bool:
+def allowed(pin: str | None,user=None) -> bool:
     """Звонок и синтез — только с PIN, если он задан (PHONE_PIN в .env)."""
-    return bool(settings.phone_pin) and secrets.compare_digest(pin or "",settings.phone_pin)
+    return operator(user) or (bool(settings.phone_pin) and secrets.compare_digest(pin or "",settings.phone_pin))
 
 
 if __name__ == "__main__":

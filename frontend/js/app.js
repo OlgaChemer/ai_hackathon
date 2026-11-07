@@ -2,7 +2,7 @@
 import { initAccount } from "./account.js";
 import { api } from "./api.js";
 import { addGuard, addLine, createCall, renderCall, setPhase, setStatus, setTyping, showLearned, showSellerInput, updatePrices } from "./call.js";
-import { confirmCard, initCards, resolved, staleCards } from "./cards.js";
+import { confirmCard, initCards, resolved, staleCards, refreshPhoneAccess } from "./cards.js";
 import { savingsChart } from "./chart.js";
 import { initChats, refreshChats } from "./chats.js";
 import { el, html, sleep } from "./format.js";
@@ -595,10 +595,20 @@ else {
   renderStage();
   route();
 }
-api.health().then((h) => {
+let healthRevision=0;
+async function refreshHealth(){
+ const revision=++healthRevision;
+ try{
+  const h=await api.health();if(revision!==healthRevision)return;
   recorder.available = Boolean(h.stt?.installed && h.stt.status !== "error");
+  const changed=config.phoneReady!==Boolean(h.phone?.ready);
   config.phoneReady = Boolean(h.phone?.ready);
+  if(changed)refreshPhoneAccess();
   config.sellerPhoneDefault = h.phone?.seller_phone || "";
   setProvider(h);
-})
-  .catch(() => setProvider({ provider: "offline", reason: "сервер недоступен" }));
+ }catch{
+  if(revision===healthRevision){config.phoneReady=false;refreshPhoneAccess();setProvider({provider:'offline',reason:'сервер недоступен'});}
+ }
+}
+document.addEventListener('accountchange',()=>{config.phoneReady=false;refreshPhoneAccess();refreshHealth();});
+refreshHealth();
