@@ -42,9 +42,10 @@ class RunPython(Tool):
     description='Выполнить Python для анализа недвижимости, построения таблиц и отчёта. Данные: /input/data.json. Рабочая папка /workspace. Доступны openpyxl и стандартная библиотека. Сети нет.'
     parameters={'type':'object','properties':{'code':{'type':'string','description':'Полный Python-код расчёта и создания файлов'}},'required':['code'],'additionalProperties':False}
 
-    def __init__(self):self.calls=0;self.successful=0
+    def __init__(self):self.calls=0;self.successful=0;self.last_error=False
 
     async def execute(self,code):
+        self.last_error=True
         if len(code)>30000:return json.dumps({'error':'Код слишком длинный.'},ensure_ascii=False)
         self.calls+=1;event('progress',text='Выполняю Python: расчёты, таблицы и отчёт.')
         path=ROOT/f'calculation-{self.calls}.py';path.write_text(code)
@@ -55,7 +56,7 @@ class RunPython(Tool):
         except asyncio.TimeoutError:
             process.kill();await process.wait();return json.dumps({'error':'Расчёт превысил 20 секунд. Упростите программу.'},ensure_ascii=False)
         output=output[0].decode(errors='replace')
-        if process.returncode==0:self.successful+=1
+        if process.returncode==0:self.successful+=1;self.last_error=False
         else:logger.error('Python failure {}: {}',process.returncode,output[-1200:])
         return json.dumps({'exit_code':process.returncode,'stdout':output[:4000],
             'truncated':len(output)>4000},ensure_ascii=False)
@@ -173,11 +174,17 @@ async def main():
 Числовые лидеры уже проверены кодом в facts.leaders: price — минимальная полная цена квартиры, price_per_m2 — минимальная цена метра, area — максимальная площадь. Это разные победители: не называй самую дешёвую квартиру самой выгодной по метру, если ID различаются. При равенстве перечисли все ID.
 Отсутствующий объект рядом — не то же самое, что неизвестный. Расстояние до инфраструктуры по прямой не выдавай за пеший маршрут.
 Метро оценивай по отдельному полю metro; если минут или режима пути нет, сообщи об этом. Не придумывай близость и не достраивай фото по тексту.'''
+        instructions+='''\nЧитай факты из JSON /input/data.json. facts.rows[].nearby — список словарей; в CSV/Excel вложенные объекты записаны строкой JSON и требуют json.loads.
+Не придумывай взвешенный скоринг без весов клиента: достаточно таблицы и условных рекомендаций. Ошибку вспомогательного расчёта исправь сам.
+Обязательно дай готовое сравнение, плюсы/минусы и рекомендацию в этом ответе. Не заменяй результат обещанием составить таблицу следующим ходом и не проси клиента исправлять структуру данных.'''
     provider=PlatformProvider();tools=ToolRegistry();python=RunPython();tools.register(python)
     photos=InspectPhotos(provider,data);tools.register(photos)
     continuations=0
     async def ensure_analysis():
         nonlocal continuations
+        if data.get('analysis_version')==2 and data['kind']=='compare' and python.last_error and continuations<2:
+            continuations+=1
+            return 'Последний расчёт завершился ошибкой. Исправь её: прочитай JSON /input/data.json, facts.rows[].nearby — список объектов. Не строй ненужный взвешенный скоринг. Затем дай готовую сравнительную таблицу и условные рекомендации по имеющимся фактам.'
         if python.successful<1 and continuations<2:
             continuations+=1
             return 'До итогового ответа выполни run_python: прочитай facts из /input/data.json и рассчитай сравнение по задаче. Текст без выполненного расчёта пока не является результатом.'
@@ -194,7 +201,7 @@ async def main():
             tools=tools,runtime=LLMRuntime.capture(provider,'workshop',context_window_tokens=32000),
             max_iterations=8,max_tool_result_chars=5000,workspace=ROOT,session_key='task',provider_retry_mode='none',
             consolidate_history=bounded_history,continuation_callback=ensure_analysis))
-        if result.error or not result.final_content or python.successful<1:
+        if result.error or not result.final_content or python.successful<1 or (data.get('analysis_version')==2 and data['kind']=='compare' and python.last_error):
             logger.error('Runner stopped: reason={}, error={}, code_attempts={}',result.stop_reason,result.error,python.calls)
             raise RuntimeError('Агент не завершил исполнимый расчёт.')
         metrics=json.loads((ROOT/'metrics.json').read_text())

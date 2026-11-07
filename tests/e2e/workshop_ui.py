@@ -60,6 +60,7 @@ async def main(base):
                 if kind=='compare':
                     assert 'Метро' in await page.locator('.workshop-facts table').inner_text()
                     assert 'Ремонт с запасом' not in await page.locator('.workshop-facts table').inner_text()
+                    assert 'Минимальная цена за м²' in await page.locator('.workshop-facts').inner_text()
                 if kind=='market':assert '3-комнат' in await page.locator('[data-report-scope]').inner_text()
                 assert await page.locator('.workshop-report h2').count()==1
                 assert await page.locator('.workshop-report strong').first.text_content()=='Сравнил варианты'
