@@ -38,6 +38,7 @@ EMPTY_PROFILE = {
     "payment": None,          # cash | mortgage_ready | mortgage_saving
     "okrug": None,
     "districts": [],          # районы, которые клиент назвал (ищем в них)
+    "district_type": None,    # sleeping | quiet | prestige | business — тип района (agent/districts.py)
     "avoid_districts": [],    # районы, которые не показывать
     "not_first_floor": False,
     "not_last_floor": False,
@@ -157,6 +158,9 @@ def profile_summary(p: dict) -> str:
     where = ", ".join([p["city"], *(c for c in p.get("cities") or [] if c != p["city"])]) + (f", {p['okrug']}" if p.get("okrug") else "")
     if p.get("districts"):
         where += f" (район {', '.join(p['districts'])})"
+    if p.get('district_type'):
+        from .districts import LABELS
+        where += ' · '+LABELS.get(p['district_type'],p['district_type'])+' (оценка по геоданным)'
     extra = (["центр: до 5 км по прямой от опорной точки"] if p.get("center_required")
              else ["желательно ближе к центру"] if p.get("prefer_center") else [])
     from .listing_query import describe
@@ -202,9 +206,11 @@ def _stem(name: str) -> str:
 
 
 def in_districts(x: dict, districts: list[str] | None) -> bool:
-    """Объявление в районе, который назвал клиент («черемушек» ~ «Черёмушки»)."""
-    d = (x.get("district") or "").lower().replace("ё", "е")
-    return bool(d and districts and any(_stem(n) in d for n in districts))
+    """Объявление в районе, который назвал клиент («черемушек» ~ «Черёмушки»). Учитываем и микрорайоны
+    из выдачи Циана (cian_districts: «Сипайлово» внутри Октябрьского района Уфы)."""
+    names = [x.get("district") or "", *(row[1] for row in x.get("cian_districts") or [] if len(row) > 1 and row[1])]
+    names = [n.lower().replace("ё", "е") for n in names if n]
+    return bool(names and districts and any(_stem(n) in d for n in districts for d in names))
 
 
 def passes_hard_filters(x: dict, p: dict) -> bool:

@@ -28,7 +28,7 @@ def patch(*, live_map: bool = False) -> None:
     llm = PolicyLLM()
     main.get_llm = lambda: llm
 
-    async def fetch_page(city, rooms, budget, page, okrug=None, new=False):
+    async def fetch_page(city, rooms, budget, page, okrug=None, new=False, district_ids=()):
         if page > 1:
             raise SourceUnavailable("ответ 302 (страниц больше нет)")
         path = DATA / f"{cian.REGIONS[city][0]}_{rooms}{'_new' if new else ''}.json"

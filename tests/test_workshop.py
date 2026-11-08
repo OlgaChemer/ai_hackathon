@@ -161,6 +161,46 @@ class WorkshopAPI(unittest.TestCase):
         self.assertEqual(r.status_code,409,r.text)
         self.assertEqual(self.calls,[])
 
+    def test_context_exposes_finance_and_latest_filters_before_market_research(self):
+        with db.session() as s:
+            chat=s.get(Chat,'own');saved=deepcopy(chat.state)
+            saved['data']['profile']=merge_profile({'rooms_options':[3],'budget_max':42_000_000,
+                'payment':'mortgage_saving','apartments':'hide','filters':[
+                    {'field':'delivery_year','op':'eq','values':['2027'],'priority':'required'},
+                    {'field':'floor','op':'gt','values':['10'],'priority':'required'}]},saved['data']['profile'])
+            saved['data']['profile_revision']=9
+            chat.state=saved
+        ctx=self.client.get('/api/workshop/context?chat_id=own').json()
+        self.assertEqual(ctx['revision'],9)
+        self.assertEqual(ctx['profile']['rooms_options'],[3])
+        self.assertEqual(ctx['profile']['budget_max'],42_000_000)
+        details=' '.join(ctx['conditions'])
+        for text in ('взнос ещё копим','Маткапитал: ещё не уточнён','2027','10','Апартаменты исключены'):
+            self.assertIn(text,details)
+
+    def test_market_keeps_both_markets_and_apartments_when_client_has_no_preference(self):
+        profile=merge_profile({'city':'Москва','rooms':3,'budget_min':29_400_000,'budget_max':42_000_000,
+            'housing':'both','apartments':'any','payment':'mortgage_saving'})
+        rows=[listing(id='mixed-'+str(i),city='Москва',rooms=3,price=35_000_000,
+            is_new=bool(i%2),is_apartments=bool((i//2)%2)) for i in range(8)]
+        with db.session() as s:
+            chat=s.get(Chat,'own');saved=deepcopy(chat.state)
+            saved['data'].update(profile=profile,profile_revision=10,search={'listings':rows},shown=rows,prefs={'liked':[]})
+            chat.state=saved
+        ctx=self.client.get('/api/workshop/context?chat_id=own').json()
+        details=' '.join(ctx['conditions'])
+        self.assertIn('Квартиры и апартаменты',details)
+        self.assertIn('новостройки и вторичка — без предпочтения',details)
+        with patch.object(service.sources,'collect',new=AsyncMock()) as collect:
+            job=self.wait(self.client.post('/api/workshop/jobs',json=self.payload('market',liked=[])).json()['id'])
+            self.assertEqual(job['status'],'completed',job)
+            collect.assert_not_awaited()
+        snapshot=self.calls[-1]
+        self.assertEqual(snapshot['profile']['housing'],'both')
+        self.assertEqual(snapshot['profile']['apartments'],'any')
+        self.assertEqual({(x['is_new'],x['is_apartments']) for x in snapshot['listings']},
+            {(False,False),(False,True),(True,False),(True,True)})
+
     def test_market_reuses_all_search_results_and_keeps_unknowns_out_of_statistics(self):
         profile=merge_profile({'city':'Москва','rooms':2,'poi':['park']})
         rows=[listing(id=str(i),city='Москва',nearby={'park':{'name':'Парк','dist':400}} if i<4 else {},

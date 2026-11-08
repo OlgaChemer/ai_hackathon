@@ -7,7 +7,7 @@ from .profile import missing_required,missing_search
 CORE_FIELDS=frozenset(('city','rooms','budget_max','budget_min','okrug','housing','rooms_options','cities','districts','prefer_center','center_required'))
 FILTER_FIELDS=frozenset(('features','poi','kitchen_min','area_min','not_first_floor','not_last_floor','apartments',
                         'condition','material','year_min','metro_max_minutes','soft_criteria',
-                        'clear_criteria','avoid_districts','filters','wishes'))
+                        'clear_criteria','avoid_districts','filters','wishes','district_type'))
 
 
 @dataclass(frozen=True)
@@ -27,7 +27,7 @@ POLICIES={
     'ask_family':Policy(('family_needed',),('finance',)),
     'ask_housing':Policy(('housing_needed',),('search','selection')),
     'ask_extras':Policy(('extras_needed',),('search','selection')),
-    'ask_deposit':Policy(('deposit_needed','matcap_known'),('finance',)),
+    'ask_deposit':Policy(('deposit_needed','family_or_cash','matcap_known'),('finance',)),
     'mortgage_programs':Policy(('programs_needed','budget_known','payment','family_or_cash','matcap_known','deposit_answered'),information=True),
     'savings_plan':Policy(('budget_known','saving_payment'),information=True),
     'affordable_budget':Policy(('affordability_requested',),information=True),
@@ -35,7 +35,7 @@ POLICIES={
     'show_selection':Policy(('selection_source',)),
     'offer_search_alternatives':Policy(('search',)),
     'probe_budget':Policy(('search','budget_known'),units=(('budget_max','RUB'),)),
-    'call_seller':Policy(('search','search_scope','shown','call_consent','fresh_selection','budget_known','limit','payment'),units=(('listing_id','listing_id'),)),
+    'call_seller':Policy(('search','search_scope','shown','call_consent','fresh_selection','budget_known','limit','payment','financing_reviewed'),units=(('listing_id','listing_id'),)),
     'confirm_price':Policy(('calls','limit'),units=(('listing_id','listing_id'),)),
     'plan_viewing':Policy(('agreed','limit'),units=(('listing_id','listing_id'),)),
     'prepare_deal':Policy(('chosen','limit','finance_ready','deal_not_done'),units=(('listing_id','listing_id'),)),
@@ -60,6 +60,7 @@ REASONS={
     'calls':'Сначала нужны результаты переговоров.', 'limit':'Сначала подтвердите лимит покупки.',
     'agreed':'Сначала покупатель подтверждает итоговую цену.', 'chosen':'Сначала покупатель выбирает квартиру после просмотра.',
     'finance_ready':'Сначала подготовьте финансовый расчёт.', 'deal_not_done':'План уже подтверждён.',
+    'financing_reviewed':'Для ипотеки сначала уточните семью, маткапитал и взнос; при накоплении подготовьте план накоплений.',
     'affordability_requested':'Расчёт по личным доходам нужен по явной просьбе клиента. Для средней цены квартир используйте market_prices.',
 }
 
@@ -73,7 +74,8 @@ def decision(s,name):
     if policy is None:return False,'Для этого инструмента не определена политика исполнения.'
     if s.request_intent=='hold' and name!='update_request' and not policy.information:return False,'Клиент приостановил действия.'
     if (s.request_intent=='call' and s.call_targets and not s.calls and not s.selection_profile_stale
-            and name not in ('update_request','call_seller','confirm_red_lines','ask_client','ask_payment')):
+            and name not in ('update_request','call_seller','confirm_red_lines','ask_client','ask_payment',
+                             'ask_family','ask_deposit','mortgage_programs','savings_plan')):
         return False,'Сначала выполните явную просьбу о звонке по выбранному объекту.'
     p=s.profile;ready=not missing_required(p)
     from . import guidance
@@ -101,7 +103,7 @@ def decision(s,name):
         'deposit_needed':(p.get('payment') in ('mortgage_ready','mortgage_saving') and p.get('deposit') is None
                           and not p.get('_deposit_skipped')) or s.requested_action=='ask_deposit',
         'deposit_answered':p.get('payment')=='cash' or p.get('deposit') is not None or bool(p.get('_deposit_skipped')),
-        'matcap_known':p.get('payment')=='cash' or not p.get('children') or p.get('matcap') is not None,
+        'matcap_known':p.get('payment')=='cash' or p.get('children')==0 or p.get('matcap') is not None,
         'programs_needed':not programs_current(s),'payment':bool(p.get('payment')),
         'family_or_cash':p.get('payment')=='cash' or p.get('children') is not None,
         'saving_payment':p.get('payment')=='mortgage_saving',
@@ -114,6 +116,8 @@ def decision(s,name):
         'search':s.search is not None,'shown':bool(s.shown),'call_consent':bool(s.call_targets),
         'fresh_selection':not s.selection_profile_stale,'calls':bool(s.calls),'limit':s.red_lines_ok,
         'agreed':bool(s.agreed),'chosen':bool(s.chosen),'finance_ready':finance_ready,'deal_not_done':s.status.get(8)!='done',
+        'financing_reviewed':p.get('payment')=='cash' or (programs_current(s) and
+            (p.get('payment')!='mortgage_saving' or s.finance is not None)),
         'affordability_requested':s.requested_action=='affordable_budget',
     }
     for requirement in policy.requires:

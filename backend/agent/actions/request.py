@@ -19,7 +19,7 @@ PROPERTY_FIELDS={'area_min':'area','kitchen_min':'kitchen','year_min':'year',
 
 def profile_brief(p: dict) -> dict:
     """Профиль для модели: только то, что известно."""
-    keys = ("city", "cities", "rooms", "rooms_options", "prefer_center", "budget_max", "budget_min", "okrug", "districts", "avoid_districts", "housing", "payment", "children",
+    keys = ("city", "cities", "rooms", "rooms_options", "prefer_center", "budget_max", "budget_min", "okrug", "districts", "district_type", "avoid_districts", "housing", "payment", "children",
             "youngest_age", "matcap", "kitchen_min", "area_min", "not_first_floor", "not_last_floor", "metro_max_minutes", "wishes",
             "condition", "material", "year_min", "timeline", "soft_criteria", "filters", "center_required", "seller_questions")
     out = {k: p[k] for k in keys if p.get(k) not in (None, [], "", False)}

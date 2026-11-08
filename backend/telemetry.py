@@ -18,14 +18,20 @@ def count(name,amount=1):
 def observe(event,fields):
     # Только фиксированные имена событий/исходов, без значений аргументов.
     allowed={'operation','turn','llm','llm_queue','request_review','request_review_invalid',
-             'session_error','restored','persistence_failed','selection','sse_resync','sse_coalesced','command_rejected'}
+             'session_error','restored','persistence_failed','selection','sse_resync','sse_coalesced','command_rejected',
+             'rule_parser','source_request'}
     if event not in allowed:return
     count(event)
     if event in ('request_review_invalid','persistence_failed','restored'):return
     if event=='selection':
         count('selection.confirmed',int(fields.get('confirmed',0)))
         count('selection.unverified',int(fields.get('unverified',0)))
+    if event=='rule_parser':  # разбор кодом: accepted / declined / shadow_agree / shadow_disagree
+        count('rule_parser.'+str(fields.get('outcome','unknown'))[:24])
+    if event=='source_request':  # внешние запросы: cian_page / twogis / overpass / poi_local
+        count('source.'+str(fields.get('source','unknown'))[:24])
     if event=='llm':
+        if fields.get('tag'):count('llm.'+str(fields['tag'])[:32])  # сколько запросов к модели и каких
         ok=fields.get('outcome')=='ok'
         dependency('llm','available' if ok else 'degraded')
         if not ok:count('llm.failed')

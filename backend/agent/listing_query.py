@@ -19,6 +19,7 @@ FIELDS = {
     'delivery_year': ('number', 'год сдачи новостройки'),
     'delivery_quarter': ('number', 'квартал сдачи новостройки'),
     'center_km': ('number', 'км по прямой до опорной точки центра'),
+    'road_m': ('number', 'до крупной дороги, м (OpenStreetMap)'), 'rail_m': ('number', 'до железной дороги, м (OpenStreetMap)'),
     'price_per_m2': ('number', 'цена за м²'),
     'value_score': ('number', 'полезность на млн ₽'),
     'discount_pct': ('number', 'отклонение вниз от оценки по аналогам, %'),
@@ -72,6 +73,10 @@ def field_value(x, field):
     if field == 'center_km':
         from .pricing import center_distance
         return center_distance(x)
+    if field in ('road_m', 'rail_m'):
+        from .districts import quiet
+        q = quiet(x)
+        return q[field] if q else None
     if field == 'price_per_m2':
         return x['price'] / x['area'] if x.get('area') and x.get('price') else None
     if field in ('value_score','discount_pct'):

@@ -40,7 +40,7 @@ class DepositTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_deposit_is_saved_from_card(self):
         s = self.agent()
-        s.profile.update(city="Казань", rooms=2, budget_max=15_000_000, payment="mortgage_ready")
+        s.profile.update(city="Казань", rooms=2, budget_max=15_000_000, payment="mortgage_ready",children=0)
         s.ask = AsyncMock(return_value={"approved": True, "data": {"deposit": 3_000_000}})
         result = await actions.execute(s, ToolCall('ask_deposit', {}))
         self.assertEqual(s.profile["deposit"], 3_000_000)
