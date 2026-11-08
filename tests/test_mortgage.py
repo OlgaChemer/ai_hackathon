@@ -139,7 +139,8 @@ class FinanceActionsTest(unittest.TestCase):
             asyncio.run(drive(s))
         results = [json.loads(m["content"]) for m in s.messages if m["role"] == "tool"]
         self.assertIn("ask_family", results[0]["error"])
-        self.assertGreater(results[1]["in_budget"], 0)
+        search = next(r for r in results if "in_budget" in r)
+        self.assertGreater(search["in_budget"], 0)
 
     def test_cash_needs_no_programs(self):
         s = self.agent(call("ask_payment"), call("mortgage_programs"), say("Ипотека не нужна."))

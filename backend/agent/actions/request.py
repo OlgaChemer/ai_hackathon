@@ -154,6 +154,54 @@ def apply_request(s, changes, *, condition_sources=None):
     return {"profile": profile_brief(p), "missing": missing, "red_lines_confirmed": s.red_lines_ok, "notes": notes}
 
 
+@action("ask_extras", 1,
+        "Карточка «Что ещё важно»: тип жилья, апартаменты, ремонт, этаж — быстрые варианты на выбор. "
+        "Показывается один раз после подтверждения рамок и до поиска; после неё сразу поиск.")
+async def ask_extras(s) -> dict:
+    p = s.profile
+    if p.get("_extras_asked") and s.requested_action != 'ask_extras':
+        return {"already_asked": True, "housing": p.get("housing"), "apartments": p.get("apartments"),
+                "condition": p.get("condition")}
+    r = await s.ask(
+        "extras", "Что ещё важно",
+        "Четыре быстрых вопроса — можно выбрать вариант или пропустить. После этого сразу ищу квартиры.",
+        payload={"housing": p.get("housing"), "apartments": p.get("apartments"),
+                 "condition": p.get("condition"),
+                 "not_first_floor": bool(p.get("not_first_floor")),
+                 "not_last_floor": bool(p.get("not_last_floor"))},
+    )
+    if r["approved"] is None:
+        return {"client_said": r["data"].get("text", "")}
+    data = r["data"] or {}
+    if not r["approved"]:
+        p["_extras_asked"] = True
+        return {"skipped": True, "note": "клиент пропустил дополнительные вопросы — ищи по известному"}
+    applied = {}
+    if data.get("housing") in ("secondary", "new", "both"):
+        p["housing"] = data["housing"]
+        applied["тип жилья"] = {"secondary": "вторичка", "new": "новостройка", "both": "без разницы"}[p["housing"]]
+    if data.get("apartments") in ("hide", "only", "any"):
+        p["apartments"] = data["apartments"]
+        applied["апартаменты"] = {"hide": "не показывать", "only": "только апартаменты", "any": "без разницы"}[p["apartments"]]
+    if data.get("condition") in ("repair", "cosmetic", "ready", "any"):
+        p["condition"] = data["condition"]
+        applied["ремонт"] = {"repair": "без ремонта", "cosmetic": "косметический",
+                             "ready": "с ремонтом", "any": "не важно"}[p["condition"]]
+    if "not_first_floor" in data:
+        p["not_first_floor"] = bool(data["not_first_floor"])
+        if p["not_first_floor"]:
+            applied["этаж"] = "не первый"
+    if "not_last_floor" in data:
+        p["not_last_floor"] = bool(data["not_last_floor"])
+        if p["not_last_floor"]:
+            applied["этаж"] = (applied.get("этаж", "") + " и не последний").strip()
+    p["_extras_asked"] = True
+    p["summary"] = profile_summary(p)
+    s.invalidate_deal(keep_limit=True)
+    emit_profile(s)
+    return {"applied": applied or {"note": "выбор не изменился"}}
+
+
 @action("market_prices", 1,
         "Исследовать реальные объявления по проверенному запросу: цены, доступные комнаты/площадь и другие агрегаты. "
         "Достаточно города. Проверенный исследовательский запрос определяет группировку и применение бюджета; неназванные условия не требуются.")

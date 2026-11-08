@@ -57,6 +57,11 @@ def choice(*values):
 CONFIRMATIONS = {
     "clarify": {}, "price": {}, "object": {}, "sign": {},
     "red_lines": {"budget_max": number(100_000), "budget_min": number(100_000)},
+    "extras": {"housing": choice("secondary", "new", "both"),
+               "apartments": choice("hide", "only", "any"),
+               "condition": choice("repair", "cosmetic", "ready", "any"),
+               "not_first_floor": {"type": "boolean"},
+               "not_last_floor": {"type": "boolean"}},
     "call": {"mode": choice("auto", "human", "phone"),
              'phone_grant_id':{'type':'string','maxLength':40},
              "questions":{"type":"array","maxItems":15,"items":{"type":"string","maxLength":300}}},

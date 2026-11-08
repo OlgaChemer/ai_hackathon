@@ -46,6 +46,11 @@ CHANGE_SCHEMA = {
             "type": "integer",
             "description": "максимальная цена, рубли",
         },
+        "apartments": {
+            "type": "string",
+            "enum": ["hide", "only", "any"],
+            "description": "апартаменты: hide — не показывать, only — только апартаменты, any — всё равно. Не названо — не заполняй",
+        },
         "budget_min": {
             "minimum": 0,
             "maximum": 1000000000,

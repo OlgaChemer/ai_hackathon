@@ -26,6 +26,7 @@ POLICIES={
     'ask_payment':Policy(('payment_needed',),('finance',)),
     'ask_family':Policy(('family_needed',),('finance',)),
     'ask_housing':Policy(('housing_needed',),('search','selection')),
+    'ask_extras':Policy(('extras_needed',),('search','selection')),
     'mortgage_programs':Policy(('programs_needed','budget_known','payment','family_or_cash'),information=True),
     'savings_plan':Policy(('budget_known','saving_payment'),information=True),
     'affordable_budget':Policy(('affordability_requested',),information=True),
@@ -75,7 +76,7 @@ def decision(s,name):
     p=s.profile;ready=not missing_required(p)
     from . import guidance
     if (not s.requested_action and s.request_intent in (None,'search','refine','selection','continue')
-            and guidance.next_step(s) and name in ('ask_payment','ask_family','ask_housing','confirm_red_lines')):
+            and guidance.next_step(s) and name in ('ask_payment','ask_family','ask_housing','confirm_red_lines','ask_extras')):
         return False,'Сначала помогите определиться с бюджетом и комнатностью; дополнительные вопросы задавайте по ситуации.'
     if (not s.requested_action and s.request_intent in (None,'search','refine','selection','continue')
             and guidance.next_step(s) and guidance.next_step(s)[0]!='help' and name=='market_prices'):
@@ -92,6 +93,7 @@ def decision(s,name):
         'payment_needed':not p.get('payment') or s.requested_action=='ask_payment',
         'family_needed':(p.get('children') is None and p.get('payment')!='cash') or s.requested_action=='ask_family',
         'housing_needed':not p.get('housing') or s.requested_action=='ask_housing',
+        'extras_needed':s.red_lines_ok and not p.get('_extras_asked'),
         'programs_needed':not programs_current(s),'payment':bool(p.get('payment')),
         'family_or_cash':p.get('payment')=='cash' or p.get('children') is not None,
         'saving_payment':p.get('payment')=='mortgage_saving',

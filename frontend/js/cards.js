@@ -211,6 +211,58 @@ export function confirmCard(ev) {
     draw();
     collect = () => ({ budget_min: Number(rangeMin.value), budget_max: Number(rangeMax.value) });
   }
+  if (ev.kind === "extras") {
+    const p = ev.payload || {};
+    const groups = [
+      { key: "housing", title: "Тип жилья", options: [["secondary", "Вторичка"], ["new", "Новостройка"], ["both", "Всё равно"]] },
+      { key: "apartments", title: "Апартаменты", options: [["hide", "Не показывать"], ["only", "Только апартаменты"], ["any", "Всё равно"]] },
+      { key: "condition", title: "Ремонт", options: [["repair", "Без ремонта"], ["cosmetic", "Косметический"], ["ready", "Евроремонт"], ["ready", "Дизайнерский"]] },
+    ];
+    const state = {
+      housing: p.housing || null,
+      apartments: p.apartments || null,
+      condition: p.condition || null,
+      not_first: !!p.not_first_floor,
+      not_last: !!p.not_last_floor,
+      picked: {},                      // индекс выбранного варианта в группе (для «Евроремонт» и «Дизайнерский»)
+    };
+    const box = extra.querySelector("[data-extras]") || extra;
+    const render = () => {
+      const single = (g) => g.options.map(([value, label], i) => {
+        const on = state.picked[g.key] === i;
+        return `<button type="button" class="chip-btn${on ? " is-on" : ""}" data-group="${g.key}" data-index="${i}" data-value="${value}">${label}</button>`;
+      }).join("");
+      const floor = (key, label, on) =>
+        `<button type="button" class="chip-btn${on ? " is-on" : ""}" data-group="floor" data-value="${key}">${label}</button>`;
+      box.innerHTML = `<div class="extras">
+        ${groups.map((g) => `<div class="extras__row"><span class="extras__title">${g.title}</span><div class="quick">${single(g)}</div></div>`).join("")}
+        <div class="extras__row"><span class="extras__title">Этаж</span><div class="quick">
+          ${floor("not_first", "Не первый", state.not_first)}${floor("not_last", "Не последний", state.not_last)}
+        </div></div>
+      </div>`;
+      box.querySelectorAll("[data-group]").forEach((b) => b.addEventListener("click", () => {
+        const group = b.dataset.group;
+        if (group === "floor") {
+          const key = b.dataset.value === "not_last" ? "not_last" : "not_first";
+          state[key] = !state[key];
+        } else {
+          const idx = Number(b.dataset.index);
+          const g = groups.find((x) => x.key === group);
+          state.picked[group] = state.picked[group] === idx ? null : idx;
+          state[group] = state.picked[group] === null ? null : g.options[idx][0];
+        }
+        render();
+      }));
+    };
+    render();
+    collect = () => {
+      const data = { not_first_floor: state.not_first, not_last_floor: state.not_last };
+      if (state.housing) data.housing = state.housing;
+      if (state.apartments) data.apartments = state.apartments;
+      if (state.condition) data.condition = state.condition;
+      return data;
+    };
+  }
   if (ev.kind === "finance") {
     extra.innerHTML = financeForm(ev);
     collect = () => collectForm(card);
@@ -231,6 +283,7 @@ export function confirmCard(ev) {
 
   const buttons = {
     red_lines: [["Подтвердить рамки", true, {}], ["Изменить запрос", false, {}]],
+    extras: [["Применить", true, {}], ["Пропустить", false, {}]],
     finance: ev.price ? [["Рассчитать стратегию", true, {}], ["Пропустить", false, {}]] : [["Посчитать бюджет", true, {}]],
     payment: [["Наличными — вся сумма есть", true, { payment: "cash" }], ["Ипотека, на взнос хватает", true, { payment: "mortgage_ready" }], ["Ипотека, взнос ещё копим", true, { payment: "mortgage_saving" }]],
     family: [["Подобрать программу", true, {}], ["Пропустить", false, {}]],
@@ -249,6 +302,7 @@ export function confirmCard(ev) {
   card.dataset.hint = hint;
   const spoken = {
     red_lines: () => `Подтвердите диапазон цены: ${[ev.payload.city, ...(ev.payload.cities || [])].join(", ")}, ${roomDescription(ev.payload.rooms_options?.length ? ev.payload.rooms_options : [ev.payload.rooms])}, от ${rub(ev.payload.budget_min || Math.round(ev.payload.budget_max * 0.7))} до ${rub(ev.payload.budget_max)}. Выше не пойду, ниже предлагать не буду. Итоговую цену подтверждаете вы.`,
+    extras: () => "Четыре быстрых вопроса: тип жилья, апартаменты, ремонт и этаж. Можно пропустить — тогда ищу по известному.",
     finance: () => `${ev.title}.`,
     payment: () => `${ev.title}`,
     family: () => "Есть ли у вас дети? Возраст и маткапитал можно указать на карточке.",

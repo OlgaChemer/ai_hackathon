@@ -40,6 +40,7 @@ def next_search_action(s):
     # Для уже полностью сформулированной покупки сохраняем начальную карточку
     # лимита. Исследования и широкий поиск не требуют заполнить этот профиль.
     if not missing_required(s.profile) and available(s,'confirm_red_lines'):return 'confirm_red_lines'
+    if s.red_lines_ok and not s.profile.get('_extras_asked') and available(s,'ask_extras'):return 'ask_extras'
     if s.search is None:
         return "search_listings" if available(s, "search_listings") else None
     if not s.shown or s.selection_dirty:

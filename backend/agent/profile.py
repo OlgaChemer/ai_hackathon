@@ -33,6 +33,7 @@ EMPTY_PROFILE = {
     "seller_questions": [],
     "budget_max": None,
     "budget_min": None,       # нижняя граница: ниже неё квартиры не предлагаем
+    "apartments": None,       # hide — не показывать, only — только апартаменты, any — всё равно
     "payment": None,          # cash | mortgage_ready | mortgage_saving
     "okrug": None,
     "districts": [],          # районы, которые клиент назвал (ищем в них)
@@ -111,6 +112,8 @@ def merge_profile(raw: dict, base: dict | None = None) -> dict:
         p["payment"] = None
     if p.get("housing") not in (None, "secondary", "new", "both"):
         p["housing"] = None
+    if p.get("apartments") not in (None, "hide", "only", "any"):
+        p["apartments"] = None
     p["features"] = merge_features([k for k in p.get("features") or [] if k in FEATURES])
     p["poi"] = list(dict.fromkeys(k for k in p.get("poi") or [] if k in geo.POI))
     if p.get("condition") not in (None, "ready", "cosmetic", "repair", "any"):
@@ -211,6 +214,10 @@ def passes_hard_filters(x: dict, p: dict) -> bool:
     if p.get('budget_max') is not None and x["price"] > p["budget_max"] * 1.05:
         return False
     if p.get('budget_min') and x["price"] < p["budget_min"]:
+        return False
+    if p.get('apartments') == 'hide' and x.get('is_apartments'):
+        return False
+    if p.get('apartments') == 'only' and not x.get('is_apartments'):
         return False
     if p.get("not_first_floor") and "not_first_floor" not in p.get("soft_criteria", []) and x.get("floor") == 1:
         return False

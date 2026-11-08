@@ -65,6 +65,11 @@ body { min-height: 100vh; flex-direction: column; -webkit-font-smoothing: antial
 .feat.is-yes { background: var(--green-soft); color: var(--green-strong); }
 .feat.is-no { color: var(--ink-3); text-decoration: line-through; }
 .dial-note.mic-error { color: var(--red); }
+.extras { display: flex; flex-direction: column; gap: 10px; margin-top: 6px; }
+.extras__row { display: grid; gap: 4px; }
+.extras__title { font-size: 13px; color: var(--ink-3); }
+.extras__row .quick { flex-wrap: wrap; }
+.chip-btn.is-on { background: var(--green); border-color: var(--green); color: #fff; font-weight: 600; }
 .price-range { margin-top: 12px; }
 .price-range__head { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; color: var(--ink-3); margin-bottom: 4px; }
 .price-range__head b { color: var(--ink); font-weight: 600; white-space: nowrap; }
