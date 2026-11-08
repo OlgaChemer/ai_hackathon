@@ -61,10 +61,15 @@ def quoted_words(quote,messages):
 def place_lemmas(source,words):
     """Привязка сущности к словарю, не разбор команды/намерения пользователя."""
     raw=source.casefold().replace('ё','е')
+    def same_start(word):
+        w=word.casefold().replace('ё','е')
+        k=3 if min(len(raw),len(w))>3 else 2  # «Уфе» ~ «Уфа»: у трёхбуквенного города падеж меняет третью букву
+        return raw[:k]==w[:k]
     scores={word:SequenceMatcher(None,raw,word.casefold().replace('ё','е')).ratio()
-            for word in words if len(raw)>=2 and raw[:3]==word.casefold().replace('ё','е')[:3]}
+            for word in words if len(raw)>=2 and same_start(word)}
     best=max(scores.values(),default=0)
-    return [word for word,score in scores.items() if score==best and score>=.6]
+    short=len(raw)<=4  # «Уфой» ~ «Уфа»: 0,57 — у коротких имён одна буква падежа весит больше
+    return [word for word,score in scores.items() if score==best and score>=(.55 if short else .6)]
 
 
 def catalog_words():

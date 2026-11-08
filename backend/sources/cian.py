@@ -499,7 +499,7 @@ async def _fetch_page(city: str, rooms: int, budget: int | None, page: int, okru
         else:
             raise SourceUnavailable(f"Циан недоступен ({problem})")
     title = re.search(r"<title\b[^>]*>([^<]*)", text, re.I)
-    if not title or REGIONS[city][2].lower() not in title.group(1).lower():
+    if not title or REGIONS[city][2].lower() not in title.group(1).lower().replace("ё", "е"):
         raise SourceUnavailable("страница не про нужный город")
     raw = extract_offers(text)
     if not raw and "offers" not in text:  # страница не та (вёрстка поменялась) — а не «ничего не нашлось»

@@ -534,3 +534,56 @@ class UnderstandingTest(unittest.IsolatedAsyncioTestCase):
 
     def test_machine_budget_is_already_in_rubles_and_is_not_guessed_from_its_magnitude(self):
         self.assertEqual(merge_profile({'budget_max':50_000})['budget_max'],50_000)
+
+
+class MillionCitiesInputTest(unittest.IsolatedAsyncioTestCase):
+    """Тест 08.11: «двушка в Уфе…» падала с «places: Слишком много элементов» — «Уфе» не узнавалась как город,
+    и схема запрещала модели называть место. Проверяем каждый город-миллионник в предложном падеже."""
+    def setUp(self):
+        db.configure('sqlite://')
+
+    async def review(self, text, changes):
+        """Как DeepSeek/GigaChat: маршрут profile_change, затем извлечение условий отдельным запросом (profile_extract)."""
+        class Model(LLMClient):
+            name, model = 'test', 'tools'
+            def __init__(m):m.seen = []
+            async def chat(m, messages, **kw):
+                m.seen.append(kw['tag'])
+                if kw['tag'] == 'request_review':
+                    return LLMResponse('', [ToolCall('profile_change', {})])
+                fields = [{'key': 'city', 'value': changes['city'], 'source': text}]
+                for key in ('rooms_options', 'budget_max', 'district_type'):
+                    if key in changes:
+                        fields.append({'key': key, 'value': json.dumps(changes[key]) if key == 'rooms_options' else str(changes[key]), 'source': text})
+                return LLMResponse(json.dumps({'fields': fields, 'criteria': [], 'states': [], 'filters': [], 'places': [],
+                                               'unsupported': [], 'selection': [], 'requested_card': []}, ensure_ascii=False))
+        s = session.create_session('', Model())
+        event = s.push('message', role='user', text=text)
+        s.accept_request(text, event['seq'])
+        await U.ensure(s)
+        return s
+
+    async def test_user_message_from_test_drive(self):
+        text = 'Ищу двухкомнатную квартиру в Уфе за 12 миллионов рублей. Для меня важен спальный район и близость к поликлинике.'
+        s = await self.review(text, {'city': 'Уфа', 'rooms_options': [2], 'budget_max': 12_000_000, 'district_type': 'sleeping'})
+        self.assertEqual((s.profile['city'], s.profile['rooms'], s.profile['budget_max'], s.profile['district_type']),
+                         ('Уфа', 2, 12_000_000, 'sleeping'))
+        self.assertEqual(s.llm.seen, ['request_review', 'profile_extract'])  # с первой попытки, без повтора
+
+    async def test_every_million_city_in_locative(self):
+        import pymorphy3
+        from backend.geodata import CITIES
+        morph = pymorphy3.MorphAnalyzer()
+
+        def loct(name):
+            if name == 'Ростов-на-Дону':
+                return 'Ростове-на-Дону'
+            if name == 'Санкт-Петербург':
+                return 'Санкт-Петербурге'
+            return ' '.join(morph.parse(w)[0].inflect({'loct'}).word.capitalize() for w in name.split())
+        for c in CITIES:
+            with self.subTest(city=c['name']):
+                text = f'Двушка в {loct(c["name"])} до 10 млн'
+                self.assertEqual(sources.normalize_city(text), c['name'])
+                s = await self.review(text, {'city': c['name']})
+                self.assertEqual(s.profile['city'], c['name'])
