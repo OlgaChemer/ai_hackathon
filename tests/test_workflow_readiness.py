@@ -28,7 +28,7 @@ class WorkflowReadinessTest(unittest.IsolatedAsyncioTestCase):
         with patch.object(sources,'collect',AsyncMock(return_value=([listing()],[]))),patch.object(sources,'more',AsyncMock(return_value=[])):
             events=await drive(s,until=lambda e:e['type']=='confirm' and e['kind']=='selection')
         confirms=[e for e in events if e['type']=='confirm']
-        self.assertEqual([e['kind'] for e in confirms],['red_lines','selection'])
+        self.assertEqual([e['kind'] for e in confirms],['red_lines','extras','selection'])
         self.assertLess(confirms[0]['seq'],next(e['seq'] for e in events if e['type']=='search_progress' and e['on']))
         self.assertNotIn('confirm_red_lines',[t.name for t in actions.tools(s)])
 

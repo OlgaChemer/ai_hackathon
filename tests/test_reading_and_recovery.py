@@ -378,6 +378,8 @@ class ReadingAndRecovery(unittest.IsolatedAsyncioTestCase):
                     'requested_card':['ask_housing']}
         decoded=profile_patch.decode(patch_data,contract,inputs)
         s=self.agent();s.search=None;s.request_intent='search'
+        self.assertEqual(workflow.next_search_action(s),'ask_extras')
+        s.profile['_extras_asked']=True
         self.assertEqual(workflow.next_search_action(s),'search_listings')
         s.requested_action=decoded['_requested_action']
         self.assertEqual(workflow.next_search_action(s),'ask_housing')

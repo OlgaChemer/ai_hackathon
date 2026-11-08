@@ -208,6 +208,7 @@ class TurnTest(unittest.IsolatedAsyncioTestCase):
         from tests.test_llm_and_agent import listing
         with patch.object(sources, 'collect', AsyncMock(return_value=([listing()], []))), patch.object(sources, 'more', AsyncMock(return_value=[])):
             s.llm.review_intent = 'continue'
+            s.profile['_extras_asked'] = True  # тест про таймаут хода, а не про карточку дополнительных условий
             await s.receive_text('Продолжить')
             event = await self.until(queue, lambda e: e.get('kind') == 'selection' and e['type'] == 'confirm')
             self.assertEqual(s.profile['budget_max'], 9_000_000)

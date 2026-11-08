@@ -5,7 +5,7 @@ from ... import geo, sources
 from ..features import FEATURES
 from ..numbers import fmt
 from ..listing_query import FIELDS
-from ..profile import in_districts, merge_profile, missing_required, passes_hard_filters, profile_summary
+from ..profile import default_budget_min, in_districts, merge_profile, missing_required, passes_hard_filters, profile_summary
 from . import ActionError, action
 
 LIST_KEYS = ("districts", "avoid_districts", "features", "poi", "wishes", "material", "soft_criteria", "rooms_options", "cities")
@@ -18,7 +18,7 @@ PROPERTY_FIELDS={'area_min':'area','kitchen_min':'kitchen','year_min':'year',
 
 def profile_brief(p: dict) -> dict:
     """Профиль для модели: только то, что известно."""
-    keys = ("city", "cities", "rooms", "rooms_options", "prefer_center", "budget_max", "okrug", "districts", "avoid_districts", "housing", "payment", "children",
+    keys = ("city", "cities", "rooms", "rooms_options", "prefer_center", "budget_max", "budget_min", "okrug", "districts", "avoid_districts", "housing", "payment", "children",
             "youngest_age", "matcap", "kitchen_min", "area_min", "not_first_floor", "not_last_floor", "metro_max_minutes", "wishes",
             "condition", "material", "year_min", "timeline", "soft_criteria", "filters", "center_required", "seller_questions")
     out = {k: p[k] for k in keys if p.get(k) not in (None, [], "", False)}
@@ -125,6 +125,7 @@ def apply_request(s, changes, *, condition_sources=None):
         budget_changed = p.get("budget_max") != old_profile.get("budget_max")
         if budget_changed:
             p['_approved_budget_max'] = None
+            p['budget_min'] = changes.get('budget_min') or default_budget_min(p.get('budget_max'))
             notes.append("Лимит изменился — подтвердите новую сумму; поиск обновится после подтверждения.")
         else:
             notes.append("Условия поиска изменились; подтверждённый лимит сохранён.")
@@ -151,6 +152,54 @@ def apply_request(s, changes, *, condition_sources=None):
         s.call_targets = []
     emit_profile(s)
     return {"profile": profile_brief(p), "missing": missing, "red_lines_confirmed": s.red_lines_ok, "notes": notes}
+
+
+@action("ask_extras", 1,
+        "Карточка «Что ещё важно»: тип жилья, апартаменты, ремонт, этаж — быстрые варианты на выбор. "
+        "Показывается один раз после подтверждения рамок и до поиска; после неё сразу поиск.")
+async def ask_extras(s) -> dict:
+    p = s.profile
+    if p.get("_extras_asked") and s.requested_action != 'ask_extras':
+        return {"already_asked": True, "housing": p.get("housing"), "apartments": p.get("apartments"),
+                "condition": p.get("condition")}
+    r = await s.ask(
+        "extras", "Что ещё важно",
+        "Четыре быстрых вопроса — можно выбрать вариант или пропустить. После этого сразу ищу квартиры.",
+        payload={"housing": p.get("housing"), "apartments": p.get("apartments"),
+                 "condition": p.get("condition"),
+                 "not_first_floor": bool(p.get("not_first_floor")),
+                 "not_last_floor": bool(p.get("not_last_floor"))},
+    )
+    if r["approved"] is None:
+        return {"client_said": r["data"].get("text", "")}
+    data = r["data"] or {}
+    if not r["approved"]:
+        p["_extras_asked"] = True
+        return {"skipped": True, "note": "клиент пропустил дополнительные вопросы — ищи по известному"}
+    applied = {}
+    if data.get("housing") in ("secondary", "new", "both"):
+        p["housing"] = data["housing"]
+        applied["тип жилья"] = {"secondary": "вторичка", "new": "новостройка", "both": "без разницы"}[p["housing"]]
+    if data.get("apartments") in ("hide", "only", "any"):
+        p["apartments"] = data["apartments"]
+        applied["апартаменты"] = {"hide": "не показывать", "only": "только апартаменты", "any": "без разницы"}[p["apartments"]]
+    if data.get("condition") in ("repair", "cosmetic", "ready", "any"):
+        p["condition"] = data["condition"]
+        applied["ремонт"] = {"repair": "без ремонта", "cosmetic": "косметический",
+                             "ready": "с ремонтом", "any": "не важно"}[p["condition"]]
+    if "not_first_floor" in data:
+        p["not_first_floor"] = bool(data["not_first_floor"])
+        if p["not_first_floor"]:
+            applied["этаж"] = "не первый"
+    if "not_last_floor" in data:
+        p["not_last_floor"] = bool(data["not_last_floor"])
+        if p["not_last_floor"]:
+            applied["этаж"] = (applied.get("этаж", "") + " и не последний").strip()
+    p["_extras_asked"] = True
+    p["summary"] = profile_summary(p)
+    s.invalidate_deal(keep_limit=True)
+    emit_profile(s)
+    return {"applied": applied or {"note": "выбор не изменился"}}
 
 
 @action("market_prices", 1,
@@ -234,29 +283,50 @@ async def ask_client(s, question: str, options: list[str] | None = None, field: 
 async def confirm_red_lines(s) -> dict:
     p = s.profile
     if s.red_lines_ok and s.requested_action!='confirm_red_lines':
-        return {"approved": True, "budget_max": p["budget_max"], "already_confirmed": True}
+        return {"approved": True, "budget_max": p["budget_max"], "budget_min": p.get("budget_min"),
+                "already_confirmed": True}
     if p.get('budget_max') is None:
         raise ActionError('Для подтверждения лимита нужна конкретная сумма. Поиск без лимита разрешён.')
+    if not p.get('budget_min'):  # клиент не называл нижнюю границу — берём −30% от максимума
+        p['budget_min'] = default_budget_min(p['budget_max'])
+        p['summary'] = profile_summary(p)
     emit_profile(s)
     r = await s.ask(
-        "red_lines", "Красные линии",
-        "Подтвердите верхний лимит покупки. Любую итоговую цену подтверждаете вы. Повторное подтверждение понадобится только при изменении лимита.",
-        payload={"budget_max": p["budget_max"], "rooms": p["rooms"], "city": p["city"],
+        "red_lines", "Границы подбора",
+        "Проверьте город, комнаты и диапазон цены. В этих границах я ищу, звоню и торгуюсь сам: "
+        "выше верхней границы не пойду, ниже нижней квартиры не предложу. Ползунком можно сдвинуть обе границы. "
+        "Итоговую цену всё равно подтверждаете вы.",
+        payload={"budget_max": p["budget_max"], "budget_min": p.get("budget_min"),
+                 "default_low_share": 0.3, "step": 500_000, "floor": 1_000_000,
+                 "rooms": p["rooms"], "city": p["city"],
                  "rooms_options": p.get("rooms_options"), "cities": p.get("cities"),
-                 "authority_rule": "не выше верхней границы справедливой цены и бюджета"},
+                 "authority_rule": "не выше верхней границы цены в объявлении и вашего бюджета"},
     )
     if r["approved"] is None:
         return {"approved": False, "client_said": r["data"].get("text", "")}
     if not r["approved"]:
         s.request_intent = "hold"
         return {"approved": False, "note": "клиент хочет поменять запрос — спроси, что именно"}
-    if r["data"].get("budget_max") and int(r["data"]["budget_max"]) != p["budget_max"]:
+    data = r["data"] or {}
+    new_max, new_min = data.get("budget_max"), data.get("budget_min")
+    try:
+        new_max = int(new_max) if new_max not in (None, "") else None
+        new_min = int(new_min) if new_min not in (None, "") else None
+    except (TypeError, ValueError):
+        new_max = new_min = None
+    if new_min is not None and new_max is not None and new_min > new_max:
+        new_min = default_budget_min(new_max)
+    if (new_max and new_max != p["budget_max"]) or (new_min is not None and new_min != p.get("budget_min")):
         s.invalidate_deal()
-        p["budget_max"] = int(r["data"]["budget_max"])
+        if new_max:
+            p["budget_max"] = new_max
+        p["budget_min"] = new_min if new_min is not None else default_budget_min(p["budget_max"])
         p["summary"] = profile_summary(p)
         emit_profile(s)
     s.red_lines_ok = True
     p['_approved_budget_max'] = p['budget_max']
+    p['_approved_budget_min'] = p.get('budget_min')
     s.remember()
     await s.finish_step(1)
-    return {"approved": True, "budget_max": p["budget_max"], "budget_text": fmt(p["budget_max"])}
+    return {"approved": True, "budget_max": p["budget_max"], "budget_min": p.get("budget_min"),
+            "budget_text": f"{fmt(p['budget_min'])}–{fmt(p['budget_max'])}" if p.get("budget_min") else fmt(p["budget_max"])}

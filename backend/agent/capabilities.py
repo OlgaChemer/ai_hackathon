@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from . import finance
 from .profile import missing_required,missing_search
 
-CORE_FIELDS=frozenset(('city','rooms','budget_max','okrug','housing','rooms_options','cities','districts','prefer_center','center_required'))
+CORE_FIELDS=frozenset(('city','rooms','budget_max','budget_min','okrug','housing','rooms_options','cities','districts','prefer_center','center_required'))
 FILTER_FIELDS=frozenset(('features','poi','kitchen_min','area_min','not_first_floor','not_last_floor',
                         'condition','material','year_min','metro_max_minutes','soft_criteria',
                         'clear_criteria','avoid_districts','filters','wishes'))
@@ -26,7 +26,9 @@ POLICIES={
     'ask_payment':Policy(('payment_needed',),('finance',)),
     'ask_family':Policy(('family_needed',),('finance',)),
     'ask_housing':Policy(('housing_needed',),('search','selection')),
-    'mortgage_programs':Policy(('programs_needed','budget_known','payment','family_or_cash'),information=True),
+    'ask_extras':Policy(('extras_needed',),('search','selection')),
+    'ask_deposit':Policy(('deposit_needed','matcap_known'),('finance',)),
+    'mortgage_programs':Policy(('programs_needed','budget_known','payment','family_or_cash','matcap_known','deposit_known'),information=True),
     'savings_plan':Policy(('budget_known','saving_payment'),information=True),
     'affordable_budget':Policy(('affordability_requested',),information=True),
     'search_listings':Policy(('search_ready','guided_search'),('selection',)),
@@ -75,7 +77,7 @@ def decision(s,name):
     p=s.profile;ready=not missing_required(p)
     from . import guidance
     if (not s.requested_action and s.request_intent in (None,'search','refine','selection','continue')
-            and guidance.next_step(s) and name in ('ask_payment','ask_family','ask_housing','confirm_red_lines')):
+            and guidance.next_step(s) and name in ('ask_payment','ask_family','ask_housing','confirm_red_lines','ask_extras')):
         return False,'Сначала помогите определиться с бюджетом и комнатностью; дополнительные вопросы задавайте по ситуации.'
     if (not s.requested_action and s.request_intent in (None,'search','refine','selection','continue')
             and guidance.next_step(s) and guidance.next_step(s)[0]!='help' and name=='market_prices'):
@@ -90,8 +92,14 @@ def decision(s,name):
         'city_rooms':bool(p.get('city') and p.get('rooms') is not None),
         'profile_ready':ready,'limit_needed':not s.red_lines_ok or s.requested_action=='confirm_red_lines',
         'payment_needed':not p.get('payment') or s.requested_action=='ask_payment',
-        'family_needed':(p.get('children') is None and p.get('payment')!='cash') or s.requested_action=='ask_family',
+        'family_needed':(p.get('payment')!='cash' and (p.get('children') is None
+                          or (p.get('children') or 0) > 0 and p.get('matcap') is None))
+                         or s.requested_action=='ask_family',
         'housing_needed':not p.get('housing') or s.requested_action=='ask_housing',
+        'extras_needed':s.red_lines_ok and not p.get('_extras_asked'),
+        'deposit_needed':p.get('payment') in ('mortgage_ready','mortgage_saving') and p.get('deposit') is None,
+        'deposit_known':p.get('payment')=='cash' or p.get('deposit') is not None,
+        'matcap_known':p.get('payment')=='cash' or not p.get('children') or p.get('matcap') is not None,
         'programs_needed':not programs_current(s),'payment':bool(p.get('payment')),
         'family_or_cash':p.get('payment')=='cash' or p.get('children') is not None,
         'saving_payment':p.get('payment')=='mortgage_saving',

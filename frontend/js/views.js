@@ -36,7 +36,7 @@ export function profile(p) {
     <dl class="facts">
       <div><dt>Город</dt><dd>${[p.city, ...(p.cities || []).filter(c => c !== p.city)].filter(Boolean).join(", ") || "уточню"}${p.okrug ? `, ${p.okrug}` : ""}</dd></div>
       <div><dt>Комнат</dt><dd>${rooms}</dd></div>
-      <div><dt>Бюджет до</dt><dd class="num">${p.budget_max ? rub(p.budget_max) : p.field_states?.budget_max==='unrestricted' ? "без ограничения" : "не задан · поиск без ограничения"}${html.raw(p.budget_source ? html`<small class="dd-note">${p.budget_source}</small>` : "")}</dd></div>
+      <div><dt>Бюджет</dt><dd class="num">${p.budget_max ? (p.budget_min ? `${rub(p.budget_min)} – ${rub(p.budget_max)}` : rub(p.budget_max)) : p.field_states?.budget_max==='unrestricted' ? "без ограничения" : "не задан · поиск без ограничения"}${html.raw(p.budget_source ? html`<small class="dd-note">${p.budget_source}</small>` : "")}</dd></div>
       <div><dt>Районы</dt><dd>${p.districts?.length ? p.districts.join(", ") : "любые"}</dd></div>
       <div><dt>Расположение</dt><dd>${p.prefer_center ? "желательно ближе к центру" : "по вашим пожеланиям"}</dd></div>
       <div><dt>Кухня</dt><dd>${p.kitchen_min ? `от ${p.kitchen_min} м²` : "любая"}</dd></div>
@@ -257,6 +257,7 @@ function offerCard(c, vote, no) {
       <button class="btn btn-ghost offer-map" data-show-map="${c.id}" ${hasCoordinates(c) ? '' : 'disabled'} title="${hasCoordinates(c) ? 'Приблизить квартиру на карте' : 'В объявлении нет точных координат'}">${hasCoordinates(c) ? 'Показать на карте' : 'Нет координат в объявлении'}</button>
       <button class="vote vote-up" data-vote="up" aria-pressed="${vote === "up"}" title="Нравится">${html.raw(ICON_UP)}<span>Нравится</span></button>
       <button class="vote vote-down" data-vote="down" aria-pressed="${vote === "down"}" title="Не подходит">${html.raw(ICON_DOWN)}<span>Не то</span></button>
+      <button class="btn btn-primary offer-choose" data-choose="${c.id}">Выбрать эту квартиру и позвонить</button>
     </div>
   </article>`;
 }
@@ -321,6 +322,7 @@ export function selection(d, marks, page = 1) {
     ${html.raw(d.groups?.length ? html`<p class="hint">Группы: ${d.groups.map(g => `${g.value ?? 'нет данных'} — ${g.count}${g.aggregates.map(a => `; ${a.function}(${a.field})=${a.value ?? 'нет данных'}`).join('')}`).join(' · ')}</p>` : '')}
     ${html.raw(d.liked?.length ? html`<p class="hint">В избранном ${d.liked.length}. Отметки сохраняются отдельно от новых рекомендаций. Чтобы вернуться к ним, напишите «покажи понравившиеся».</p>` : '')}
     ${html.raw(!d.cards.length ? html`<p class="hint">По текущей команде вариантов нет. Измените условия или попросите показать понравившиеся.</p>` : '')}
+    ${html.raw(!d.cards.length ? '' : html`<p class="hint" data-choose-hint>Отметьте квартиру «Нравится» или сразу нажмите «Выбрать эту квартиру» — агент позвонит продавцу и перейдёт к следующему шагу.</p>`)}
     ${html.raw(pagination(view, d.cards.length, 'top'))}
     <div class="offers">${html.raw(view.cards.map((c, i) => offerCard(c, vote(c.id), view.offset + i + 1)).join(""))}</div>
     ${html.raw(pagination(view, d.cards.length, 'bottom'))}

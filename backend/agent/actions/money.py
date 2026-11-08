@@ -64,13 +64,42 @@ async def ask_family(s) -> dict:
         defaults={"children": known["children"] if known["children"] is not None else 1,
                   "youngest_age": known["youngest_age"] if known["youngest_age"] is not None else "",
                   "matcap": known["matcap"] or (M.MATCAP_FIRST if s.profile.get("matcap") else 0),
-                  "matcap_default": M.MATCAP_FIRST},
+                  "matcap_default": M.MATCAP_FIRST,
+                  "matcap_known": known["matcap"] is not None},
     )
     if r["approved"] is None:
         return {"client_said": r["data"].get("text", "")}
     fam = M.normalize_family(r["data"]) if r["approved"] else {"children": 0, "youngest_age": None, "matcap": 0}
     _set(s, children=fam["children"], youngest_age=fam["youngest_age"], matcap=fam["matcap"] or False)
     return {"children": fam["children"], "youngest_age": fam["youngest_age"], "matcap": fam["matcap"]}
+
+
+@action("ask_deposit", 2,
+        "Карточка «Первоначальный взнос»: сколько наличных у клиента. Спрашивается после семьи и маткапитала, "
+        "до расчёта ипотеки: от суммы зависит ставка, платёж и подходящие программы.")
+async def ask_deposit(s) -> dict:
+    p = s.profile
+    if p.get("payment") == "cash":
+        return {"deposit": None, "note": "покупка без ипотеки — взнос не нужен"}
+    if p.get("deposit") is not None and s.requested_action != 'ask_deposit':
+        return {"deposit": p["deposit"], "already_known": True}
+    budget = _need_budget(s)
+    share = M.DEFAULT_DOWN_SHARE
+    need = int(round(budget * share, -3))
+    r = await s.ask(
+        "deposit", "Первоначальный взнос",
+        f"Сколько наличных есть на первоначальный взнос? Для квартиры за {fmt(budget)} банк обычно просит "
+        f"{int(share * 100)}% — это {fmt(need)}; маткапитал считаю отдельно.",
+        payload={"budget_max": budget, "need": need, "share": share},
+    )
+    if r["approved"] is None:
+        return {"client_said": r["data"].get("text", "")}
+    if not r["approved"] or r["data"].get("deposit") is None:
+        return {"skipped": True, "note": "сумма взноса неизвестна — посчитай ипотеку по 20% и скажи это допущение"}
+    value = max(0, int(r["data"]["deposit"]))
+    p["deposit"] = value
+    emit_profile(s)
+    return {"deposit": value, "share": round(value / budget, 3) if budget else None}
 
 
 @action("ask_housing", 2,
@@ -124,9 +153,20 @@ async def mortgage_programs(s) -> dict:
         return remember_programs(s, {"mode": "cash"})
     if p.get("children") is None:
         raise ActionError("Семья неизвестна, а от неё зависит семейная ипотека — сначала ask_family.")
-    progs = M.programs(budget, p.get("city"), p, housing=p.get("housing"), is_secondary=p.get("housing") != "new")
+    if p.get("children") and p.get("matcap") is None:
+        raise ActionError("Неизвестно, есть ли у клиента маткапитал — сначала ask_family (там вопрос про маткапитал).")
+    if p.get("deposit") is None:
+        raise ActionError("Неизвестно, сколько наличных на первоначальный взнос — сначала ask_deposit.")
+    down_share = max(0.05, min(0.9, (p.get("deposit") or 0) / budget)) if budget else M.DEFAULT_DOWN_SHARE
+    progs = M.programs(budget, p.get("city"), p, down_share=down_share, housing=p.get("housing"),
+                       is_secondary=p.get("housing") != "new")
     s.mortgage = progs
     _finance_panel(s)
+    need = int(round(budget * M.DEFAULT_DOWN_SHARE, -3))
+    if p.get("deposit") and p["deposit"] < need:
+        await s.say(f"Ваших {fmt(p['deposit'])} хватает на взнос {int(down_share * 100)}% — это меньше обычных "
+                    f"{int(M.DEFAULT_DOWN_SHARE * 100)}% ({fmt(need)}): ставка будет выше. Не хватает {fmt(need - p['deposit'])} — "
+                    "могу посчитать план накопления.")
     await s.say(progs["explanation"])
     by = {c["key"]: c for c in progs["programs"]}
     out = {"chosen": by[progs["chosen"]]["title"], "rate": progs["rate"], "monthly": by[progs["chosen"]]["monthly"],

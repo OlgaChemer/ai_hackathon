@@ -61,7 +61,7 @@ export function setChatExpanded(expanded) {
 
 export function refreshContext(profile) {
   const labels = profile ? [profile.city, profile.rooms != null ? `${profile.rooms === 0 ? 'Студия' : `${profile.rooms_options?.length ? profile.rooms_options.join('–') : profile.rooms} комн.`}` : '',
-    profile.budget_max ? `до ${rub(profile.budget_max)}` : '',
+    profile.budget_max ? (profile.budget_min ? `${rub(profile.budget_min)} – ${rub(profile.budget_max)}` : `до ${rub(profile.budget_max)}`) : '',
     { new: 'Новостройки', secondary: 'Вторичка', both: 'Новостройки и вторичка' }[profile.housing]] : [];
   $('searchContext').innerHTML = labels.filter(Boolean).map(t => html`<span>${t}</span>`).join('');
 }
