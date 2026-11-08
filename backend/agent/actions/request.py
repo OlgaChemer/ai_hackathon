@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from ... import geo, sources
+from .. import finance
 from ..features import FEATURES
 from ..numbers import fmt
 from ..listing_query import FIELDS
@@ -100,6 +101,7 @@ def apply_request(s, changes, *, condition_sources=None):
     old_profile = dict(s.profile)
     before = {k: s.profile.get(k) for k in CORE_KEYS}
     p = updated_profile(s.profile, changes)
+    if 'deposit' in changes:p.pop('_deposit_skipped',None)
     if condition_sources:
         from ..conditions import normalize
         p['_condition_sources']={**(p.get('_condition_sources') or {}),**condition_sources}
@@ -125,7 +127,7 @@ def apply_request(s, changes, *, condition_sources=None):
         budget_changed = p.get("budget_max") != old_profile.get("budget_max")
         if budget_changed:
             p['_approved_budget_max'] = None
-            p['budget_min'] = changes.get('budget_min') or default_budget_min(p.get('budget_max'))
+            p['budget_min'] = changes['budget_min'] if 'budget_min' in changes else default_budget_min(p.get('budget_max'))
             notes.append("Лимит изменился — подтвердите новую сумму; поиск обновится после подтверждения.")
         else:
             notes.append("Условия поиска изменились; подтверждённый лимит сохранён.")
@@ -141,10 +143,11 @@ def apply_request(s, changes, *, condition_sources=None):
         s.search["shown_ids"].clear()
         # Видимые карточки — последний успешный снимок, не рабочий пул.
         # Меняем их только после успешного вычисления следующей выдачи.
-        s.invalidate_decisions()
+        s.invalidate_decisions(financial=finance.programs_key(p)!=finance.programs_key(old_profile))
         notes.append("Пожелания учтены: при следующем показе подборки (show_selection) отфильтрую и пересортирую.")
-    elif changed_keys & {'payment','children','youngest_age','matcap'}:
+    elif changed_keys & {'payment','children','youngest_age','matcap','deposit'}:
         s.invalidate_decisions(purchase=False,financial=True)
+        if s.search:s.selection_dirty=True
     if changed_keys-{'seller_questions'}:
         s.selection_profile_stale=True
         s.profile['_selection_stale']=True
@@ -287,7 +290,7 @@ async def confirm_red_lines(s) -> dict:
                 "already_confirmed": True}
     if p.get('budget_max') is None:
         raise ActionError('Для подтверждения лимита нужна конкретная сумма. Поиск без лимита разрешён.')
-    if not p.get('budget_min'):  # клиент не называл нижнюю границу — берём −30% от максимума
+    if p.get('budget_min') is None:  # клиент не называл нижнюю границу — берём −30% от максимума
         p['budget_min'] = default_budget_min(p['budget_max'])
         p['summary'] = profile_summary(p)
     emit_profile(s)

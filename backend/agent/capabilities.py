@@ -5,7 +5,7 @@ from . import finance
 from .profile import missing_required,missing_search
 
 CORE_FIELDS=frozenset(('city','rooms','budget_max','budget_min','okrug','housing','rooms_options','cities','districts','prefer_center','center_required'))
-FILTER_FIELDS=frozenset(('features','poi','kitchen_min','area_min','not_first_floor','not_last_floor',
+FILTER_FIELDS=frozenset(('features','poi','kitchen_min','area_min','not_first_floor','not_last_floor','apartments',
                         'condition','material','year_min','metro_max_minutes','soft_criteria',
                         'clear_criteria','avoid_districts','filters','wishes'))
 
@@ -28,7 +28,7 @@ POLICIES={
     'ask_housing':Policy(('housing_needed',),('search','selection')),
     'ask_extras':Policy(('extras_needed',),('search','selection')),
     'ask_deposit':Policy(('deposit_needed','matcap_known'),('finance',)),
-    'mortgage_programs':Policy(('programs_needed','budget_known','payment','family_or_cash','matcap_known','deposit_known'),information=True),
+    'mortgage_programs':Policy(('programs_needed','budget_known','payment','family_or_cash','matcap_known','deposit_answered'),information=True),
     'savings_plan':Policy(('budget_known','saving_payment'),information=True),
     'affordable_budget':Policy(('affordability_requested',),information=True),
     'search_listings':Policy(('search_ready','guided_search'),('selection',)),
@@ -49,6 +49,7 @@ REASONS={
     'city_rooms':'Нужны город и число комнат.', 'profile_ready':'Нужны город, комнаты и бюджет.',
     'limit_needed':'Этот лимит уже подтверждён.', 'payment_needed':'Способ оплаты уже известен.',
     'family_needed':'Сведения о семье уже известны либо оплата своими средствами.',
+    'deposit_answered':'Сначала ask_deposit: нужна сумма первоначального взноса или решение отложить расчёт.',
     'housing_needed':'Рынок жилья уже известен.', 'programs_needed':'Расчёт программ уже актуален.',
     'payment':'Сначала уточните способ оплаты.', 'family_or_cash':'Для ипотечного расчёта нужны сведения о семье.',
     'saving_payment':'План накоплений нужен при накоплении взноса.', 'search_ready':'Для поиска нужны профиль, подтверждённый лимит и способ оплаты.',
@@ -97,8 +98,9 @@ def decision(s,name):
                          or s.requested_action=='ask_family',
         'housing_needed':not p.get('housing') or s.requested_action=='ask_housing',
         'extras_needed':s.red_lines_ok and not p.get('_extras_asked'),
-        'deposit_needed':p.get('payment') in ('mortgage_ready','mortgage_saving') and p.get('deposit') is None,
-        'deposit_known':p.get('payment')=='cash' or p.get('deposit') is not None,
+        'deposit_needed':(p.get('payment') in ('mortgage_ready','mortgage_saving') and p.get('deposit') is None
+                          and not p.get('_deposit_skipped')) or s.requested_action=='ask_deposit',
+        'deposit_answered':p.get('payment')=='cash' or p.get('deposit') is not None or bool(p.get('_deposit_skipped')),
         'matcap_known':p.get('payment')=='cash' or not p.get('children') or p.get('matcap') is not None,
         'programs_needed':not programs_current(s),'payment':bool(p.get('payment')),
         'family_or_cash':p.get('payment')=='cash' or p.get('children') is not None,

@@ -94,9 +94,7 @@ async def check_map(s, listings: list[dict], announce: bool = False, kinds=None)
 def score_into(pool: list[dict], comps: list[dict], profile: dict, meta: dict) -> None:
     """Справедливая цена, оценка и платёж по подходящей программе — для каждой новой квартиры."""
     for x in pool:
-        if x["id"] in meta:
-            continue
-        fp = fair_price(x, comps)
+        fp = meta[x['id']]['fair'] if x['id'] in meta else fair_price(x, comps)
         score = score_listing(x, profile, fp)
         pay = M.listing_payment(x, profile) if profile.get("payment") not in (None, "cash") else None
         if pay and pay["program"] == "семейная":
@@ -406,8 +404,11 @@ async def wait_selection(s,effective,result):
         s.request_intent='selection'
         s.selection_operation='rank'
     elif d.get('action')=='proceed':
-        s.call_targets=list(prefs.liked)
-        if not prefs.liked and batch:
+        selected=d.get('listing_id')
+        if selected and not any(x['id']==selected and selectable(x,prefs) for x in batch):
+            raise ActionError('Выберите квартиру из актуальной подборки для звонка.')
+        s.call_targets=[selected] if selected else list(prefs.liked)
+        if not selected and not prefs.liked and batch:
             # Кнопка без отметок отдельно спрашивает согласие на три текущих лучших.
             s.call_targets=[x['id'] for x in batch[:3]]
         s.request_intent='call'

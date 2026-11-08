@@ -69,11 +69,11 @@ function familyForm(ev) {
       <label data-age>Возраст младшего, полных лет<input type="number" min="0" max="25" step="1" name="youngest_age" value="${d.youngest_age}" placeholder="например, 4"></label>
       <div class="extras__row" data-cap-block><span class="extras__title">Маткапитал — есть или нет?</span>
         <div class="quick">
-          <button type="button" class="chip-btn${hasCap ? "" : " is-on"}" data-cap="no">Нет</button>
-          <button type="button" class="chip-btn${hasCap ? " is-on" : ""}" data-cap="yes">Есть</button>
+          <button type="button" class="chip-btn${hasCap ? "" : " is-on"}" data-cap-choice="no">Нет</button>
+          <button type="button" class="chip-btn${hasCap ? " is-on" : ""}" data-cap-choice="yes">Есть</button>
         </div>
       </div>
-      <label data-cap ${hasCap ? "" : "hidden"}>Сумма маткапитала, ₽<input type="number" min="0" step="1000" name="matcap" value="${d.matcap || d.matcap_default}"></label>
+      <label data-cap-amount ${hasCap ? "" : "hidden"}>Сумма маткапитала, ₽<input type="number" min="0" step="1000" name="matcap" value="${d.matcap || d.matcap_default}"></label>
       <p class="hint" data-cap-hint ${hasCap ? "" : "hidden"}>Сумма зависит от очерёдности ребёнка и региона — поправьте, если знаете точную.</p>
     </div>`;
 }
@@ -81,7 +81,7 @@ function familyForm(ev) {
 function bindFamilyForm(card) {
   const kids = card.querySelector("[name=children]");
   const age = card.querySelector("[data-age]");
-  const cap = card.querySelector("[data-cap]");
+  const cap = card.querySelector("[data-cap-amount]");
   const capBlock = card.querySelector("[data-cap-block]");
   const capHint = card.querySelector("[data-cap-hint]");
   const capInput = card.querySelector("[name=matcap]");
@@ -91,11 +91,11 @@ function bindFamilyForm(card) {
     if (cap) cap.hidden = !on;
     if (capHint) capHint.hidden = !on;
     if (capInput && on && !Number(capInput.value)) capInput.value = capInput.defaultValue || 0;
-    card.querySelectorAll("[data-cap]").forEach((b) =>
-      b.classList.toggle("is-on", (b.dataset.cap === "yes") === on));
+    card.querySelectorAll("[data-cap-choice]").forEach((b) =>
+      b.classList.toggle("is-on", (b.dataset.capChoice === "yes") === on));
   };
-  card.querySelectorAll("[data-cap]").forEach((b) =>
-    b.addEventListener("click", () => setCap(b.dataset.cap === "yes")));
+  card.querySelectorAll("[data-cap-choice]").forEach((b) =>
+    b.addEventListener("click", () => setCap(b.dataset.capChoice === "yes")));
   const sync = () => {
     const none = kids.value === "0";
     age.hidden = none;
@@ -204,25 +204,26 @@ export function confirmCard(ev) {
         <p class="hint">По умолчанию нижняя граница на 30% ниже верхней — квартиры дешевле в подборку не попадут.</p>
       </div>`;
     const step = Number(p.step) || 500000;
-    const floor = Number(p.floor) || 1000000;
+    const initialMin = p.budget_min != null ? Number(p.budget_min) : Math.round(p.budget_max * 0.7);
+    const floor = Math.min(Number(p.floor) || 1000000, initialMin, p.budget_max);
     const top = Math.max(Math.round((p.budget_max * 1.5) / step) * step, p.budget_max + step);
-    const lo0 = Math.max(floor, Math.min(Number(p.budget_min) || Math.round((p.budget_max * 0.7) / step) * step, p.budget_max - step));
+    const lo0 = Math.max(floor, Math.min(initialMin, p.budget_max));
     const rangeMin = extra.querySelector("[data-min-range]");
     const rangeMax = extra.querySelector("[data-max-range]");
     const fill = extra.querySelector("[data-fill]");
     const minLabel = extra.querySelector("[data-min-label]");
     const maxLabel = extra.querySelector("[data-max-label]");
     for (const input of [rangeMin, rangeMax]) {
-      input.min = String(floor); input.max = String(top); input.step = String(step);
+      // Preserve exact accepted values; snap only the handle the client moves.
+      input.min = String(floor); input.max = String(top); input.step = '1';
     }
     rangeMin.value = String(lo0);
-    rangeMax.value = String(Math.max(lo0 + step, p.budget_max));
+    rangeMax.value = String(p.budget_max);
     const draw = (changed) => {
       let lo = Number(rangeMin.value), hi = Number(rangeMax.value);
-      if (lo > hi - step) {
-        if (changed === "min") { lo = hi - step; rangeMin.value = String(lo); }
-        else { hi = lo + step; rangeMax.value = String(hi); }
-      }
+      if (changed === 'min') lo = Math.max(floor, Math.min(hi, Math.round(lo / step) * step));
+      if (changed === 'max') hi = Math.max(lo, Math.min(top, Math.round(hi / step) * step));
+      rangeMin.value = String(lo); rangeMax.value = String(hi);
       const span = top - floor || 1;
       fill.style.left = `${((lo - floor) / span) * 100}%`;
       fill.style.width = `${((hi - lo) / span) * 100}%`;
@@ -231,6 +232,17 @@ export function confirmCard(ev) {
     };
     rangeMin.addEventListener("input", () => draw("min"));
     rangeMax.addEventListener("input", () => draw("max"));
+    for (const [input, side] of [[rangeMin, 'min'], [rangeMax, 'max']]) {
+      input.addEventListener('keydown', (event) => {
+        const up = ['ArrowRight', 'ArrowUp'].includes(event.key);
+        const down = ['ArrowLeft', 'ArrowDown'].includes(event.key);
+        if (!up && !down) return;
+        event.preventDefault();
+        const value = Number(input.value);
+        input.value = String((up ? Math.floor(value / step) + 1 : Math.ceil(value / step) - 1) * step);
+        draw(side);
+      });
+    }
     draw();
     collect = () => ({ budget_min: Number(rangeMin.value), budget_max: Number(rangeMax.value) });
   }
@@ -370,7 +382,7 @@ export function resolved(ev) {
   const card = state.cards[ev.kind];
   if (ev.decision_id && card?.dataset?.decisionId && ev.decision_id !== card.dataset.decisionId) return;
   if (ev.kind === "selection") {
-    stage.querySelectorAll("[data-selection]").forEach((b) => (b.disabled = true));
+    stage.querySelectorAll("[data-selection], [data-choose]").forEach((b) => (b.disabled = true));
   } else if (card && !card.classList.contains("is-done")) {
     if (ev.kind === "clarify") card.classList.add("is-done");
     else settle(card, ev.label || (ev.approved === null ? "ответили сообщением" : ev.approved ? "да" : "нет"));
@@ -390,7 +402,7 @@ export function staleCards() {
   }
   state.cards = {};
   state.awaiting = null;
-  stage.querySelectorAll("[data-selection]").forEach((b) => (b.disabled = true));
+  stage.querySelectorAll("[data-selection], [data-choose]").forEach((b) => (b.disabled = true));
 }
 
 export function refreshPhoneAccess(){

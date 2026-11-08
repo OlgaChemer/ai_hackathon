@@ -19,7 +19,7 @@ def default_budget_min(budget_max: int | None) -> int | None:
     """−30% от максимума, округление до 100 тыс.: 30 млн → 21 млн."""
     if not budget_max:
         return None
-    return max(500_000, int(round(budget_max * BUDGET_MIN_SHARE / 100_000)) * 100_000)
+    return min(budget_max,max(500_000, int(round(budget_max * BUDGET_MIN_SHARE / 100_000)) * 100_000))
 
 
 EMPTY_PROFILE = {

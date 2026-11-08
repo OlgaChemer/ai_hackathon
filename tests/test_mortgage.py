@@ -122,7 +122,8 @@ class ProgramsTest(unittest.TestCase):
         r = M.programs(7_000_000, "Казань", {"children": 1, "youngest_age": 4}, housing="new", is_secondary=False)
         self.assertEqual(r["chosen"], "family")
         self.assertIn("Считаю для новостройки", r["explanation"])
-        pay = M.listing_payment({"price": 7_000_000, "city": "Казань", "is_new": True}, {"children": 1, "youngest_age": 4})
+        pay = M.listing_payment({"price": 7_000_000, "city": "Казань", "is_new": True},
+                                {"children": 1, "youngest_age": 4,"deposit":1_400_000})
         self.assertEqual((pay["program"], pay["rate"]), ("семейная", 0.10))
 
     def test_market_rate_depends_on_down_payment(self):
