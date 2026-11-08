@@ -185,6 +185,24 @@ class DistrictLabelsTest(GeoTestCase):
             self.assertEqual(quiet["status"], "confirmed")  # «тихо» — пожелание, не отсеивает квартиру
 
 
+class CityAreaFallbackTest(unittest.TestCase):
+    def test_boundary_named_differently(self):
+        """Граница «Пермский городской округ»: по точному имени не находится — берём область вокруг точки города."""
+        def fetch(query):
+            if 'area["boundary"="administrative"]["name"=' in query:
+                return []
+            if "is_in" in query:
+                return [{"type": "area", "id": 3600000077, "tags": {"name": "Пермский городской округ", "admin_level": "6"}},
+                        {"type": "area", "id": 3600000005, "tags": {"name": "Пермский край", "admin_level": "4"}},
+                        {"type": "area", "id": 3600000002, "tags": {"name": "Россия", "admin_level": "2"}}]
+            if '["place"="city"]' in query:
+                return [{"type": "node", "id": 1, "lat": 58.01, "lon": 56.23, "tags": {"name": "Пермь"}}]
+            return []
+        # «Пермский край» тоже содержит основу названия, но это регион (уровень 4) — его не берём
+        area_id, center = B.city_area({"name": "Пермь"}, fetch)
+        self.assertEqual((area_id, center), (3600000077, (58.01, 56.23)))
+
+
 class LocalPoiTest(GeoTestCase):
     def test_nearby_without_2gis(self):
         db.configure("sqlite://")

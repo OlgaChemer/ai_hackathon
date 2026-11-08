@@ -187,6 +187,15 @@ def city_area(cfg: dict, fetch=None) -> tuple[int, tuple[float, float]]:
                        f'area["boundary"="administrative"]["name"="город {name}"];);out ids tags;', 60, fetch)
         rank = {"4": 0, "6": 1, "5": 2, "8": 3}
         els = [e for e in els if (e.get("tags") or {}).get("admin_level") in rank]
+        if not els:
+            # граница названа иначе («Челябинский городской округ», «Пермский городской округ»): берём
+            # административные области, в которых лежит точка города, и выбираем ту, где есть основа названия
+            near = overpass(f'[out:json][timeout:60];node["place"="city"]["name"="{name}"];is_in;'
+                            f'area._["boundary"="administrative"]["admin_level"~"^(4|5|6|8)$"];out ids tags;', 60, fetch)
+            stem = name.casefold().replace("ё", "е")[:max(4, len(name) - 2)]
+            # уровень 4 — край/область/республика: городу федерального значения хватает поиска по точному имени
+            els = [e for e in near if (e.get("tags") or {}).get("admin_level") in ("6", "8", "5")
+                   and stem in (e["tags"].get("name") or "").casefold().replace("ё", "е")]
         els.sort(key=lambda e: rank[e["tags"]["admin_level"]])
         if not els:
             raise RuntimeError(f"{name}: граница города в OSM не найдена — задайте relation в backend.geodata.CITIES")
