@@ -253,7 +253,7 @@ def fetch_roads(name: str, area: str, fetch=None, log=print) -> dict:
         if e.get("geometry"):
             roads["rail"].append(thin([(p["lat"], p["lon"]) for p in e["geometry"] if p], ROAD_STEP))
     log(f"  {name}: крупных дорог {len(roads['major'])}, ж/д {len(roads['rail'])}")
-    if not roads["rail"] or len(roads["major"]) < 500:
+    if not roads["rail"] or len(roads["major"]) < 300:  # Уфа: 396 при полном ответе — так в OSM
         log(f"  {name}: подозрительно мало дорог или нет ж/д — проверьте: --cities {name} --roads")
     return roads
 
