@@ -115,7 +115,15 @@ def _family_after_subsidy(row: dict) -> int:
     return int(round(annuity(left, POST_SUBSIDY_RATE, row["years"] - SUBSIDY_YEARS), -2))
 
 
+def profile_down_payment(price: int, profile: dict) -> int | None:
+    """Наличные и маткапитал; неизвестные наличные не заменяются долей цены."""
+    cash=profile.get('deposit')
+    if cash is None:return None
+    return min(price,max(0,int(cash))+normalize_family(profile)['matcap'])
+
+
 def programs(price: int, city: str | None, family: dict | None, *, down_share: float = DEFAULT_DOWN_SHARE,
+             down_payment: int | None = None,
              is_secondary: bool = True, secondary_ok: bool | None = None, housing: str | None = None) -> dict:
     """Какие программы подходят для квартиры за price в городе city.
 
@@ -129,8 +137,9 @@ def programs(price: int, city: str | None, family: dict | None, *, down_share: f
     fam = normalize_family(family)
     if secondary_ok is None:
         secondary_ok = secondary_allowed(city)
-    down = int(round(price * down_share, -3))
-    matcap = fam["matcap"]
+    down = int(round(price * down_share, -3)) if down_payment is None else min(price,max(0,int(down_payment)))
+    down_share = down / price
+    matcap = min(fam["matcap"],down)
 
     # 1. Рыночная — доступна всегда (при одобрении банком)
     m_rate = market_rate(down_share)
@@ -195,10 +204,15 @@ def programs(price: int, city: str | None, family: dict | None, *, down_share: f
             limit_reason = (f"Кредит {_fmt(family_card['loan'])} больше лимита {_fmt(f_limit)}: "
                             f"нужен взнос от {_fmt(need_down)} вместо {_fmt(down)}.")
             reasons.append(limit_reason)
-        family_card["main_reason"] = place_reason if place_ok is False else limit_reason
-        if place_ok is True and limit_ok:
+        down_ok = down >= int(price * FAMILY_MIN_DOWN)
+        down_reason = None
+        if not down_ok:
+            down_reason=f"Для семейной нужен взнос от {_fmt(need_down)}; сейчас {_fmt(down)}."
+            reasons.append(down_reason)
+        family_card["main_reason"] = place_reason if place_ok is False else limit_reason or down_reason
+        if place_ok is True and limit_ok and down_ok:
             status = "ok"
-        elif place_ok is False or not limit_ok:
+        elif place_ok is False or not limit_ok or not down_ok:
             status = "no"
         else:
             status = "check"
@@ -279,14 +293,18 @@ def explain(cards: list[dict], chosen: dict, mc: dict | None, housing: str | Non
     return " ".join(parts)
 
 
-def listing_payment(listing: dict, profile: dict, price: int | None = None, down_share: float = DEFAULT_DOWN_SHARE) -> dict:
+def listing_payment(listing: dict, profile: dict, price: int | None = None, down_share: float | None = None) -> dict | None:
     """Ипотека для конкретной квартиры: новостройка — семейная, если подходит; вторичка — по правилам города.
 
     Для карточки подборки и плана сделки: программа, ставка, платёж и подсказка, если семейную
     закрывает только лимит («семейная — при взносе от …»).
+    Если наличные неизвестны, расчёт откладывается; down_share задаёт явное допущение для сравнения.
     """
     price = price or listing["price"]
-    r = programs(price, listing.get("city") or profile.get("city"), profile, down_share=down_share,
+    down = profile_down_payment(price,profile)
+    if down is None and down_share is None:return None
+    r = programs(price, listing.get("city") or profile.get("city"), profile,
+                 down_share=down_share if down_share is not None else DEFAULT_DOWN_SHARE,down_payment=down,
                  is_secondary=not listing.get("is_new"), housing="new" if listing.get("is_new") else "secondary")
     cards = {c["key"]: c for c in r["programs"]}
     chosen = cards[r["chosen"]]
@@ -326,15 +344,22 @@ def deal_costs(price: int, loan: int) -> dict:
 
 
 def mortgage_scenarios(price: int, monthly_income: int | None = None, down_available: int | None = None,
-                       rate: float | None = None, program: str | None = None, matcap: int = 0) -> dict:
-    """Три сценария ипотеки. rate=None — рыночная ставка Сбера (зависит от взноса), иначе ставка программы.
-    matcap — маткапитал: идёт во взнос, своих нужно меньше."""
-    costs = sum(deal_costs(price, int(price * (1 - DEFAULT_DOWN_SHARE))).values())
-    variants = [(f"Взнос {_pct(share)}, {years} лет", share, years) for share, years in POLICY["mortgage"]["scenarios"]]
+                       rate: float | None = None, program: str | None = None, matcap: int = 0,
+                       down_payment: int | None = None) -> dict:
+    """Фактический взнос (если указан) и три сравнительных сценария ипотеки.
+
+    rate=None — рыночная ставка Сбера (зависит от взноса), иначе ставка программы.
+    matcap входит во взнос: собственных денег нужно меньше.
+    """
+    variants = [(f"Взнос {_pct(share)}, {years} лет", int(price*share), years) for share, years in POLICY["mortgage"]["scenarios"]]
+    if down_payment is not None:
+        variants=[('Ваш первоначальный взнос',min(price,max(0,int(down_payment))),YEARS),
+                  *[('Для сравнения: '+title,down,years) for title,down,years in variants]]
     rows = []
-    for title, dp_share, years in variants:
-        down = int(price * dp_share)
+    for title, down, years in variants:
+        dp_share=down/price
         loan = price - down
+        costs = sum(deal_costs(price,loan).values())
         r = rate if rate is not None else market_rate(dp_share)
         pay = annuity(loan, r, years)
         rows.append({
@@ -346,14 +371,14 @@ def mortgage_scenarios(price: int, monthly_income: int | None = None, down_avail
             "cash_needed": max(0, down - matcap) + costs,
             "savings_gap": 0 if down_available is None else max(0, down - matcap + costs - down_available),
         })
-    best = next((r for r in rows if r["fits_income"] is not False), rows[0])
+    best = rows[0] if down_payment is not None else next((r for r in rows if r["fits_income"] is not False), rows[0])
     return {
         "rate": best["rate"],
         "program": program or "Рыночная ипотека Сбера",
         "matcap": matcap,
-        "deal_costs": costs,
+        "deal_costs": sum(deal_costs(price,best['loan']).values()),
         "scenarios": rows,
         "recommended": best["title"],
-        "approved": int(price * (1 - DEFAULT_DOWN_SHARE)),
+        "approved": best['loan'],
         "per_100k_discount": int(round(annuity(100_000, best["rate"], best["years"]))),
     }

@@ -11,6 +11,16 @@ from .numbers import fmt
 
 REQUIRED = {"city": "город", "budget_max": "бюджет", "rooms": "число комнат"}
 
+# Нижняя граница по умолчанию: клиент, готовый платить 30 млн, не должен получать 15.
+BUDGET_MIN_SHARE = 0.7
+
+
+def default_budget_min(budget_max: int | None) -> int | None:
+    """−30% от максимума, округление до 100 тыс.: 30 млн → 21 млн."""
+    if not budget_max:
+        return None
+    return min(budget_max,max(500_000, int(round(budget_max * BUDGET_MIN_SHARE / 100_000)) * 100_000))
+
 
 EMPTY_PROFILE = {
     "city": None,
@@ -22,9 +32,13 @@ EMPTY_PROFILE = {
     "filters": [],
     "seller_questions": [],
     "budget_max": None,
+    "budget_min": None,       # нижняя граница: ниже неё квартиры не предлагаем
+    "apartments": None,       # hide — не показывать, only — только апартаменты, any — всё равно
+    "deposit": None,          # наличные на первоначальный взнос, рубли
     "payment": None,          # cash | mortgage_ready | mortgage_saving
     "okrug": None,
     "districts": [],          # районы, которые клиент назвал (ищем в них)
+    "district_type": None,    # sleeping | quiet | prestige | business — тип района (agent/districts.py)
     "avoid_districts": [],    # районы, которые не показывать
     "not_first_floor": False,
     "not_last_floor": False,
@@ -84,7 +98,7 @@ def merge_profile(raw: dict, base: dict | None = None) -> dict:
     elif raw.get('rooms_options')==[] and 'rooms' not in raw:p['rooms']=None
     p["cities"] = list(dict.fromkeys(normalize_city(c) or c for c in p.get("cities") or []))[:3]
     p["city"] = normalize_city(p["city"]) or p["city"]
-    for key, cast in (("rooms", int), ("budget_max", int), ("kitchen_min", float), ("area_min", float), ("metro_max_minutes", int),
+    for key, cast in (("rooms", int), ("budget_max", int), ("budget_min", int), ("deposit", int), ("kitchen_min", float), ("area_min", float), ("metro_max_minutes", int),
                       ("children", int), ("youngest_age", int), ("year_min", int)):
         try:
             p[key] = cast(p[key]) if p[key] is not None else None
@@ -100,6 +114,8 @@ def merge_profile(raw: dict, base: dict | None = None) -> dict:
         p["payment"] = None
     if p.get("housing") not in (None, "secondary", "new", "both"):
         p["housing"] = None
+    if p.get("apartments") not in (None, "hide", "only", "any"):
+        p["apartments"] = None
     p["features"] = merge_features([k for k in p.get("features") or [] if k in FEATURES])
     p["poi"] = list(dict.fromkeys(k for k in p.get("poi") or [] if k in geo.POI))
     if p.get("condition") not in (None, "ready", "cosmetic", "repair", "any"):
@@ -142,6 +158,9 @@ def profile_summary(p: dict) -> str:
     where = ", ".join([p["city"], *(c for c in p.get("cities") or [] if c != p["city"])]) + (f", {p['okrug']}" if p.get("okrug") else "")
     if p.get("districts"):
         where += f" (район {', '.join(p['districts'])})"
+    if p.get('district_type'):
+        from .districts import LABELS
+        where += ' · '+LABELS.get(p['district_type'],p['district_type'])+' (оценка по геоданным)'
     extra = (["центр: до 5 км по прямой от опорной точки"] if p.get("center_required")
              else ["желательно ближе к центру"] if p.get("prefer_center") else [])
     from .listing_query import describe
@@ -173,7 +192,12 @@ def profile_summary(p: dict) -> str:
         extra.append("желательно, не обязательно: " + ", ".join(labels[k] for k in p["soft_criteria"]))
     tail = (", " + ", ".join(extra)) if extra else ""
     market = {"new": " в новостройке", "both": " в новостройке или на вторичке", "secondary": " на вторичном рынке"}.get(p.get("housing"), "")
-    budget=f"до {fmt(p['budget_max'])}" if p.get('budget_max') else 'без ограничения цены'
+    if p.get('budget_max') and p.get('budget_min'):
+        budget=f"от {fmt(p['budget_min'])} до {fmt(p['budget_max'])}"
+    elif p.get('budget_max'):
+        budget=f"до {fmt(p['budget_max'])}"
+    else:
+        budget='без ограничения цены'
     return f"Ищу {rooms}{market} в {where} {budget}{tail}."
 
 
@@ -182,9 +206,11 @@ def _stem(name: str) -> str:
 
 
 def in_districts(x: dict, districts: list[str] | None) -> bool:
-    """Объявление в районе, который назвал клиент («черемушек» ~ «Черёмушки»)."""
-    d = (x.get("district") or "").lower().replace("ё", "е")
-    return bool(d and districts and any(_stem(n) in d for n in districts))
+    """Объявление в районе, который назвал клиент («черемушек» ~ «Черёмушки»). Учитываем и микрорайоны
+    из выдачи Циана (cian_districts: «Сипайлово» внутри Октябрьского района Уфы)."""
+    names = [x.get("district") or "", *(row[1] for row in x.get("cian_districts") or [] if len(row) > 1 and row[1])]
+    names = [n.lower().replace("ё", "е") for n in names if n]
+    return bool(names and districts and any(_stem(n) in d for n in districts for d in names))
 
 
 def passes_hard_filters(x: dict, p: dict) -> bool:
@@ -193,6 +219,12 @@ def passes_hard_filters(x: dict, p: dict) -> bool:
     if p.get("rooms") is not None and x["rooms"] not in (p.get("rooms_options") or [p["rooms"]]):
         return False
     if p.get('budget_max') is not None and x["price"] > p["budget_max"] * 1.05:
+        return False
+    if p.get('budget_min') and x["price"] < p["budget_min"]:
+        return False
+    if p.get('apartments') == 'hide' and x.get('is_apartments'):
+        return False
+    if p.get('apartments') == 'only' and not x.get('is_apartments'):
         return False
     if p.get("not_first_floor") and "not_first_floor" not in p.get("soft_criteria", []) and x.get("floor") == 1:
         return False

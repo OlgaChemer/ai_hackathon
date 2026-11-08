@@ -248,8 +248,10 @@ async def prepare_deal(s, listing_id: str) -> dict:
         raise ActionError("Клиент ещё не выбрал эту квартиру — сначала plan_viewing.")
     x = _listing(s, listing_id)
     price, p = s.agreed[listing_id], s.profile
-    down = None if p.get("payment") == "cash" else (s.finance["down_payment"] if s.finance else int(p["budget_max"] * POLICY['mortgage']['default_down_share']))
-    pay = M.listing_payment(x, p, price=price, down_share=down / price) if down else None
+    pay = M.listing_payment(x, p, price=price) if p.get('payment')!='cash' else None
+    if p.get('payment')!='cash' and pay is None:
+        raise ActionError('Для плана с ипотекой нужна сумма взноса — сначала ask_deposit и mortgage_programs.')
+    down = pay['down'] if pay else None
     plan = deal_plan(x, price, down, rate=pay["rate"] if pay else None, program=pay["title"] if pay else None)
     s.push("result", step=8, kind="deal", data=plan)
     contract = ("договор уступки прав по ДДУ" if plan["assignment"]

@@ -48,7 +48,7 @@ def patch(live_llm=False):
                 x.setdefault('nearby_evidence',{})[kind]={'source':'fixture','distance_kind':'straight_line'}
         return True
 
-    async def market_search(city,rooms,budget,page=1,okrug=None,new=False):
+    async def market_search(city,rooms,budget,page=1,okrug=None,new=False,districts=()):
         lat,lng=CITY_CENTERS.get(city,(55.7986,49.1053))
         rows=[listing(id=f'market-fixture-{city}-{rooms}-{new}-{page}-{i}',city=city,rooms=rooms if rooms is not None else 1+i%4,is_new=new,
                       price=(20_000_000+int(new)*10_000_000+i*200_000 if rooms is not None else 8_000_000+(1+i%4)*2_000_000+int(new)*2_000_000+i*100_000),area=60+i,

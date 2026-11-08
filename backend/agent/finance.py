@@ -20,7 +20,7 @@ def programs_key(profile: dict) -> tuple:
     """Ключ финансового расчёта не зависит от сессии или реестра инструментов."""
     if profile.get('payment') == 'cash':
         return FINGERPRINT, profile.get('budget_max'), 'cash'
-    return (FINGERPRINT,) + tuple(profile.get(k) for k in ('budget_max', 'city', 'payment', 'housing', 'children', 'youngest_age', 'matcap'))
+    return (FINGERPRINT,) + tuple(profile.get(k) for k in ('budget_max', 'city', 'payment', 'housing', 'children', 'youngest_age', 'matcap', 'deposit', '_deposit_skipped'))
 
 
 PRODUCTS = POLICY['savings']['products']

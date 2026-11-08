@@ -194,7 +194,7 @@ class Session:
     def invalidate_decisions(self, *, purchase=True, financial=False):
         """Смена условий отзывает прежний выбор/план, но сохраняет историю процесса."""
         had_purchase=bool(self.calls or self.agreed or self.chosen or self.current or self.journal or self.status.get(8)=='done')
-        had_finance=bool(self.programs_result or self.mortgage or self.finance or self.status.get(2))
+        had_finance=bool(self.programs_result or self.mortgage or self.finance or self.status.get(2)=='done')
         if financial:
             self.programs_key = self.programs_result = None
             self.profile.pop('_programs_cache',None)
@@ -314,6 +314,14 @@ class Session:
             if approved is not None and type(approved) is not bool:
                 raise ValueError("Нужно явное решение клиента")
             validation.confirmation(kind, data)
+            if kind=='selection' and data.get('listing_id') is not None:
+                from .profile import passes_hard_filters
+                from .criteria import evaluate
+                selected=next((x for x in self.shown if x['id']==data['listing_id']),None)
+                if (approved is not True or data.get('action')!='proceed' or self.selection_profile_stale
+                        or selected is None or not passes_hard_filters(selected,self.profile)
+                        or evaluate(self.profile,selected)['status']=='rejected'):
+                    raise ValueError('Выберите квартиру из актуальной подборки для звонка.')
         except ValueError as exc:
             raise guard.InputRejected(str(exc)) from exc
         if kind=='call' and approved and data.get('mode')=='phone':

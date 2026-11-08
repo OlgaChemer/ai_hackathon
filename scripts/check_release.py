@@ -2,6 +2,7 @@
 import argparse
 from datetime import datetime,timezone
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -36,7 +37,10 @@ def main():
         started=time.monotonic()
         try:
             with (directory/(name+'.log')).open('w') as output:
-                completed=subprocess.run(cmd,cwd=ROOT,stdout=output,stderr=subprocess.STDOUT,timeout=timeout)
+                # Сценарные тесты задают ответы модели. Активный локальный разбор
+                # проверяется отдельно с явным on на всех 18 городах и в браузере.
+                env={**os.environ,'RULE_PARSER':'shadow'} if name=='python' else None
+                completed=subprocess.run(cmd,cwd=ROOT,stdout=output,stderr=subprocess.STDOUT,timeout=timeout,env=env)
             code=completed.returncode
         except (OSError,subprocess.TimeoutExpired):code=124
         outcomes.append({'step':name,'exit_code':code,'seconds':round(time.monotonic()-started,2)})

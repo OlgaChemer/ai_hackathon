@@ -68,6 +68,7 @@ function renderChatResult(step) {
 function syncSelectionButtons() {
   stage.querySelectorAll("[data-selection]").forEach((b) => (b.disabled = state.awaiting !== "selection" ||
     (b.dataset.selection === 'proceed' && !state.results[4]?.cards?.length)));
+  stage.querySelectorAll("[data-choose]").forEach((b) => (b.disabled = state.awaiting !== "selection"));
 }
 
 // ------------------------------------------------------------------ настоящий звонок (МТС Exolve)
@@ -478,22 +479,23 @@ async function sendText(text) {
 }
 
 /** said — фраза, если решение сказано голосом (попадёт в историю диалога). */
-async function selectionAction(action, said = null) {
+async function selectionAction(action, said = null, listingId = null) {
   if (state.awaiting !== "selection") return;
   if (action === "proceed" && !state.marks.liked.size) {
     if (said) talk.say("Вы ничего не отметили — позвоню по трём лучшим вариантам.");
     else if (!confirm("Вы ничего не отметили. Позвонить по трём лучшим вариантам?")) return;
   }
   state.awaiting = null;
-  stage.querySelectorAll("[data-selection]").forEach((b) => (b.disabled = true));
-  const label = action === "proceed" ? "звонить по отмеченным" : action === 'liked' ? 'показать понравившиеся' : "подобрать ещё";
+  syncSelectionButtons();
+  const label = listingId ? 'позвонить по выбранной квартире' : action === "proceed" ? "звонить по отмеченным" : action === 'liked' ? 'показать понравившиеся' : "подобрать ещё";
   try {
     await api.confirm(state.sid, "selection", true, {
       action, liked: [...state.marks.liked], disliked: [...state.marks.disliked], _label: label, ...(said ? { _said: said } : {}),
+      ...(listingId ? {listing_id: listingId} : {}),
     });
   } catch (e) {
     state.awaiting = "selection";
-    stage.querySelectorAll("[data-selection]").forEach((b) => (b.disabled = false));
+    syncSelectionButtons();
     addMsg("error", `Не удалось отправить отметки: ${e.message}`);
   }
 }
@@ -544,6 +546,16 @@ async function handleResultClick(e) {
   const mapButton = e.target.closest('[data-show-map]');
   if (mapButton && !mapButton.disabled) {
     await focusMap(stage.querySelector('[data-map]'), mapButton.dataset.showMap);
+    return;
+  }
+  const choose = e.target.closest("[data-choose]");
+  if (choose && !choose.disabled) {
+    if (state.awaiting !== "selection") {
+      addMsg("agent", "Подборка ещё обновляется — кнопка «Выбрать» станет активной через пару секунд.");
+      return;
+    }
+    setVote(choose.dataset.choose, "up", false);   // отметить как выбранную
+    selectionAction("proceed", null, choose.dataset.choose);
     return;
   }
   const vote = e.target.closest("[data-vote]");
@@ -621,7 +633,13 @@ initShell({ start });
 window.addEventListener("hashchange", route);
 window.addEventListener("popstate", route);
 initChats({ open: openChat, create: newChat, current: () => state.sid });
-initAccount({ onChange: () => refreshChats() });
+initAccount({
+  onChange: (why) => {
+    // после выхода подбор аккаунта в этом браузере недоступен — не оставляем его на экране
+    if (why === "logout" && state.sid) newChat();
+    refreshChats();
+  },
+});
 if (fromHash()) openChat(fromHash());
 else {
   addMsg("agent", "Здравствуйте! Я агент покупки квартиры. Расскажите текстом или голосом, что ищете: город, бюджет, комнаты и что для вас важно.");

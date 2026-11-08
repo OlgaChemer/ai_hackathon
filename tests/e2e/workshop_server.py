@@ -43,7 +43,8 @@ def setup():
         from copy import deepcopy
         with db.session() as s:
             chat=s.get(Chat,'ui-workshop');saved=deepcopy(chat.state)
-            profile=merge_profile({'rooms_options':[int(payload['rooms'])]},saved['data']['profile'])
+            profile=merge_profile({'rooms_options':[int(payload['rooms'])],
+                **{k:payload[k] for k in ('payment','housing','apartments') if payload.get(k)}},saved['data']['profile'])
             if payload.get('market_sample'):
                 profile=merge_profile({'poi':['park']},profile)
                 saved['data']['search']={'listings':[listing(id='market-'+str(i),city='Москва',rooms=profile['rooms'],

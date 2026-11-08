@@ -67,19 +67,42 @@ function familyForm(ev) {
         </select>
       </label>
       <label data-age>Возраст младшего, полных лет<input type="number" min="0" max="25" step="1" name="youngest_age" value="${d.youngest_age}" placeholder="например, 4"></label>
-      <label class="radio"><input type="checkbox" name="has_matcap" ${hasCap ? "checked" : ""}>Есть неизрасходованный маткапитал</label>
-      <label data-cap ${hasCap ? "" : "hidden"}>Сумма маткапитала, ₽<input type="number" min="0" step="1000" name="matcap" value="${d.matcap || d.matcap_default}"></label>
+      <div class="extras__row" data-cap-block><span class="extras__title">Маткапитал — есть или нет?</span>
+        <div class="quick">
+          <button type="button" class="chip-btn${hasCap ? "" : " is-on"}" data-cap-choice="no">Нет</button>
+          <button type="button" class="chip-btn${hasCap ? " is-on" : ""}" data-cap-choice="yes">Есть</button>
+        </div>
+      </div>
+      <label data-cap-amount ${hasCap ? "" : "hidden"}>Сумма маткапитала, ₽<input type="number" min="0" step="1000" name="matcap" value="${d.matcap || d.matcap_default}"></label>
+      <p class="hint" data-cap-hint ${hasCap ? "" : "hidden"}>Сумма зависит от очерёдности ребёнка и региона — поправьте, если знаете точную.</p>
     </div>`;
 }
 
 function bindFamilyForm(card) {
   const kids = card.querySelector("[name=children]");
   const age = card.querySelector("[data-age]");
-  const has = card.querySelector("[name=has_matcap]");
-  const cap = card.querySelector("[data-cap]");
-  const sync = () => { age.hidden = kids.value === "0"; cap.hidden = !has.checked; };
+  const cap = card.querySelector("[data-cap-amount]");
+  const capBlock = card.querySelector("[data-cap-block]");
+  const capHint = card.querySelector("[data-cap-hint]");
+  const capInput = card.querySelector("[name=matcap]");
+  let hasCap = capInput && !cap.hidden;
+  const setCap = (on) => {
+    hasCap = on;
+    if (cap) cap.hidden = !on;
+    if (capHint) capHint.hidden = !on;
+    if (capInput && on && !Number(capInput.value)) capInput.value = capInput.defaultValue || 0;
+    card.querySelectorAll("[data-cap-choice]").forEach((b) =>
+      b.classList.toggle("is-on", (b.dataset.capChoice === "yes") === on));
+  };
+  card.querySelectorAll("[data-cap-choice]").forEach((b) =>
+    b.addEventListener("click", () => setCap(b.dataset.capChoice === "yes")));
+  const sync = () => {
+    const none = kids.value === "0";
+    age.hidden = none;
+    if (capBlock) capBlock.hidden = none;   // без детей маткапитала не бывает
+    setCap(none ? false : hasCap);
+  };
   kids.addEventListener("change", sync);
-  has.addEventListener("change", sync);
   sync();
   return () => {
     const children = Number(kids.value);
@@ -87,7 +110,7 @@ function bindFamilyForm(card) {
     return {
       children,
       youngest_age: children && ageVal !== "" ? Number(ageVal) : null,
-      matcap: has.checked ? Number(card.querySelector("[name=matcap]").value) || 0 : 0,
+      matcap: hasCap ? Number(card.querySelector("[name=matcap]").value) || 0 : 0,
     };
   };
 }
@@ -166,12 +189,129 @@ export function confirmCard(ev) {
       <dl class="redlines">
         <dt>Территория</dt><dd>${[p.city, ...(p.cities || []).filter(c => c !== p.city)].join(", ")}</dd>
         <dt>Комнат</dt><dd>${p.rooms_options?.length > 1 ? p.rooms_options.join("–") : p.rooms === 0 ? "студия" : p.rooms}</dd>
-        <dt>Агент соглашается сам</dt><dd>${p.authority_rule}</dd>
+        <dt>Торгуюсь сам</dt><dd>${p.authority_rule}</dd>
       </dl>
-      <label style="margin-top:8px">Бюджет, ₽ — выше агент не пойдёт
-        <input type="number" step="50000" min="1000000" value="${p.budget_max}" data-budget>
-      </label>`;
-    collect = () => ({ budget_max: Number(extra.querySelector("[data-budget]").value) || p.budget_max });
+      <div class="price-range" data-price-range>
+        <div class="price-range__head">
+          <span>Ниже не предлагаю — <b data-min-label></b></span>
+          <span>Выше не торгуюсь — <b data-max-label></b></span>
+        </div>
+        <div class="price-range__track">
+          <div class="price-range__fill" data-fill></div>
+          <input type="range" data-min-range aria-label="Нижняя граница цены">
+          <input type="range" data-max-range aria-label="Верхняя граница цены">
+        </div>
+        <p class="hint">По умолчанию нижняя граница на 30% ниже верхней — квартиры дешевле в подборку не попадут.</p>
+      </div>`;
+    const step = Number(p.step) || 500000;
+    const initialMin = p.budget_min != null ? Number(p.budget_min) : Math.round(p.budget_max * 0.7);
+    const floor = Math.min(Number(p.floor) || 1000000, initialMin, p.budget_max);
+    const top = Math.max(Math.round((p.budget_max * 1.5) / step) * step, p.budget_max + step);
+    const lo0 = Math.max(floor, Math.min(initialMin, p.budget_max));
+    const rangeMin = extra.querySelector("[data-min-range]");
+    const rangeMax = extra.querySelector("[data-max-range]");
+    const fill = extra.querySelector("[data-fill]");
+    const minLabel = extra.querySelector("[data-min-label]");
+    const maxLabel = extra.querySelector("[data-max-label]");
+    for (const input of [rangeMin, rangeMax]) {
+      // Preserve exact accepted values; snap only the handle the client moves.
+      input.min = String(floor); input.max = String(top); input.step = '1';
+    }
+    rangeMin.value = String(lo0);
+    rangeMax.value = String(p.budget_max);
+    const draw = (changed) => {
+      let lo = Number(rangeMin.value), hi = Number(rangeMax.value);
+      if (changed === 'min') lo = Math.max(floor, Math.min(hi, Math.round(lo / step) * step));
+      if (changed === 'max') hi = Math.max(lo, Math.min(top, Math.round(hi / step) * step));
+      rangeMin.value = String(lo); rangeMax.value = String(hi);
+      const span = top - floor || 1;
+      fill.style.left = `${((lo - floor) / span) * 100}%`;
+      fill.style.width = `${((hi - lo) / span) * 100}%`;
+      minLabel.textContent = rub(lo);
+      maxLabel.textContent = rub(hi);
+    };
+    rangeMin.addEventListener("input", () => draw("min"));
+    rangeMax.addEventListener("input", () => draw("max"));
+    for (const [input, side] of [[rangeMin, 'min'], [rangeMax, 'max']]) {
+      input.addEventListener('keydown', (event) => {
+        const up = ['ArrowRight', 'ArrowUp'].includes(event.key);
+        const down = ['ArrowLeft', 'ArrowDown'].includes(event.key);
+        if (!up && !down) return;
+        event.preventDefault();
+        const value = Number(input.value);
+        input.value = String((up ? Math.floor(value / step) + 1 : Math.ceil(value / step) - 1) * step);
+        draw(side);
+      });
+    }
+    draw();
+    collect = () => ({ budget_min: Number(rangeMin.value), budget_max: Number(rangeMax.value) });
+  }
+  if (ev.kind === "extras") {
+    const p = ev.payload || {};
+    const groups = [
+      { key: "housing", title: "Тип жилья", options: [["secondary", "Вторичка"], ["new", "Новостройка"], ["both", "Всё равно"]] },
+      { key: "apartments", title: "Апартаменты", options: [["hide", "Не показывать"], ["only", "Только апартаменты"], ["any", "Всё равно"]] },
+      { key: "condition", title: "Ремонт", options: [["repair", "Без ремонта"], ["cosmetic", "Косметический"], ["ready", "Евроремонт"], ["ready", "Дизайнерский"]] },
+    ];
+    const state = {
+      housing: p.housing || null,
+      apartments: p.apartments || null,
+      condition: p.condition || null,
+      not_first: !!p.not_first_floor,
+      not_last: !!p.not_last_floor,
+      picked: {},                      // индекс выбранного варианта в группе (для «Евроремонт» и «Дизайнерский»)
+    };
+    const box = extra.querySelector("[data-extras]") || extra;
+    const render = () => {
+      const single = (g) => g.options.map(([value, label], i) => {
+        const on = state.picked[g.key] === i;
+        return `<button type="button" class="chip-btn${on ? " is-on" : ""}" data-group="${g.key}" data-index="${i}" data-value="${value}">${label}</button>`;
+      }).join("");
+      const floor = (key, label, on) =>
+        `<button type="button" class="chip-btn${on ? " is-on" : ""}" data-group="floor" data-value="${key}">${label}</button>`;
+      box.innerHTML = `<div class="extras">
+        ${groups.map((g) => `<div class="extras__row"><span class="extras__title">${g.title}</span><div class="quick">${single(g)}</div></div>`).join("")}
+        <div class="extras__row"><span class="extras__title">Этаж</span><div class="quick">
+          ${floor("not_first", "Не первый", state.not_first)}${floor("not_last", "Не последний", state.not_last)}
+        </div></div>
+      </div>`;
+      box.querySelectorAll("[data-group]").forEach((b) => b.addEventListener("click", () => {
+        const group = b.dataset.group;
+        if (group === "floor") {
+          const key = b.dataset.value === "not_last" ? "not_last" : "not_first";
+          state[key] = !state[key];
+        } else {
+          const idx = Number(b.dataset.index);
+          const g = groups.find((x) => x.key === group);
+          state.picked[group] = state.picked[group] === idx ? null : idx;
+          state[group] = state.picked[group] === null ? null : g.options[idx][0];
+        }
+        render();
+      }));
+    };
+    render();
+    collect = () => {
+      const data = { not_first_floor: state.not_first, not_last_floor: state.not_last };
+      if (state.housing) data.housing = state.housing;
+      if (state.apartments) data.apartments = state.apartments;
+      if (state.condition) data.condition = state.condition;
+      return data;
+    };
+  }
+  if (ev.kind === "deposit") {
+    const p = ev.payload || {};
+    const need = Number(p.need) || Math.round((p.budget_max || 0) * 0.2);
+    const quick = [...new Set([1000000, need, 3000000, 5000000].filter((v) => v > 0))];
+    extra.innerHTML = html`
+      <label style="margin-top:8px">Наличные на первый взнос, ₽
+        <input type="number" min="0" step="100000" value="${need}" data-deposit>
+      </label>
+      <div class="quick">${html.raw(quick.map((v) => html`<button class="chip-btn" data-deposit-quick="${v}">${rub(v)}</button>`).join(""))}</div>
+      <p class="hint">Для квартиры за ${rub(p.budget_max || 0)} взнос ${Math.round((Number(p.share) || 0.2) * 100)}% — это ${rub(need)}. Маткапитал считаю отдельно.</p>`;
+    const input = extra.querySelector("[data-deposit]");
+    extra.querySelectorAll("[data-deposit-quick]").forEach((b) =>
+      b.addEventListener("click", () => { input.value = b.dataset.depositQuick; }));
+    collect = () => ({ deposit: Math.max(0, Number(input.value) || 0) });
   }
   if (ev.kind === "finance") {
     extra.innerHTML = financeForm(ev);
@@ -193,6 +333,8 @@ export function confirmCard(ev) {
 
   const buttons = {
     red_lines: [["Подтвердить рамки", true, {}], ["Изменить запрос", false, {}]],
+    extras: [["Применить", true, {}], ["Пропустить", false, {}]],
+    deposit: [["Сохранить взнос", true, {}], ["Пропустить", false, {}]],
     finance: ev.price ? [["Рассчитать стратегию", true, {}], ["Пропустить", false, {}]] : [["Посчитать бюджет", true, {}]],
     payment: [["Наличными — вся сумма есть", true, { payment: "cash" }], ["Ипотека, на взнос хватает", true, { payment: "mortgage_ready" }], ["Ипотека, взнос ещё копим", true, { payment: "mortgage_saving" }]],
     family: [["Подобрать программу", true, {}], ["Пропустить", false, {}]],
@@ -210,7 +352,9 @@ export function confirmCard(ev) {
   const hint = voiceHint(ev);
   card.dataset.hint = hint;
   const spoken = {
-    red_lines: () => `Подтвердите верхний лимит покупки: ${[ev.payload.city, ...(ev.payload.cities || [])].join(", ")}, ${roomDescription(ev.payload.rooms_options?.length ? ev.payload.rooms_options : [ev.payload.rooms])}, до ${rub(ev.payload.budget_max)}. Выше этой суммы я не пойду. Итоговую цену подтверждаете вы.`,
+    red_lines: () => `Подтвердите диапазон цены: ${[ev.payload.city, ...(ev.payload.cities || [])].join(", ")}, ${roomDescription(ev.payload.rooms_options?.length ? ev.payload.rooms_options : [ev.payload.rooms])}, от ${rub(ev.payload.budget_min || Math.round(ev.payload.budget_max * 0.7))} до ${rub(ev.payload.budget_max)}. Выше не пойду, ниже предлагать не буду. Итоговую цену подтверждаете вы.`,
+    deposit: () => "Сколько наличных есть на первоначальный взнос? От суммы зависят ставка и платёж.",
+    extras: () => "Четыре быстрых вопроса: тип жилья, апартаменты, ремонт и этаж. Можно пропустить — тогда ищу по известному.",
     finance: () => `${ev.title}.`,
     payment: () => `${ev.title}`,
     family: () => "Есть ли у вас дети? Возраст и маткапитал можно указать на карточке.",
@@ -238,7 +382,7 @@ export function resolved(ev) {
   const card = state.cards[ev.kind];
   if (ev.decision_id && card?.dataset?.decisionId && ev.decision_id !== card.dataset.decisionId) return;
   if (ev.kind === "selection") {
-    stage.querySelectorAll("[data-selection]").forEach((b) => (b.disabled = true));
+    stage.querySelectorAll("[data-selection], [data-choose]").forEach((b) => (b.disabled = true));
   } else if (card && !card.classList.contains("is-done")) {
     if (ev.kind === "clarify") card.classList.add("is-done");
     else settle(card, ev.label || (ev.approved === null ? "ответили сообщением" : ev.approved ? "да" : "нет"));
@@ -258,7 +402,7 @@ export function staleCards() {
   }
   state.cards = {};
   state.awaiting = null;
-  stage.querySelectorAll("[data-selection]").forEach((b) => (b.disabled = true));
+  stage.querySelectorAll("[data-selection], [data-choose]").forEach((b) => (b.disabled = true));
 }
 
 export function refreshPhoneAccess(){

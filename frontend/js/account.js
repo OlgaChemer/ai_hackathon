@@ -1,7 +1,7 @@
 // Вход и регистрация. Без входа диалоги живут в этом браузере (cookie); после входа они переходят
 // в аккаунт и открываются с любого устройства.
 import { api } from "./api.js";
-import { el, html } from "./format.js";
+import { el, html, plural } from "./format.js";
 
 let user = null;
 let onChange = () => {};
@@ -30,10 +30,10 @@ function menu(slot) {
     <p class="account-email">${user.email}</p>
     <button role="menuitem" data-logout>Выйти</button></div>`);
   m.querySelector("[data-logout]").addEventListener("click", async () => {
-    try { await api.logout(); } catch { /* cookie всё равно сотрём при следующем входе */ }
+    try { await api.logout(); } catch { notify('Не удалось выйти. Повторите попытку.');return; }
     user = null;
     render();
-    onChange();
+    onChange("logout"); // подборы аккаунта в этом браузере больше не видны — открытый закрываем
   });
   slot.append(m);
   const close = (e) => {
@@ -52,8 +52,8 @@ function openDialog(mode) {
       <form method="dialog" class="auth-form">
         <h3 id="authTitle">${reg ? "Регистрация" : "Вход"}</h3>
         <p class="auth-lead">${reg
-          ? "Диалоги этого браузера перейдут в аккаунт — их можно будет открыть с любого устройства."
-          : "Войдите, чтобы видеть свои диалоги на любом устройстве."}</p>
+          ? "Подборы этого браузера перейдут в аккаунт — их можно будет открыть с любого устройства."
+          : "Подборы этого браузера перейдут в аккаунт, и вы увидите все свои подборы на любом устройстве."}</p>
         ${html.raw(reg ? html`<label>Имя<input name="name" autocomplete="name" maxlength="120"></label>` : "")}
         <label>Почта<input name="email" type="email" required autocomplete="email"></label>
         <label>Пароль<input name="password" type="password" required minlength="${reg ? 8 : 1}"
@@ -84,7 +84,8 @@ function openDialog(mode) {
       user = r.user;
       d.close();
       render();
-      onChange();
+      onChange("login");
+      if (r.moved_chats > 0) notify(`Перенесли в аккаунт ${r.moved_chats} ${plural(r.moved_chats, "подбор", "подбора", "подборов")} из этого браузера — ${r.moved_chats === 1 ? "он откроется" : "они откроются"} с любого устройства.`);
     } catch (err) {
       error.textContent = err.message;
       error.hidden = false;
@@ -93,6 +94,14 @@ function openDialog(mode) {
   });
   d.addEventListener("close", () => d.remove());
   d.showModal();
+}
+
+/** Короткое уведомление внизу экрана (исчезает само). */
+function notify(text) {
+  document.querySelector(".account-toast")?.remove();
+  const n = el(html`<div class="cookie-note account-toast" role="status"><p>${text}</p></div>`);
+  document.body.append(n);
+  setTimeout(() => n.remove(), 6000);
 }
 
 function cookieNotice() {

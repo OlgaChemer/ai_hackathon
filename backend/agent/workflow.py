@@ -16,6 +16,17 @@ def pending_calls(s):
     return [lid for lid in s.call_targets if lid not in s.calls and lid not in attempted]
 
 
+def next_finance_action(s):
+    """Ипотечная анкета имеет тот же порядок при подборе и перед звонком."""
+    if s.profile.get('payment') not in ('mortgage_ready','mortgage_saving') or not s.profile.get('budget_max'):
+        return None
+    for name in ('ask_family','ask_deposit','mortgage_programs'):
+        if available(s,name):return name
+    if s.profile.get('payment')=='mortgage_saving' and s.finance is None and available(s,'savings_plan'):
+        return 'savings_plan'
+    return None
+
+
 def next_search_action(s):
     """Только явное рабочее намерение разрешает продолжение без нового ответа клиента."""
     if s.requested_action and available(s,s.requested_action):return s.requested_action
@@ -25,6 +36,8 @@ def next_search_action(s):
     if s.request_intent=='call':
         for name in ('confirm_red_lines','ask_payment'):
             if available(s,name):return name
+        finance_action=next_finance_action(s)
+        if finance_action:return finance_action
         if available(s,'call_seller') and pending_calls(s):return 'call_seller'
         return None
     if s.request_intent=='selection' and s.selection_operation in ('compare','analyze'):
@@ -40,6 +53,10 @@ def next_search_action(s):
     # Для уже полностью сформулированной покупки сохраняем начальную карточку
     # лимита. Исследования и широкий поиск не требуют заполнить этот профиль.
     if not missing_required(s.profile) and available(s,'confirm_red_lines'):return 'confirm_red_lines'
+    if s.red_lines_ok and not s.profile.get('_extras_asked') and available(s,'ask_extras'):return 'ask_extras'
+    if s.profile.get('budget_max'):
+        finance_action=next_finance_action(s)
+        if finance_action:return finance_action
     if s.search is None:
         return "search_listings" if available(s, "search_listings") else None
     if not s.shown or s.selection_dirty:

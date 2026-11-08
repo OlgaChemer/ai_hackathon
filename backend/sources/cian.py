@@ -40,7 +40,8 @@ REDIRECTS = (301, 302, 303, 307, 308)
 # город -> (код региона, поддомен, основа названия для проверки заголовка страницы).
 # Поддомены семи городов проверены; остальные Циан называет сам редиректом — запоминаем (SUBS_FILE).
 SUBDOMAINS = {"Москва": "www", "Санкт-Петербург": "spb", "Казань": "kazan", "Новосибирск": "novosibirsk",
-              "Екатеринбург": "ekb", "Нижний Новгород": "nn", "Краснодар": "krasnodar"}
+              "Екатеринбург": "ekb", "Нижний Новгород": "nn", "Краснодар": "krasnodar",
+              "Уфа": "ufa"}  # регион Уфы 176245 и поддомен проверены на ufa.cian.ru 06.11.2026
 TITLE_STEMS = {"Великий Новгород": "велик", "Московская область": "московск", "Москва": "москв", "Нижний Новгород": "нижн"}
 REGIONS = {city: (region, SUBDOMAINS.get(city, "www"), TITLE_STEMS.get(city) or city_stem(city))
            for city, region in CIAN_REGIONS.items()}
@@ -118,7 +119,8 @@ def redirect_target(url: str, location: str) -> str | None:
     return target if urlparse(target).scheme == "https" and (host == "cian.ru" or host.endswith(".cian.ru")) else None
 
 
-def build_url(city: str, rooms: int, budget: int | None, page: int = 1, okrug: str | None = None, new: bool = False) -> str:
+def build_url(city: str, rooms: int, budget: int | None, page: int = 1, okrug: str | None = None, new: bool = False,
+              district_ids: tuple[int, ...] = ()) -> str:
     """Свежие объявления, только целые квартиры (flat_share=2 — без долей); object_type: 1 — вторичка, 2 — новостройки;
     сортировка по дате — без перекоса в продвигаемые премиум-объекты."""
     region, sub, _ = REGIONS[city]
@@ -128,9 +130,68 @@ def build_url(city: str, rooms: int, budget: int | None, page: int = 1, okrug: s
            f"&region={region}&{room_param}&object_type%5B0%5D={2 if new else 1}&flat_share=2&sort=creation_date_desc&p={page}")
     if budget:
         url += f"&maxprice={int(budget * 1.05)}"
-    if city == "Москва" and okrug in MOSCOW_OKRUGS:
+    if district_ids:  # районы, которые назвал клиент или подобрал агент (id из выдачи Циана)
+        url += "".join(f"&district%5B{i}%5D={d}" for i, d in enumerate(district_ids[:MAX_DISTRICTS]))
+    elif city == "Москва" and okrug in MOSCOW_OKRUGS:
         url += f"&district%5B0%5D={MOSCOW_OKRUGS[okrug]}"
     return url
+
+
+# ------------------------------------------------------------------ id районов Циана
+# Циан фильтрует выдачу по id района (district[i]=id). Id берём из самих объявлений (geo.districts[].id):
+# каждая живая выдача пополняет справочник, ночной обход — тоже. Нет id — ищем без фильтра и отбираем по названию.
+MAX_DISTRICTS = 20
+DISTRICTS_FILE = CACHE_DIR / "districts.json"
+_district_ids: dict[str, dict[str, int]] | None = None
+
+
+def _dnorm(name: str) -> str:
+    return " ".join((name or "").casefold().replace("ё", "е").replace("-", " ").split())
+
+
+def _districts_table() -> dict[str, dict[str, int]]:
+    global _district_ids
+    if _district_ids is None:
+        try:
+            _district_ids = json.loads(DISTRICTS_FILE.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            _district_ids = {}
+    return _district_ids
+
+
+def learn_districts(city: str, listings: list[dict]) -> int:
+    """Запомнить id районов из выдачи. Возвращает, сколько новых."""
+    table = _districts_table().setdefault(city, {})
+    added = 0
+    for x in listings:
+        for did, name, _kind in x.get("cian_districts") or []:
+            key = _dnorm(name)
+            if key and isinstance(did, int) and table.get(key) != did:
+                table[key] = did
+                added += 1
+    if added:
+        try:
+            CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            DISTRICTS_FILE.write_text(json.dumps(_district_ids, ensure_ascii=False), encoding="utf-8")
+        except OSError as exc:
+            log.warning("id районов Циана не сохранены: %s", exc)
+    return added
+
+
+def district_ids(city: str, names: list[str] | tuple[str, ...]) -> tuple[int, ...]:
+    """Id районов по названиям; пусто, если хоть один район ещё неизвестен (тогда фильтр по URL не ставим,
+    чтобы не потерять объявления из неизвестного района)."""
+    table = _districts_table().get(city) or {}
+    if len(names)>MAX_DISTRICTS:return ()
+    out = []
+    for name in names:
+        key = _dnorm(name)
+        candidates={v for k,v in table.items() if key and (k.startswith(key) or key.startswith(k))}
+        did = table.get(key) or (next(iter(candidates)) if len(candidates)==1 else None)
+        if did is None:
+            return ()
+        out.append(did)
+    return tuple(dict.fromkeys(out))
 
 
 # ------------------------------------------------------------------ разбор страницы
@@ -280,6 +341,7 @@ def normalize(o: dict, city: str, today: date | None = None, new: bool = False) 
         "city": city,
         "district": district,
         "okrug": okrug,
+        "cian_districts": [[d.get("id"), d.get("name"), d.get("type")] for d in districts if d.get("id") and d.get("name")],
         "address": _address(geo, city),
         "rooms": o.get("roomsCount") or 0,
         "area": area,
@@ -399,9 +461,9 @@ def _blocked(status: int, location: str, text: str) -> str | None:
 
 
 async def _fetch_page(city: str, rooms: int, budget: int | None, page: int, okrug: str | None = None,
-                      new: bool = False) -> tuple[list[dict], str]:
+                      new: bool = False, district_ids: tuple[int, ...] = ()) -> tuple[list[dict], str]:
     global _last_request
-    url = build_url(city, rooms, budget, page, okrug, new)
+    url = build_url(city, rooms, budget, page, okrug, new, district_ids)
     async with _lock:
         attempts = [("httpx", _get_httpx)]
         try:
@@ -425,7 +487,7 @@ async def _fetch_page(city: str, rooms: int, budget: int | None, page: int, okru
                     host = urlparse(target).hostname or ""
                     if host != urlparse(url).hostname and host.endswith(".cian.ru"):
                         _learn_subdomain(city, host.split(".")[0])
-                        url = build_url(city, rooms, budget, page, okrug, new)
+                        url = build_url(city, rooms, budget, page, okrug, new, district_ids)
                     else:
                         url = target
                     await asyncio.sleep(max(0.0, MIN_INTERVAL - (time.monotonic() - _last_request)))
@@ -441,7 +503,7 @@ async def _fetch_page(city: str, rooms: int, budget: int | None, page: int, okru
         else:
             raise SourceUnavailable(f"Циан недоступен ({problem})")
     title = re.search(r"<title\b[^>]*>([^<]*)", text, re.I)
-    if not title or REGIONS[city][2].lower() not in title.group(1).lower():
+    if not title or REGIONS[city][2].lower() not in title.group(1).lower().replace("ё", "е"):
         raise SourceUnavailable("страница не про нужный город")
     raw = extract_offers(text)
     if not raw and "offers" not in text:  # страница не та (вёрстка поменялась) — а не «ничего не нашлось»
@@ -492,14 +554,14 @@ def load_snapshot(city: str, rooms: int, new: bool = False) -> tuple[list[dict],
     return listings, data.get("fetched_at")
 
 
-async def _fetch_available(city, rooms, budget, page, okrug, new):
+async def _fetch_available(city, rooms, budget, page, okrug, new, district_ids=()):
     """Короткий отказ повторным запросам при блокировке; срез и база остаются доступны."""
     scope = (city, new)
     failed = _failures.get(scope)
     if failed and time.monotonic() < failed[0]:
         raise SourceUnavailable(f"{failed[1]}; повторная проверка через {max(1, int(failed[0] - time.monotonic()))} с")
     try:
-        result = await asyncio.wait_for(_fetch_page(city, rooms, budget, page, okrug, new), timeout=FETCH_TIMEOUT)
+        result = await asyncio.wait_for(_fetch_page(city, rooms, budget, page, okrug, new, district_ids), timeout=FETCH_TIMEOUT)
     except (SourceUnavailable, asyncio.TimeoutError) as exc:
         reason = str(exc) if isinstance(exc, SourceUnavailable) else "Циан не ответил за отведённое время"
         _failures[scope] = (time.monotonic() + FAILURE_COOLDOWN, reason)
@@ -509,19 +571,25 @@ async def _fetch_available(city, rooms, budget, page, okrug, new):
 
 
 async def search(city: str, rooms: int, budget: int | None, page: int = 1, okrug: str | None = None,
-                 new: bool = False) -> tuple[list[dict], dict]:
-    """Возвращает (объявления, отчёт). new — новостройки. Отчёт: status live | cached | snapshot | unavailable."""
+                 new: bool = False, districts: tuple[str, ...] | list[str] = ()) -> tuple[list[dict], dict]:
+    """Возвращает (объявления, отчёт). new — новостройки. Отчёт: status live | cached | snapshot | unavailable.
+    districts — районы (названия): если их id известны, выдача Циана сразу ограничена ими."""
     if not supported(city):
         raise SourceUnavailable(f"для города «{city}» площадка не подключена")
-    key = (city, rooms, budget, page, okrug, new)
+    ids = district_ids(city, districts) if districts else ()
+    key = (city, rooms, budget, page, okrug, new, ids)
     hit = _memory.get(key)
     if hit and time.time() - hit[0] < CACHE_TTL:
         return hit[1], {"status": "cached", "note": "из кеша сессии",'fetched_at':datetime.fromtimestamp(hit[0],timezone.utc).isoformat(timespec='seconds')}
     try:
-        listings, via = await _fetch_available(city, rooms, budget, page, okrug, new)
+        listings, via = await _fetch_available(city, rooms, budget, page, okrug, new, ids)
+        from ..runtime import record
+        record("source_request", source="cian_page", filtered=bool(ids))
+        learn_districts(city, listings)
         _memory[key] = (time.time(), listings)
-        _save_snapshot(city, rooms, listings, new)
-        note = f"страница {page}" + (" (запасной путь curl_cffi после капчи)" if via == "curl_cffi" else "")
+        if not ids:  # срез — общий для города; выдачу по районам в него не пишем
+            _save_snapshot(city, rooms, listings, new)
+        note = f"страница {page}" + (f", районов в запросе: {len(ids)}" if ids else "") + (" (запасной путь curl_cffi после капчи)" if via == "curl_cffi" else "")
         return listings, {"status": "live", "note": note, "via": via,'fetched_at':datetime.now(timezone.utc).isoformat(timespec='seconds')}
     except SourceUnavailable as exc:
         log.warning("Циан недоступен: %s", exc)

@@ -37,6 +37,22 @@ class CianResilienceTest(unittest.IsolatedAsyncioTestCase):
             with self.assertRaisesRegex(SourceUnavailable, 'не про нужный город'):
                 await cian._fetch_page('Великий Новгород',2,9_000_000,1)
 
+    async def test_every_million_city_title_is_accepted(self):
+        """Тест 08.11: для Уфы каждая страница отбрасывалась как «не про нужный город» («в Уфе» не содержит «уфа»)."""
+        import re
+        import pymorphy3
+        from backend.geodata import CITIES
+        morph = pymorphy3.MorphAnalyzer()
+        special = {'Ростов-на-Дону': 'Ростове-на-Дону', 'Санкт-Петербург': 'Санкт-Петербурге'}
+        page = fixtures.CianParsingTest.PAGE
+        for c in CITIES:
+            name = c['name']
+            loct = special.get(name) or ' '.join(morph.parse(w)[0].inflect({'loct'}).word.capitalize() for w in name.split())
+            html = re.sub(r'<title>.*?</title>', f'<title>Купить 2-комнатную квартиру в {loct} — 1 209 объявлений</title>', page, flags=re.S)
+            with self.subTest(city=name), patch.object(cian, '_get_httpx', AsyncMock(return_value=(200, '', html))):
+                rows, _ = await cian._fetch_page(name, 2, 10_000_000, 1)
+                self.assertTrue(rows)
+
     async def test_http_session_survives_same_url_307_cookie_handshake(self):
         client_type = httpx.AsyncClient
         calls = []

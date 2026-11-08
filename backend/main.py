@@ -333,7 +333,7 @@ def _llm():
 
 def _owns(s: O.Session, request: Request) -> bool:
     vid, uid = auth.whoami(request)
-    return bool((vid and s.visitor_id == vid) or (uid is not None and s.user_id == uid))
+    return repo.owns(s.visitor_id, s.user_id, vid, uid)
 
 
 def _session(sid: str, request: Request) -> O.Session:
@@ -361,6 +361,10 @@ def _sse(ev: dict) -> str:
 async def chats(request: Request):
     """Диалоги этого браузера и пользователя — новые сверху."""
     vid, uid = auth.whoami(request)
+    if uid is not None and vid:
+        # подбор, начатый анонимно в момент входа (вкладка ещё не знала о входе), тоже переходит в аккаунт
+        if db.safe(repo.claim_visitor, vid, uid, default=0):
+            _claim_live(request, {"id": uid})
     items = db.safe(repo.list_chats, vid, uid, default=[]) or []
     for c in items:
         c["live"] = O.running(O.SESSIONS.get(c["id"]))
