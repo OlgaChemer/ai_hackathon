@@ -22,7 +22,7 @@ POLICIES={
     'update_request':Policy(('new_input',),('search','selection','agreements','finance')),
     'ask_client':Policy(('can_clarify',)),
     'market_prices':Policy(('search_scope','research_budget'),information=True),
-    'confirm_red_lines':Policy(('budget_known','limit_needed')),
+    'confirm_red_lines':Policy(('budget_or_selected','limit_needed')),
     'ask_payment':Policy(('payment_needed',),('finance',)),
     'ask_family':Policy(('family_needed',),('finance',)),
     'ask_housing':Policy(('housing_needed',),('search','selection')),
@@ -47,6 +47,7 @@ REASONS={
     'research_budget':'Чтобы определить, на что хватит средств, нужна сумма. Можно отдельно изучить цены без ограничения бюджета.',
     'new_input':'Нет новых условий для применения.', 'can_clarify':'Исходных данных достаточно; переходите к подбору.',
     'city_rooms':'Нужны город и число комнат.', 'profile_ready':'Нужны город, комнаты и бюджет.',
+    'budget_or_selected':'Нужен бюджет либо одна выбранная квартира с известной ценой.',
     'limit_needed':'Этот лимит уже подтверждён.', 'payment_needed':'Способ оплаты уже известен.',
     'family_needed':'Сведения о семье уже известны либо оплата своими средствами.',
     'deposit_answered':'Сначала ask_deposit: нужна сумма первоначального взноса или решение отложить расчёт.',
@@ -69,6 +70,13 @@ def programs_current(s):
     return s.programs_result is not None and s.programs_key==finance.programs_key(s.profile)
 
 
+def selected_listing(s):
+    targets=s.call_targets or ([s.chosen] if s.chosen else [])
+    if len(targets)!=1 or s.selection_profile_stale:return None
+    return next((x for x in s.shown if x.get('id')==targets[0]
+                 and type(x.get('price')) in (int,float) and x['price']>0),None)
+
+
 def decision(s,name):
     policy=POLICIES.get(name)
     if policy is None:return False,'Для этого инструмента не определена политика исполнения.'
@@ -78,6 +86,9 @@ def decision(s,name):
                              'ask_family','ask_deposit','mortgage_programs','savings_plan')):
         return False,'Сначала выполните явную просьбу о звонке по выбранному объекту.'
     p=s.profile;ready=not missing_required(p)
+    selected=selected_listing(s)
+    if name=='ask_client' and s.request_intent=='call' and selected and p.get('budget_max') is None:
+        return False,'Квартира уже выбрана: confirm_red_lines предложит подтвердить лимит по её цене. Не начинайте анкету бюджета заново.'
     from . import guidance
     if (not s.requested_action and s.request_intent in (None,'search','refine','selection','continue')
             and guidance.next_step(s) and name in ('ask_payment','ask_family','ask_housing','confirm_red_lines','ask_extras')):
@@ -108,6 +119,7 @@ def decision(s,name):
         'family_or_cash':p.get('payment')=='cash' or p.get('children') is not None,
         'saving_payment':p.get('payment')=='mortgage_saving',
         'search_scope':not missing_search(p),'budget_known':p.get('budget_max') is not None,
+        'budget_or_selected':p.get('budget_max') is not None or selected is not None,
         'research_budget':not (s.research_query or {}).get('respect_budget') or p.get('budget_max') is not None or (not s.requested_action and guidance.help_field(s)=='budget_max'),
         'search_ready':not missing_search(p) and work,
         'guided_search':guidance.search_ready(s),

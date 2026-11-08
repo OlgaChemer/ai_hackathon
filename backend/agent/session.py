@@ -194,7 +194,7 @@ class Session:
     def invalidate_decisions(self, *, purchase=True, financial=False):
         """Смена условий отзывает прежний выбор/план, но сохраняет историю процесса."""
         had_purchase=bool(self.calls or self.agreed or self.chosen or self.current or self.journal or self.status.get(8)=='done')
-        had_finance=bool(self.programs_result or self.mortgage or self.finance or self.status.get(2))
+        had_finance=bool(self.programs_result or self.mortgage or self.finance or self.status.get(2)=='done')
         if financial:
             self.programs_key = self.programs_result = None
             self.profile.pop('_programs_cache',None)

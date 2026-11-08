@@ -60,3 +60,38 @@ class FinanceContinuation(unittest.IsolatedAsyncioTestCase):
         s=self.agent(payment='cash')
         self.assertEqual(workflow.next_search_action(s),'call_seller')
         self.assertFalse(capabilities.decision(s,'ask_family')[0])
+
+    async def test_selected_flat_offers_its_price_without_restarting_unknown_budget_intake(self):
+        from backend.agent.actions.request import confirm_red_lines
+        s=self.agent();s.profile['budget_max']=None;s.red_lines_ok=False
+        s.profile['field_states']['budget_max']='unknown'
+        target=s.shown[0];target['price']=18_700_000
+        self.assertEqual(workflow.next_search_action(s),'confirm_red_lines')
+        self.assertFalse(capabilities.decision(s,'ask_client')[0])
+        async def accept(kind,title,text,**kw):
+            self.assertEqual(kind,'red_lines');self.assertIn('выбранной квартире',title)
+            self.assertIn('18 700 000',text)
+            self.assertIsNone(s.profile['budget_max'])  # цена не становится лимитом до решения
+            self.assertEqual(kw['payload']['budget_max'],18_700_000)
+            return {'approved':True,'data':{'budget_max':18_700_000,'budget_min':0}}
+        s.ask=accept
+        result=await confirm_red_lines(s)
+        self.assertTrue(result['approved'])
+        self.assertEqual(s.call_targets,['chosen']);self.assertIsNotNone(s.search)
+        self.assertEqual(s.profile['budget_max'],18_700_000)
+        self.assertTrue(s.red_lines_ok)
+        self.assertEqual(workflow.next_search_action(s),'ask_family')
+
+    async def test_rejecting_selected_price_does_not_create_purchase_authority(self):
+        from backend.agent.actions.request import confirm_red_lines
+        s=self.agent();s.profile['budget_max']=None;s.red_lines_ok=False
+        s.ask=AsyncMock(return_value={'approved':False,'data':{}})
+        await confirm_red_lines(s)
+        self.assertIsNone(s.profile['budget_max']);self.assertFalse(s.red_lines_ok)
+        self.assertEqual(s.request_intent,'hold')
+
+    def test_initial_finance_form_does_not_claim_that_a_nonexistent_plan_was_reset(self):
+        from backend.agent.actions.money import _set
+        s=self.agent();s.status[2]='running'
+        _set(s,children=0,matcap=0)
+        self.assertFalse(any(e['type']=='purchase_reset' for e in s.history))

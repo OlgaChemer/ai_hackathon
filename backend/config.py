@@ -21,7 +21,7 @@ class Settings:
     workshop_provider: str = os.getenv('WORKSHOP_LLM_PROVIDER','deepseek').strip().lower()
     workshop_email: str = 'darkyhat@mail.ru'
     workshop_root: str = os.getenv('WORKSHOP_ROOT', str(ROOT/'backend'/'data'/'workshop'))
-    workshop_image: str = os.getenv('WORKSHOP_IMAGE','mesto-workshop:0.4.1')
+    workshop_image: str = os.getenv('WORKSHOP_IMAGE','mesto-workshop:0.4.2')
     workshop_docker: str = os.getenv('WORKSHOP_DOCKER','/usr/bin/docker')
     llm_provider: str = os.getenv("LLM_PROVIDER", "gigachat").strip().lower()
     # Разбор простых сообщений кодом (agent/rule_parser.py): off — всегда модель; shadow — модель, а разбор кодом

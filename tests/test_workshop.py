@@ -424,10 +424,31 @@ class WorkshopContracts(unittest.IsolatedAsyncioTestCase):
         data={'prompt':'Теперь оцени фотографии','kind':'repair','facts':{'count':20,'total':19000000},'conversation':history}
         prepared=context_messages(data)
         self.assertLessEqual(sum(len(m['content']) for m in prepared),8000)
-        self.assertEqual([m['content'] for m in prepared if m['role']=='user'],[m['content'] for m in history if m['role']=='user'])
+        self.assertLessEqual(len(json.dumps(prepared,ensure_ascii=False,separators=(',',':')).encode()),4200)
+        self.assertTrue(any('Уточнение 3' in m['content'] for m in prepared if m['role']=='user'))
         self.assertEqual(json.loads(summary(data,[],3))['facts'],data['facts'])
         self.assertEqual(history,original)
         self.assertLess(len(summary(data,[],3)),10000)
+
+    def test_large_market_context_is_bounded_in_utf8_bytes_and_keeps_all_source_rows(self):
+        from workshop_runtime.history import summary,initial_task,facts_context
+        rows=[{'id':f'квартира-{i}','address':'Длинная русская улица, '+str(i),
+               'price':18_700_000+i,'area':52,'price_per_m2':359615} for i in range(150)]
+        facts={'kind':'market','count':150,'median_price':18_700_075,'rows':rows,
+            'groups':[{'rooms':3,'count':150,'median_price':18_700_075}]}
+        snapshot={'prompt':'Исследуй рынок','kind':'market','facts':facts,
+            'conversation':[{'role':'assistant','content':'Русский отчёт '*5000}]*20}
+        original=deepcopy(snapshot)
+        overview=facts_context(facts)
+        self.assertEqual(overview['count'],150)
+        self.assertEqual(overview['median_price'],18_700_075)
+        self.assertEqual(overview['rows_count'],150)
+        self.assertNotIn('rows',overview)
+        self.assertLess(len(initial_task(snapshot).encode()),6500)
+        compact=summary(snapshot,[{'role':'tool','content':'Большой вывод '*5000}]*20,3)
+        self.assertLessEqual(len(compact.encode()),6500)
+        self.assertEqual(json.loads(compact)['facts']['rows_count'],150)
+        self.assertEqual(snapshot,original)
 
     def test_compaction_keeps_exact_task_and_facts_but_bounds_observations(self):
         from workshop_runtime.history import summary

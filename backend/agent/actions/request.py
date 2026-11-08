@@ -10,7 +10,7 @@ from ..profile import default_budget_min, in_districts, merge_profile, missing_r
 from . import ActionError, action
 
 LIST_KEYS = ("districts", "avoid_districts", "features", "poi", "wishes", "material", "soft_criteria", "rooms_options", "cities")
-from ..capabilities import CORE_FIELDS, FILTER_FIELDS
+from ..capabilities import CORE_FIELDS, FILTER_FIELDS, selected_listing
 CORE_KEYS = CORE_FIELDS
 PROPERTY_FIELDS={'area_min':'area','kitchen_min':'kitchen','year_min':'year',
                  'metro_max_minutes':'metro_minutes','prefer_center':'center_km',
@@ -288,18 +288,23 @@ async def confirm_red_lines(s) -> dict:
     if s.red_lines_ok and s.requested_action!='confirm_red_lines':
         return {"approved": True, "budget_max": p["budget_max"], "budget_min": p.get("budget_min"),
                 "already_confirmed": True}
-    if p.get('budget_max') is None:
+    selected=selected_listing(s) if p.get('budget_max') is None else None
+    if p.get('budget_max') is None and selected is None:
         raise ActionError('Для подтверждения лимита нужна конкретная сумма. Поиск без лимита разрешён.')
-    if p.get('budget_min') is None:  # клиент не называл нижнюю границу — берём −30% от максимума
+    basis=int(selected['price']) if selected else p['budget_max']
+    if p.get('budget_min') is None and not selected:  # клиент не называл нижнюю границу — берём −30% от максимума
         p['budget_min'] = default_budget_min(p['budget_max'])
         p['summary'] = profile_summary(p)
     emit_profile(s)
     r = await s.ask(
-        "red_lines", "Границы подбора",
-        "Проверьте город, комнаты и диапазон цены. В этих границах я ищу, звоню и торгуюсь сам: "
+        "red_lines", "Лимит по выбранной квартире" if selected else "Границы подбора",
+        (f"Вы выбрали квартиру {selected.get('address') or selected['id']} за {fmt(basis)}. "
+         "Подтвердите потолок цены для переговоров по ней или уменьшите его. "
+         "Цена объявления — предложение лимита, она ещё не подтверждена вами. Итоговую цену согласуем отдельно."
+         if selected else "Проверьте город, комнаты и диапазон цены. В этих границах я ищу, звоню и торгуюсь сам: "
         "выше верхней границы не пойду, ниже нижней квартиры не предложу. Ползунком можно сдвинуть обе границы. "
-        "Итоговую цену всё равно подтверждаете вы.",
-        payload={"budget_max": p["budget_max"], "budget_min": p.get("budget_min"),
+        "Итоговую цену всё равно подтверждаете вы."),
+        payload={"budget_max": basis, "budget_min": 0 if selected else p.get("budget_min"),
                  "default_low_share": 0.3, "step": 500_000, "floor": 1_000_000,
                  "rooms": p["rooms"], "city": p["city"],
                  "rooms_options": p.get("rooms_options"), "cities": p.get("cities"),
@@ -311,7 +316,7 @@ async def confirm_red_lines(s) -> dict:
         s.request_intent = "hold"
         return {"approved": False, "note": "клиент хочет поменять запрос — спроси, что именно"}
     data = r["data"] or {}
-    new_max, new_min = data.get("budget_max"), data.get("budget_min")
+    new_max, new_min = data.get("budget_max",basis if selected else None), data.get("budget_min",0 if selected else None)
     try:
         new_max = int(new_max) if new_max not in (None, "") else None
         new_min = int(new_min) if new_min not in (None, "") else None
@@ -320,11 +325,18 @@ async def confirm_red_lines(s) -> dict:
     if new_min is not None and new_max is not None and new_min > new_max:
         new_min = default_budget_min(new_max)
     if (new_max and new_max != p["budget_max"]) or (new_min is not None and new_min != p.get("budget_min")):
-        s.invalidate_deal()
+        preserve_selected=selected and new_max and new_max>=selected['price'] and (new_min or 0)<=selected['price']
+        if preserve_selected:
+            s.invalidate_decisions(purchase=False,financial=True)
+        else:
+            s.invalidate_deal()
+            if selected:
+                s.request_intent='refine';s.selection_profile_stale=True
         if new_max:
             p["budget_max"] = new_max
         p["budget_min"] = new_min if new_min is not None else default_budget_min(p["budget_max"])
         p["summary"] = profile_summary(p)
+        if selected:p.setdefault('field_states',{})['budget_max']='constrained'
         emit_profile(s)
     s.red_lines_ok = True
     p['_approved_budget_max'] = p['budget_max']
