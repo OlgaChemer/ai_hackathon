@@ -292,14 +292,15 @@ async def confirm_red_lines(s) -> dict:
         p['summary'] = profile_summary(p)
     emit_profile(s)
     r = await s.ask(
-        "red_lines", "Красные линии",
-        "Подтвердите диапазон цены: выше верхней границы не торгуюсь, ниже нижней — не предлагаю. "
-        "Ползунком можно сдвинуть обе границы. Итоговую цену подтверждаете вы.",
+        "red_lines", "Границы подбора",
+        "Проверьте город, комнаты и диапазон цены. В этих границах я ищу, звоню и торгуюсь сам: "
+        "выше верхней границы не пойду, ниже нижней квартиры не предложу. Ползунком можно сдвинуть обе границы. "
+        "Итоговую цену всё равно подтверждаете вы.",
         payload={"budget_max": p["budget_max"], "budget_min": p.get("budget_min"),
                  "default_low_share": 0.3, "step": 500_000, "floor": 1_000_000,
                  "rooms": p["rooms"], "city": p["city"],
                  "rooms_options": p.get("rooms_options"), "cities": p.get("cities"),
-                 "authority_rule": "не выше верхней границы справедливой цены и бюджета"},
+                 "authority_rule": "не выше верхней границы цены в объявлении и вашего бюджета"},
     )
     if r["approved"] is None:
         return {"approved": False, "client_said": r["data"].get("text", "")}

@@ -166,7 +166,7 @@ export function confirmCard(ev) {
       <dl class="redlines">
         <dt>Территория</dt><dd>${[p.city, ...(p.cities || []).filter(c => c !== p.city)].join(", ")}</dd>
         <dt>Комнат</dt><dd>${p.rooms_options?.length > 1 ? p.rooms_options.join("–") : p.rooms === 0 ? "студия" : p.rooms}</dd>
-        <dt>Агент соглашается сам</dt><dd>${p.authority_rule}</dd>
+        <dt>Торгуюсь сам</dt><dd>${p.authority_rule}</dd>
       </dl>
       <div class="price-range" data-price-range>
         <div class="price-range__head">
