@@ -55,6 +55,7 @@ DISTRICT_TYPES = {  # тип района -> регулярное выражен
     "sleeping": r"спальн\w*\s+район\w*",
     "quiet": r"тих\w*\s+(?:район\w*|мест\w*)",
     "prestige": r"(?:престижн|элитн)\w*\s+район\w*",
+    "business": r"(?:делов\w*|бизнес)\s*-?\s*район\w*",
 }
 
 
@@ -113,18 +114,19 @@ def _places(toks: list[str], skip: set[int] = frozenset()) -> tuple[list[tuple[i
         if i in skip:
             i += 1
             continue
-        best: tuple[int, list[dict]] | None = None
+        by_len: dict[int, list[dict]] = {}
         for first in lemmas(toks[i]):
             for sets, entity in idx.get(first, []):
                 n = len(sets)
                 if i + n > len(toks) or any(i + k in skip or not (lemmas(toks[i + k]) & sets[k]) for k in range(n)):
                     continue
-                if best is None or n > best[0]:
-                    best = (n, [entity])
-                elif n == best[0] and entity not in best[1]:
-                    best[1].append(entity)
-        if best:
-            n, entities = best
+                if entity not in by_len.setdefault(n, []):
+                    by_len[n].append(entity)
+        if by_len:
+            n = max(by_len)
+            entities = by_len[n]
+            # короче — запасные варианты: «Советский район» (место в Самаре) vs район «Советский» в Уфе
+            shorter = [e for k in sorted(by_len, reverse=True) if k < n for e in by_len[k] if e["type"] != "metro"]
             before = toks[max(0, i - 2):i]
             metro_ctx = any(w in ("метро", "станции", "станция", "м") for w in before)
             if not metro_ctx:
@@ -134,7 +136,9 @@ def _places(toks: list[str], skip: set[int] = frozenset()) -> tuple[list[tuple[i
             if n == 1 and entities and _common_word(toks[i]) and not any(w in LOCATIVE for w in before):
                 entities = []  # «советский» без «в/на/район» — не место
             if entities:
-                found.append((i, i + n, {"options": entities}))
+                after = toks[i + n] if i + n < len(toks) else ""
+                district_ctx = after.startswith("район") or any(w.startswith("район") for w in before[-1:])
+                found.append((i, i + n, {"options": entities, "shorter": shorter, "district_ctx": district_ctx}))
                 used |= set(range(i, i + n))
                 i += n
                 continue
@@ -196,7 +200,7 @@ PAYMENT = [(r"\bналичн\w*|\bналичк\w*|\bза свои\b|\bбез и�
            (r"\bипотек\w*.{0,30}\bкоп\w*|\bкоп\w*.{0,30}\bипотек\w*", "mortgage_saving")]
 HOUSING = [(r"\bновостро\w*.{0,20}\bвторич\w*|\bвторич\w*.{0,20}\bновостро\w*|\bлюбой рын\w*", "both"),
            (r"\bвторич\w*(?:\s+рын\w*)?", "secondary"), (r"\bновостро\w*|\bновый дом\w*", "new")]
-CENTER = [(r"\bв (?:самом )?центре\b|\bв центр\w*\b", "required"),
+CENTER = [(r"\bв (?:самом )?центре\b|\bв центр(?:е|а|у)?\b", "required"),  # «в центральном районе» — это район
           (r"\b(?:поближе|ближе|недалеко от|рядом с|около|не далеко от)\s+(?:к\s+)?центр\w*", "preferred")]
 
 
@@ -265,9 +269,17 @@ def _resolve_places(found: list, profile: dict) -> dict | None:
     """Места -> city/cities/districts/okrug. Неоднозначность или конфликт с профилем — None."""
     cities: list[str] = []
     districts: list[tuple[str, str, str | None]] = []  # (город, район, округ)
-    mentioned_cities = {e["city"] for _, _, f in found for e in f["options"] if e["type"] == "city"}
+    profile_city = {profile["city"]} if profile.get("city") else set()
+    mentioned_cities = {e["city"] for _, _, f in found if not (f.get("district_ctx") and any(
+        e["type"] != "city" and e["city"] in profile_city for e in f["options"])) for e in f["options"] if e["type"] == "city"}
+    anchor_all = mentioned_cities or ({profile["city"]} if profile.get("city") else set())
     for _, _, f in found:
         opts = f["options"]
+        if f.get("district_ctx") and anchor_all:
+            # «в Дзержинском районе» при городе Пермь — район Перми, а не город Дзержинский
+            local = [e for e in [*opts, *f.get("shorter", [])] if e["type"] != "city" and e["city"] in anchor_all]
+            if local:
+                opts = local
         if any(e["type"] == "city" for e in opts):
             names = {e["city"] for e in opts if e["type"] == "city"}
             if len(names) != 1:
@@ -276,7 +288,7 @@ def _resolve_places(found: list, profile: dict) -> dict | None:
             continue
         anchor = mentioned_cities or ({profile["city"]} if profile.get("city") else set())
         if anchor:
-            opts = [e for e in opts if e["city"] in anchor]
+            opts = [e for e in opts if e["city"] in anchor] or [e for e in f.get("shorter", []) if e["city"] in anchor]
         if not opts or len({e["city"] for e in opts}) != 1:
             return None  # «Советский» есть в десятке городов; город не назван — пусть уточнит модель
         e = opts[0]

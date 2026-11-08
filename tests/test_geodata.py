@@ -236,6 +236,22 @@ class OverpassHardeningTest(unittest.TestCase):
             self.assertEqual(got["poi"], extra["poi"])
 
 
+class FillGapsTest(unittest.TestCase):
+    def test_fill_only_empty(self):
+        """--fill: дособрать пустые виды «что рядом» и ж/д, остальное не трогать."""
+        with tempfile.TemporaryDirectory() as tmp, patch.object(B, "OUT_DIR", Path(tmp)):
+            city, extra = B.build_city({"name": "Казань"}, fetch=fake_overpass, log=lambda *_: None)
+            school = extra["poi"]["school"]
+            extra["poi"]["park"] = []
+            B.write(city, extra, Path(tmp))
+            asked = []
+            B.fill_gaps({"name": "Казань"}, fetch=lambda q: asked.append(q) or fake_overpass(q), log=lambda *_: None)
+            with __import__("gzip").open(Path(tmp) / "kazan.poi.json.gz", "rt", encoding="utf-8") as f:
+                got = __import__("json").load(f)
+            self.assertEqual(got["poi"]["school"], school)
+            self.assertNotIn("amenity\"=\"school", "".join(asked))
+
+
 class RealDataTest(unittest.TestCase):
     """Проверки на собранных файлах 18 городов (пропускаются, если файлов нет)."""
     def setUp(self):

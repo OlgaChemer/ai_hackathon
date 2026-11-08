@@ -25,7 +25,7 @@ EMPTY_PROFILE = {
     "payment": None,          # cash | mortgage_ready | mortgage_saving
     "okrug": None,
     "districts": [],          # районы, которые клиент назвал (ищем в них)
-    "district_type": None,    # sleeping | quiet | prestige — тип района (agent/districts.py)
+    "district_type": None,    # sleeping | quiet | prestige | business — тип района (agent/districts.py)
     "avoid_districts": [],    # районы, которые не показывать
     "not_first_floor": False,
     "not_last_floor": False,

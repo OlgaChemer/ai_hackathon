@@ -42,8 +42,8 @@ CHANGE_SCHEMA = {
         },
         "district_type": {
             "type": "string",
-            "enum": ["sleeping", "quiet", "prestige"],
-            "description": "Тип района, если клиент его назвал: спальный — sleeping, тихий — quiet, престижный/элитный — prestige. "
+            "enum": ["sleeping", "quiet", "prestige", "business"],
+            "description": "Тип района, если клиент его назвал: спальный — sleeping, тихий — quiet, престижный/элитный — prestige, деловой/бизнес-район/офисный — business. "
                            "Код подберёт районы по данным (цены, застройка, дороги) и покажет их клиенту.",
         },
         "budget_max": {

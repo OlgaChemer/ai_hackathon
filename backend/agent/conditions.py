@@ -47,8 +47,8 @@ def compile_profile(profile):
         # «Тихо» — свойство дома, а не района: расстояние до крупной дороги и железной дороги по OpenStreetMap
         add('road_m','gte',[THRESHOLD['quiet_road_m']],'district_type','тихо: крупная дорога не ближе 200 м','preferred')
         add('rail_m','gte',[THRESHOLD['quiet_rail_m']],'district_type','тихо: железная дорога не ближе 300 м','preferred')
-    elif kind in ('sleeping','prestige'):
-        label={'sleeping':'спальный район','prestige':'престижный район'}[kind]+' (оценка по ценам и застройке)'
+    elif kind in ('sleeping','prestige','business'):
+        label={'sleeping':'спальный район','prestige':'престижный район','business':'деловой район'}[kind]+' (оценка по ценам и застройке)'
         add('district_type','has_label',[kind],'district_type',label,'preferred')
     for f in profile.get('filters') or []:
         if f['priority']=='remove':continue

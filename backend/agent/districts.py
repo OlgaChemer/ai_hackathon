@@ -96,7 +96,25 @@ def labels(city: str) -> dict[str, dict]:
         out[d["name"]] = {"labels": got, "why": {"dist_km": d["dist_km"], "radius_km": radius,
                                                  "business_pct": round(b_pct, 2), "family_pct": round(f_pct, 2),
                                                  "price_ratio": ratio, "price_count": count}}
+    _fallbacks(out)
     return out
+
+
+def _fallbacks(out: dict) -> None:
+    """В городах с 4–8 районами процентили грубые: бывает, что ни один район не прошёл порог.
+    Тогда «деловой» — самый плотный по офисам и магазинам район у центра, «спальные» — до двух
+    удалённых районов с наибольшей долей школ и детсадов. Ручные OVERRIDES важнее."""
+    t = THRESHOLDS
+    rows = list(out.items())
+    if rows and not any("business" in v["labels"] for _, v in rows):
+        near = [r for r in rows if "center" in r[1]["labels"]] or [r for r in rows if r[1]["why"]["dist_km"] <= t["business_rel"] * r[1]["why"]["radius_km"]]
+        if near:
+            max(near, key=lambda r: r[1]["why"]["business_pct"])[1]["labels"].append("business")
+    if rows and not any("sleeping" in v["labels"] for _, v in rows):
+        far = [r for r in rows if "center" not in r[1]["labels"] and "business" not in r[1]["labels"]
+               and r[1]["why"]["dist_km"] >= t["sleeping_rel"] * r[1]["why"]["radius_km"]]
+        for _, v in sorted(far, key=lambda r: -r[1]["why"]["family_pct"])[:2]:
+            v["labels"].append("sleeping")
 
 
 def for_type(city: str, kind: str, limit: int = 12) -> list[str]:
@@ -140,8 +158,11 @@ def quiet(x: dict) -> dict | None:
 
 def describe(city: str, kind: str, names: list[str]) -> str:
     """Фраза для клиента: какие районы и почему (честно — это оценка)."""
-    label = {"sleeping": "Спальные районы", "prestige": "Престижные районы", "center": "Районы у центра"}.get(kind, "Районы")
+    label = {"sleeping": "Спальные районы", "prestige": "Престижные районы", "center": "Районы у центра",
+             "business": "Деловые районы", "prestige_fallback": "Престижные районы"}.get(kind, "Районы")
     basis = {"sleeping": "по застройке, удалённости от центра и ценам",
-             "prestige": "по цене м² относительно города", "center": "по расстоянию до центра"}.get(kind, "по данным")
+             "prestige": "по цене м² относительно города", "center": "по расстоянию до центра",
+             "business": "по плотности офисов и магазинов по OpenStreetMap",
+             "prestige_fallback": "цен по городу пока мало, поэтому беру центральные и деловые районы"}.get(kind, "по данным")
     shown = ", ".join(names[:8]) + (f" и ещё {len(names) - 8}" if len(names) > 8 else "")
     return f"{label} — {city} (оценка {basis}): {shown}. Ищу в них — если какой-то не подходит, напишите."

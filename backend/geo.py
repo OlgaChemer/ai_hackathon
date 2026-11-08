@@ -324,7 +324,7 @@ def _local(listings: list[dict], kinds: list[str]) -> int:
             if k in (x.get("nearby") or {}):
                 continue
             rows = geodata.poi_rows(x["city"], k)
-            if rows is None:
+            if not rows:  # пустой список — выгрузка неполная (сбой Overpass), а не «в городе нет поликлиник»
                 continue
             x.setdefault("nearby", {})[k] = _nearest(x["lat"], x["lng"], rows)
             x.setdefault("nearby_evidence", {})[k] = {"source": "osm_local", "checked_at": c["built_at"],

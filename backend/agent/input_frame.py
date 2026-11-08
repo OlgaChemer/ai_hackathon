@@ -74,8 +74,11 @@ def place_lemmas(source,words):
 
 def catalog_words():
     from ..sources import SUPPORTED_CITIES
-    return sorted({word for city in SUPPORTED_CITIES for word in city.split()} |
-                  {'Подмосковье','Питер','СПб','МСК','МО'})
+    from ..geodata.names import CITY_ALIASES
+    aliases={alias for alias in CITY_ALIASES if ' ' not in alias}  # екб, питер, нск, новосиб, челяба…
+    words={word for city in SUPPORTED_CITIES for word in city.split()}|{'Подмосковье','Питер','СПб','МСК','МО'}
+    known={w.casefold() for w in words}
+    return sorted(words|{a for a in aliases if a not in known})
 
 
 def schema(changes, messages=None):

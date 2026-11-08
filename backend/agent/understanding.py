@@ -31,7 +31,7 @@ rooms_options — все допустимые числа комнат 1–5: о�
 Суммы в рублях; «пять с половиной лямов» 5500000. Наличка/за свои/без ипотеки -> payment cash.
 Вторичка -> housing secondary; новостройка -> new; оба -> both. Не пропускай названный рынок и оплату.
 «В центре» -> prefer_center true и center_required true; «желательно ближе» -> true/false.
-Спальный район -> fields district_type=sleeping; тихий район/тихое место -> quiet; престижный/элитный район -> prestige. Это поддержанное условие, не unsupported. Отмена — clear_criteria district_type.
+Спальный район -> fields district_type=sleeping; тихий район/тихое место -> quiet; престижный/элитный район -> prestige; деловой район/бизнес-район/рядом с офисами -> business. Это поддержанное условие, не unsupported. Отмена — clear_criteria district_type.
 Не выдумывай обязательность мягких условий. Парк желателен -> poi:park preferred; не первый/последний этаж -> required.
 Площадь/кухня/год постройки — criteria. Произвольные проверяемые ограничения — верхний список filters.
 Для одного свойства используй ОДНО представление: именованный criterion ИЛИ filters, не оба.

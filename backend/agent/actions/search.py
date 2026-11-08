@@ -168,16 +168,27 @@ async def _search_area(s, p) -> tuple[str, ...]:
     if p.get("districts"):
         return tuple(p["districts"])
     kind = p.get("district_type")
-    if kind in ("sleeping", "prestige"):
+    center = D.for_type(p["city"], "center") if p.get("center_required") else []
+    if kind in ("sleeping", "prestige", "business"):
         names = D.for_type(p["city"], kind)
+        if center and kind != "sleeping":  # «деловой район в самом центре» — пересечение, если оно есть
+            names = [n for n in names if n in center] or names
+        if not names and kind == "prestige" and D.labels(p["city"]):
+            # Престижность — по нашим ценам; пока объявлений по городу мало, честно опираемся на центр и деловые районы
+            names = list(dict.fromkeys([*D.for_type(p["city"], "center"), *D.for_type(p["city"], "business")]))
+            if names:
+                await s.say(D.describe(p["city"], "prestige_fallback", names))
+                return tuple(names)
         if names:
             await s.say(D.describe(p["city"], kind, names))
             return tuple(names)
-        await s.say("Для этого города пока не могу оценить тип района — ищу по всему городу и отмечу это на карточках.")
-    if p.get("center_required"):
-        names = D.for_type(p["city"], "center")
-        if names:
-            return tuple(names)
+        if not D.labels(p["city"]):
+            await s.say("Для этого города у меня нет данных о районах — ищу по всему городу и отмечу это на карточках.")
+        else:
+            await s.say("По данным о районах подходящих районов этого типа не нашёл — ищу по всему городу и отмечу это на карточках.")
+    if center:
+        await s.say(D.describe(p["city"], "center", center))
+        return tuple(center)
     return ()
 
 

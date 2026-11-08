@@ -258,6 +258,43 @@ def fetch_roads(name: str, area: str, fetch=None, log=print) -> dict:
     return roads
 
 
+def fetch_poi(kind: str, area: str, fetch=None) -> list:
+    elements = overpass(geo._query([kind], ["(area.c)"], 240).replace("[out:json][timeout:240];",
+                                                                       f"[out:json][timeout:240];{area}"), 240, fetch)
+    return geo._rows(elements, [kind])[kind]
+
+
+def gaps(extra: dict) -> list[str]:
+    """Что в готовом городе подозрительно пусто: виды «что рядом», ж/д, крупные дороги."""
+    out = [f"poi:{k}" for k in geo.POI if not extra["poi"].get(k)]
+    if not extra["roads"].get("rail") or len(extra["roads"].get("major", [])) < 300:
+        out.append("roads")
+    return out
+
+
+def fill_gaps(cfg: dict, fetch=None, log=print) -> list[str]:
+    """Дособрать у готового города только пустое (сбойные ответы Overpass при первой сборке). -> что осталось пустым."""
+    path = OUT_DIR / f"{slug(cfg['name'])}.poi.json.gz"
+    with gzip.open(path, "rt", encoding="utf-8") as f:
+        extra = json.load(f)
+    todo = gaps(extra)
+    if not todo:
+        log(f"  {cfg['name']}: пробелов нет")
+        return []
+    area_id, _ = city_area(cfg, fetch)
+    area = f"area({area_id})->.c;"
+    for item in todo:
+        if item == "roads":
+            extra["roads"] = fetch_roads(cfg["name"], area, fetch, log)
+        else:
+            kind = item.split(":", 1)[1]
+            extra["poi"][kind] = fetch_poi(kind, area, fetch)
+            log(f"  {cfg['name']}: {geo.POI[kind][0]} — {len(extra['poi'][kind])}")
+    with gzip.open(path, "wt", encoding="utf-8") as f:
+        json.dump(extra, f, ensure_ascii=False, separators=(",", ":"))
+    return gaps(extra)
+
+
 def refresh_roads(cfg: dict, fetch=None, log=print) -> dict:
     """Пересобрать только дороги и ж/д у готового города; остальное не трогаем."""
     path = OUT_DIR / f"{slug(cfg['name'])}.poi.json.gz"
@@ -338,12 +375,10 @@ def build_city(cfg: dict, fetch=None, log=print) -> tuple[dict, dict]:
     log(f"  {name}: неофициальных районов {len(places)}, станций метро {len(metro)}")
 
     # что рядом — те же виды и формат, что у живой проверки backend.geo
-    poi: dict[str, list] = {}
-    for kind in geo.POI:
-        elements = overpass(geo._query([kind], ["(area.c)"], 240).replace("[out:json][timeout:240];",
-                                                                           f"[out:json][timeout:240];{area}"), 240, fetch)
-        poi[kind] = geo._rows(elements, [kind])[kind]
+    poi = {kind: fetch_poi(kind, area, fetch) for kind in geo.POI}
     log(f"  {name}: объектов «что рядом» {sum(len(v) for v in poi.values())}")
+    if empty := [k for k, v in poi.items() if not v]:
+        log(f"  {name}: пусто по видам {', '.join(empty)} — проверьте: --cities {name} --fill")
 
     # признаки районов: деловая активность (офисы, магазины) и «семейность» (школы, детсады), парки
     counts = {d["name"]: {"office": 0, "shop": 0, "family": 0, "park": 0} for d in districts}
@@ -388,6 +423,7 @@ def main() -> int:
     ap.add_argument("--force", action="store_true", help="пересобрать уже готовые")
     ap.add_argument("--mirror", help="свой сервер Overpass (…/api/interpreter) — первым в списке")
     ap.add_argument("--jobs", type=int, default=3, help="сколько городов собирать одновременно (по умолчанию 3)")
+    ap.add_argument("--fill", action="store_true", help="у готовых городов дособрать только пустое: виды «что рядом», ж/д (минуты)")
     ap.add_argument("--roads", action="store_true", help="у готовых городов пересобрать только дороги и ж/д (несколько минут)")
     args = ap.parse_args()
     if args.mirror:
@@ -398,6 +434,18 @@ def main() -> int:
         print("Нет в списке backend.geodata.CITIES:", ", ".join(sorted(unknown)))
         return 2
     failed = []
+    if args.fill:
+        for cfg in todo:
+            if not (OUT_DIR / f"{slug(cfg['name'])}.poi.json.gz").exists():
+                continue
+            try:
+                left = fill_gaps(cfg, log=lambda msg: print(msg, flush=True))
+                if left:
+                    print(f"  {cfg['name']}: всё ещё пусто: {', '.join(left)} (возможно, так в OpenStreetMap)")
+            except Exception as exc:  # noqa: BLE001
+                print(f"  {cfg['name']}: ОШИБКА: {exc}", flush=True)
+                failed.append(cfg["name"])
+        return 1 if failed else 0
     if args.roads:
         for cfg in todo:
             if not (OUT_DIR / f"{slug(cfg['name'])}.poi.json.gz").exists():
