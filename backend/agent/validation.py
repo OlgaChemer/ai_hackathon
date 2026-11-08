@@ -57,6 +57,7 @@ def choice(*values):
 CONFIRMATIONS = {
     "clarify": {}, "price": {}, "object": {}, "sign": {},
     "red_lines": {"budget_max": number(100_000), "budget_min": number(100_000)},
+    "deposit": {"deposit": number(0)},
     "extras": {"housing": choice("secondary", "new", "both"),
                "apartments": choice("hide", "only", "any"),
                "condition": choice("repair", "cosmetic", "ready", "any"),

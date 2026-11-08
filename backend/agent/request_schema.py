@@ -46,6 +46,12 @@ CHANGE_SCHEMA = {
             "type": "integer",
             "description": "максимальная цена, рубли",
         },
+        "deposit": {
+            "minimum": 0,
+            "maximum": 1000000000,
+            "type": "integer",
+            "description": "наличные на первоначальный взнос, если клиент прямо их назвал («на взнос есть 2 млн»). Это не бюджет квартиры — не путай",
+        },
         "apartments": {
             "type": "string",
             "enum": ["hide", "only", "any"],

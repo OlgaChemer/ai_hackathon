@@ -39,7 +39,7 @@ class P1P2(unittest.IsolatedAsyncioTestCase):
         s=self.agent();actions._load()
         self.assertEqual(set(actions.REGISTRY),set(capabilities.POLICIES))
         rows=capabilities.catalog(s)
-        self.assertEqual(len(rows),19)
+        self.assertEqual(len(rows),20)
         for row in rows:
             self.assertEqual(row['allowed'],capabilities.decision(s,row['name'])[0])
             if not row['allowed']:self.assertTrue(row['reason'])

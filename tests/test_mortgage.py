@@ -14,10 +14,44 @@ from backend.agent import mortgage as M
 from backend.agent import profile as PF
 from backend.agent import session as O
 from tests.fakes import ScriptedLLM, call, drive, say
+from backend.agent import actions
+from backend.llm import ToolCall
 
 
 def by_key(r):
     return {c["key"]: c for c in r["programs"]}
+
+
+class DepositTest(unittest.IsolatedAsyncioTestCase):
+    """Взнос спрашиваем до расчёта: свои деньги, а не 20% от цены по умолчанию."""
+
+    def setUp(self):
+        db.configure('sqlite://')
+
+    def agent(self, *script):
+        return O.create_session('', ScriptedLLM(*script))
+
+    async def test_mortgage_requires_deposit_first(self):
+        s = self.agent()
+        s.profile.update(city="Казань", rooms=2, budget_max=15_000_000,
+                         payment="mortgage_ready", children=0)
+        result = await actions.execute(s, ToolCall('mortgage_programs', {}))
+        self.assertIn('ask_deposit', result.get('error', ''))
+
+    async def test_deposit_is_saved_from_card(self):
+        s = self.agent()
+        s.profile.update(city="Казань", rooms=2, budget_max=15_000_000, payment="mortgage_ready")
+        s.ask = AsyncMock(return_value={"approved": True, "data": {"deposit": 3_000_000}})
+        result = await actions.execute(s, ToolCall('ask_deposit', {}))
+        self.assertEqual(s.profile["deposit"], 3_000_000)
+        self.assertEqual(result["share"], 0.2)
+
+    async def test_deposit_changes_program_numbers(self):
+        """3 млн на квартиру за 15 млн — это взнос 20%; 6 млн — 40% и другая ставка."""
+        low = M.programs(15_000_000, "Казань", {"children": 0}, down_share=0.2)
+        high = M.programs(15_000_000, "Казань", {"children": 0}, down_share=0.4)
+        self.assertLess(high["rate"], low["rate"])
+        self.assertGreater(low["programs"][0]["monthly"], high["programs"][0]["monthly"])
 
 
 class ProgramsTest(unittest.TestCase):
@@ -119,9 +153,10 @@ class FinanceActionsTest(unittest.TestCase):
         return s
 
     def test_family_matcap_and_savings_plan(self):
-        s = self.agent(call("ask_payment"), call("ask_family"), call("mortgage_programs"), call("savings_plan"), say("Готово."))
+        s = self.agent(call("ask_payment"), call("ask_family"), call("ask_deposit"), call("mortgage_programs"), call("savings_plan"), say("Готово."))
         events = asyncio.run(drive(s, {"payment": (True, {"payment": "mortgage_saving"}),
-                                       "family": (True, {"children": 1, "youngest_age": 4, "matcap": M.MATCAP_FIRST})}))
+                                       "family": (True, {"children": 1, "youngest_age": 4, "matcap": M.MATCAP_FIRST}),
+                                       "deposit": (True, {"deposit": 3_000_000})}))
         finance = [e["data"] for e in events if e["type"] == "result" and e["kind"] == "finance"][-1]
         self.assertEqual(finance["mode"], "saving")
         self.assertEqual(finance["programs"]["chosen"], "market")  # Казань, вторичка

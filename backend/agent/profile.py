@@ -34,6 +34,7 @@ EMPTY_PROFILE = {
     "budget_max": None,
     "budget_min": None,       # нижняя граница: ниже неё квартиры не предлагаем
     "apartments": None,       # hide — не показывать, only — только апартаменты, any — всё равно
+    "deposit": None,          # наличные на первоначальный взнос, рубли
     "payment": None,          # cash | mortgage_ready | mortgage_saving
     "okrug": None,
     "districts": [],          # районы, которые клиент назвал (ищем в них)
@@ -96,7 +97,7 @@ def merge_profile(raw: dict, base: dict | None = None) -> dict:
     elif raw.get('rooms_options')==[] and 'rooms' not in raw:p['rooms']=None
     p["cities"] = list(dict.fromkeys(normalize_city(c) or c for c in p.get("cities") or []))[:3]
     p["city"] = normalize_city(p["city"]) or p["city"]
-    for key, cast in (("rooms", int), ("budget_max", int), ("budget_min", int), ("kitchen_min", float), ("area_min", float), ("metro_max_minutes", int),
+    for key, cast in (("rooms", int), ("budget_max", int), ("budget_min", int), ("deposit", int), ("kitchen_min", float), ("area_min", float), ("metro_max_minutes", int),
                       ("children", int), ("youngest_age", int), ("year_min", int)):
         try:
             p[key] = cast(p[key]) if p[key] is not None else None

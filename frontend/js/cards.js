@@ -263,6 +263,21 @@ export function confirmCard(ev) {
       return data;
     };
   }
+  if (ev.kind === "deposit") {
+    const p = ev.payload || {};
+    const need = Number(p.need) || Math.round((p.budget_max || 0) * 0.2);
+    const quick = [...new Set([1000000, need, 3000000, 5000000].filter((v) => v > 0))];
+    extra.innerHTML = html`
+      <label style="margin-top:8px">Наличные на первый взнос, ₽
+        <input type="number" min="0" step="100000" value="${need}" data-deposit>
+      </label>
+      <div class="quick">${html.raw(quick.map((v) => html`<button class="chip-btn" data-deposit-quick="${v}">${rub(v)}</button>`).join(""))}</div>
+      <p class="hint">Для квартиры за ${rub(p.budget_max || 0)} взнос ${Math.round((Number(p.share) || 0.2) * 100)}% — это ${rub(need)}. Маткапитал считаю отдельно.</p>`;
+    const input = extra.querySelector("[data-deposit]");
+    extra.querySelectorAll("[data-deposit-quick]").forEach((b) =>
+      b.addEventListener("click", () => { input.value = b.dataset.depositQuick; }));
+    collect = () => ({ deposit: Math.max(0, Number(input.value) || 0) });
+  }
   if (ev.kind === "finance") {
     extra.innerHTML = financeForm(ev);
     collect = () => collectForm(card);
@@ -284,6 +299,7 @@ export function confirmCard(ev) {
   const buttons = {
     red_lines: [["Подтвердить рамки", true, {}], ["Изменить запрос", false, {}]],
     extras: [["Применить", true, {}], ["Пропустить", false, {}]],
+    deposit: [["Сохранить взнос", true, {}], ["Пропустить", false, {}]],
     finance: ev.price ? [["Рассчитать стратегию", true, {}], ["Пропустить", false, {}]] : [["Посчитать бюджет", true, {}]],
     payment: [["Наличными — вся сумма есть", true, { payment: "cash" }], ["Ипотека, на взнос хватает", true, { payment: "mortgage_ready" }], ["Ипотека, взнос ещё копим", true, { payment: "mortgage_saving" }]],
     family: [["Подобрать программу", true, {}], ["Пропустить", false, {}]],
@@ -302,6 +318,7 @@ export function confirmCard(ev) {
   card.dataset.hint = hint;
   const spoken = {
     red_lines: () => `Подтвердите диапазон цены: ${[ev.payload.city, ...(ev.payload.cities || [])].join(", ")}, ${roomDescription(ev.payload.rooms_options?.length ? ev.payload.rooms_options : [ev.payload.rooms])}, от ${rub(ev.payload.budget_min || Math.round(ev.payload.budget_max * 0.7))} до ${rub(ev.payload.budget_max)}. Выше не пойду, ниже предлагать не буду. Итоговую цену подтверждаете вы.`,
+    deposit: () => "Сколько наличных есть на первоначальный взнос? От суммы зависят ставка и платёж.",
     extras: () => "Четыре быстрых вопроса: тип жилья, апартаменты, ремонт и этаж. Можно пропустить — тогда ищу по известному.",
     finance: () => `${ev.title}.`,
     payment: () => `${ev.title}`,
