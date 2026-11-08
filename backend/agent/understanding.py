@@ -118,6 +118,9 @@ def failed_input(s, exc):
     s.call_targets=[]
     text=('Не смог обработать сообщение из-за ошибки разбора на моей стороне. '
           'Условия и последняя подборка сохранены. Уточнять их не требуется: можно отправить сообщение ещё раз или продолжить с прежними вариантами.')
+    if isinstance(exc,UnderstandingError) and 'город' in str(exc).casefold():
+        text=('Не смог понять, какой город вы имеете в виду. Напишите его полное название, например «Уфа» или «Казань». '
+              'Остальные условия сохранены.')
     if not isinstance(exc,UnderstandingError):
         text=('Сервис обработки сообщения сейчас не ответил. Условия и последняя подборка сохранены; '
               'можно повторить сообщение позже. Это не просьба изменить ваши условия.')
@@ -273,6 +276,16 @@ async def _prepare(s):
             'decision':'apply' if answered else 'unchanged','changes':answered,'question':'','options':[]}
         record('request_review',session=s.id,decision=s.request_review['decision'],intent='refine',
                changed_keys=list(answered),source='bound_card_choice')
+        return s.request_review
+    from .clarification import confirm_city
+    confirmed=confirm_city(s,inputs,base_profile)
+    if confirmed:
+        validation.validate(confirmed,CHANGE_SCHEMA)
+        s.request_review={'seq':version,'base_profile':base_profile,'intent':'refine' if (s.search or s.shown) else 'search',
+                          'decision':'apply','changes':confirmed,'question':'','options':[],'selection':None,'call_ids':None,
+                          'unsupported':[]}
+        record('request_review',session=s.id,decision='apply',intent=s.request_review['intent'],
+               changed_keys=list(confirmed),source='city_confirmation')
         return s.request_review
     fast=_rule_parse(s,inputs,base_profile)
     if fast is not None and settings.rule_parser=='on':

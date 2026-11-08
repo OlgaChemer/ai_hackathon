@@ -359,3 +359,24 @@ class UnderstandingTest(GeoTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class UfaRegressionTest(unittest.TestCase):
+    """Тест 08.11: «в Уфе» не узнавалась (основа «уфа» короче 4 букв), и Циан отклонялся как «страница не про нужный город»."""
+    def test_city_stem_short_name(self):
+        from backend.sources.base import normalize_city
+        self.assertEqual(normalize_city("ещё в Уфе"), "Уфа")
+        self.assertIn(cian.REGIONS["Уфа"][2], "купить 2-комнатную квартиру в уфе — 1 209 объявлений")
+
+    def test_yes_to_proposed_city(self):
+        from types import SimpleNamespace
+        from backend.agent.clarification import confirm_city
+        s = SimpleNamespace(pending_decisions={"clarify": {"status": "waiting",
+                            "text": "Подскажите, в каком городе ищем? Вы упомянули УФМ — это Уфа?"}})
+        ask = lambda text: confirm_city(s, [{"text": text, "seq": 1}], {"city": None})  # noqa: E731
+        for text in ("Да.", "Да, офа.", "Да, ещё в Уфе.", "ага, верно"):
+            self.assertEqual(ask(text), {"city": "Уфа"}, text)
+        for text in ("Нет, Казань", "Да, но двушка", "Уфа или Казань"):
+            self.assertIsNone(ask(text), text)
+        s.pending_decisions["clarify"]["text"] = "Это Уфа или Казань?"
+        self.assertIsNone(ask("Да"))
