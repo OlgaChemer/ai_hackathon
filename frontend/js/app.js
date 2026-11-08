@@ -68,6 +68,7 @@ function renderChatResult(step) {
 function syncSelectionButtons() {
   stage.querySelectorAll("[data-selection]").forEach((b) => (b.disabled = state.awaiting !== "selection" ||
     (b.dataset.selection === 'proceed' && !state.results[4]?.cards?.length)));
+  stage.querySelectorAll("[data-choose]").forEach((b) => (b.disabled = state.awaiting !== "selection"));
 }
 
 // ------------------------------------------------------------------ настоящий звонок (МТС Exolve)
@@ -544,6 +545,16 @@ async function handleResultClick(e) {
   const mapButton = e.target.closest('[data-show-map]');
   if (mapButton && !mapButton.disabled) {
     await focusMap(stage.querySelector('[data-map]'), mapButton.dataset.showMap);
+    return;
+  }
+  const choose = e.target.closest("[data-choose]");
+  if (choose && !choose.disabled) {
+    if (state.awaiting !== "selection") {
+      addMsg("agent", "Подборка ещё обновляется — кнопка «Выбрать» станет активной через пару секунд.");
+      return;
+    }
+    setVote(choose.dataset.choose, "up", false);   // отметить как выбранную
+    selectionAction("proceed");
     return;
   }
   const vote = e.target.closest("[data-vote]");

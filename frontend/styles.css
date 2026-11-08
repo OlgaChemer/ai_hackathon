@@ -1442,3 +1442,8 @@ body[data-page="agent"]:has(.chat.expanded) :is(.site-header,.stage,.footnote) {
 .workshop-facts table{width:100%;border-collapse:collapse;min-width:520px}.workshop-facts th,.workshop-facts td{padding:10px;text-align:left;border-bottom:1px solid #dbe7e0;font-size:13px}
 .workshop [data-history]{display:flex;gap:10px;flex-wrap:wrap}.workshop [data-result]{margin:14px 0}.workshop [hidden]{display:none!important}
 @media(max-width:600px){.workshop{padding:18px;width:96vw}.workshop-assumptions{grid-template-columns:1fr;gap:0}#workshopButton{font-size:11px;padding:7px}}
+
+.offer-choose { grid-column: 1 / -1; }
+.offer-choose:disabled { opacity: .5; cursor: default; }
+.sel-actions { position: sticky; bottom: 0; z-index: 5; background: var(--surface); border-top: 1px solid var(--line);
+  box-shadow: 0 -6px 18px rgba(15, 42, 28, .06); padding: 12px 0 6px; margin-top: 18px; }
