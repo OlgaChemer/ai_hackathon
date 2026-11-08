@@ -67,19 +67,42 @@ function familyForm(ev) {
         </select>
       </label>
       <label data-age>Возраст младшего, полных лет<input type="number" min="0" max="25" step="1" name="youngest_age" value="${d.youngest_age}" placeholder="например, 4"></label>
-      <label class="radio"><input type="checkbox" name="has_matcap" ${hasCap ? "checked" : ""}>Есть неизрасходованный маткапитал</label>
+      <div class="extras__row" data-cap-block><span class="extras__title">Маткапитал — есть или нет?</span>
+        <div class="quick">
+          <button type="button" class="chip-btn${hasCap ? "" : " is-on"}" data-cap="no">Нет</button>
+          <button type="button" class="chip-btn${hasCap ? " is-on" : ""}" data-cap="yes">Есть</button>
+        </div>
+      </div>
       <label data-cap ${hasCap ? "" : "hidden"}>Сумма маткапитала, ₽<input type="number" min="0" step="1000" name="matcap" value="${d.matcap || d.matcap_default}"></label>
+      <p class="hint" data-cap-hint ${hasCap ? "" : "hidden"}>Сумма зависит от очерёдности ребёнка и региона — поправьте, если знаете точную.</p>
     </div>`;
 }
 
 function bindFamilyForm(card) {
   const kids = card.querySelector("[name=children]");
   const age = card.querySelector("[data-age]");
-  const has = card.querySelector("[name=has_matcap]");
   const cap = card.querySelector("[data-cap]");
-  const sync = () => { age.hidden = kids.value === "0"; cap.hidden = !has.checked; };
+  const capBlock = card.querySelector("[data-cap-block]");
+  const capHint = card.querySelector("[data-cap-hint]");
+  const capInput = card.querySelector("[name=matcap]");
+  let hasCap = capInput && !cap.hidden;
+  const setCap = (on) => {
+    hasCap = on;
+    if (cap) cap.hidden = !on;
+    if (capHint) capHint.hidden = !on;
+    if (capInput && on && !Number(capInput.value)) capInput.value = capInput.defaultValue || 0;
+    card.querySelectorAll("[data-cap]").forEach((b) =>
+      b.classList.toggle("is-on", (b.dataset.cap === "yes") === on));
+  };
+  card.querySelectorAll("[data-cap]").forEach((b) =>
+    b.addEventListener("click", () => setCap(b.dataset.cap === "yes")));
+  const sync = () => {
+    const none = kids.value === "0";
+    age.hidden = none;
+    if (capBlock) capBlock.hidden = none;   // без детей маткапитала не бывает
+    setCap(none ? false : hasCap);
+  };
   kids.addEventListener("change", sync);
-  has.addEventListener("change", sync);
   sync();
   return () => {
     const children = Number(kids.value);
@@ -87,7 +110,7 @@ function bindFamilyForm(card) {
     return {
       children,
       youngest_age: children && ageVal !== "" ? Number(ageVal) : null,
-      matcap: has.checked ? Number(card.querySelector("[name=matcap]").value) || 0 : 0,
+      matcap: hasCap ? Number(card.querySelector("[name=matcap]").value) || 0 : 0,
     };
   };
 }

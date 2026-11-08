@@ -64,7 +64,8 @@ async def ask_family(s) -> dict:
         defaults={"children": known["children"] if known["children"] is not None else 1,
                   "youngest_age": known["youngest_age"] if known["youngest_age"] is not None else "",
                   "matcap": known["matcap"] or (M.MATCAP_FIRST if s.profile.get("matcap") else 0),
-                  "matcap_default": M.MATCAP_FIRST},
+                  "matcap_default": M.MATCAP_FIRST,
+                  "matcap_known": known["matcap"] is not None},
     )
     if r["approved"] is None:
         return {"client_said": r["data"].get("text", "")}
@@ -152,6 +153,8 @@ async def mortgage_programs(s) -> dict:
         return remember_programs(s, {"mode": "cash"})
     if p.get("children") is None:
         raise ActionError("Семья неизвестна, а от неё зависит семейная ипотека — сначала ask_family.")
+    if p.get("children") and p.get("matcap") is None:
+        raise ActionError("Неизвестно, есть ли у клиента маткапитал — сначала ask_family (там вопрос про маткапитал).")
     if p.get("deposit") is None:
         raise ActionError("Неизвестно, сколько наличных на первоначальный взнос — сначала ask_deposit.")
     down_share = max(0.05, min(0.9, (p.get("deposit") or 0) / budget)) if budget else M.DEFAULT_DOWN_SHARE

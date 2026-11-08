@@ -54,6 +54,34 @@ class DepositTest(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(low["programs"][0]["monthly"], high["programs"][0]["monthly"])
 
 
+class FamilyNeededTest(unittest.TestCase):
+    """Маткапитал спрашиваем, даже если число детей уже известно из текста."""
+
+    def setUp(self):
+        db.configure('sqlite://')
+
+    def agent(self, **profile):
+        s = O.create_session('', ScriptedLLM())
+        s.profile.update(city="Казань", rooms=2, budget_max=10_000_000)
+        s.profile.update(profile)
+        return s
+
+    def test_children_known_but_matcap_unknown(self):
+        from backend.agent import capabilities
+        allowed, _ = capabilities.decision(self.agent(children=1, youngest_age=7), 'ask_family')
+        self.assertTrue(allowed)
+
+    def test_no_children_no_question(self):
+        from backend.agent import capabilities
+        allowed, _ = capabilities.decision(self.agent(children=0), 'ask_family')
+        self.assertFalse(allowed)
+
+    def test_known_matcap_no_question(self):
+        from backend.agent import capabilities
+        allowed, _ = capabilities.decision(self.agent(children=1, matcap=False), 'ask_family')
+        self.assertFalse(allowed)
+
+
 class ProgramsTest(unittest.TestCase):
     def test_kazan_secondary_family_goes_to_new_builds(self):
         """Казань, ребёнок 4 года, вторичка: семейная не проходит, считаем по рыночной, предлагаем новостройку."""
