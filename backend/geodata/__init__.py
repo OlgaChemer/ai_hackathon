@@ -11,10 +11,12 @@ from __future__ import annotations
 import gzip
 import json
 import math
+import os
 from functools import lru_cache
 from pathlib import Path
 
-OUT_DIR = Path(__file__).resolve().parent / "cities"
+DEFAULT_DIR = Path(__file__).resolve().parent / "cities"
+OUT_DIR = Path(os.environ.get("GEODATA_DIR") or DEFAULT_DIR)  # тесты подставляют пустую папку
 
 # Города-миллионники России (Росстат) и ближайшие к миллиону. relation — id границы в OSM, если поиск по имени
 # находит не то; district_levels — уровни admin_level районов по порядку предпочтения; okrugs — округа Москвы.

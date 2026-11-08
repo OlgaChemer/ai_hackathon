@@ -54,6 +54,12 @@ OKRUG_ABBR = {  # Москва: административные округа
     "Южный": "ЮАО", "Юго-Западный": "ЮЗАО", "Западный": "ЗАО", "Северо-Западный": "СЗАО", "Зеленоградский": "ЗелАО",
     "Новомосковский": "НАО", "Троицкий": "ТАО",
 }
+# Районы, у которых центр не попадает в контур своего округа (эксклавы, вытянутые формы), и Зеленоград,
+# чей округ Overpass не всегда отдаёт среди admin_level=5. Последний шаг после голосования по точкам контура.
+MOSCOW_OKRUG_FALLBACK = {
+    "Кунцево": "ЗАО", "Некрасовка": "ЮВАО", "Восточный": "ВАО",
+    "Крюково": "ЗелАО", "Старое Крюково": "ЗелАО", "Силино": "ЗелАО", "Матушкино": "ЗелАО", "Савёлки": "ЗелАО",
+}
 NAME_NOISE = re.compile(r"\b(район|муниципальный округ|внутригородской|административный округ|городской округ|"
                         r"поселение|округ|микрорайон|территория)\b", re.I)
 
@@ -78,6 +84,12 @@ def _mark(url: str, ok: bool, hung: bool = False) -> None:
             _mirror_penalty[url] = max(_mirror_penalty.get(url, 0.0), 0.0) + (10.0 if hung else 1.0)
 
 
+def partial(remark: str) -> bool:
+    """Overpass при нехватке времени или памяти отвечает 200 с частью данных и пишет об этом в remark."""
+    r = remark.lower()
+    return "runtime error" in r or "timed out" in r or "out of memory" in r
+
+
 def overpass(query: str, timeout: int = 180, fetch=None) -> list[dict]:
     """Запрос к Overpass: зеркала по очереди, начиная с ответившего последним; зависшие — в конец списка."""
     if fetch is not None:  # тесты подставляют ответы
@@ -90,10 +102,15 @@ def overpass(query: str, timeout: int = 180, fetch=None) -> list[dict]:
                 r = httpx.post(url, data={"data": query}, headers=HEADERS,
                                timeout=httpx.Timeout(timeout + 15, connect=15))
                 if r.status_code == 200:
-                    _mark(url, True)
-                    time.sleep(PAUSE_S)
-                    return r.json().get("elements", [])
-                last = f"{url}: HTTP {r.status_code}"
+                    body = r.json()
+                    remark = body.get("remark") or ""
+                    if not partial(remark):
+                        _mark(url, True)
+                        time.sleep(PAUSE_S)
+                        return body.get("elements", [])
+                    last = f"{url}: неполный ответ ({remark[:80]})"  # 200, но запрос оборван по времени/памяти
+                else:
+                    last = f"{url}: HTTP {r.status_code}"
                 _mark(url, False)
             except (httpx.TimeoutException,) as exc:
                 last = f"{url}: {type(exc).__name__}"
@@ -108,6 +125,22 @@ def overpass(query: str, timeout: int = 180, fetch=None) -> list[dict]:
 
 
 # ------------------------------------------------------------------ геометрия
+
+def okrug_of(c: tuple[float, float], rings: list[list[float]], okrugs: list[dict]) -> str | None:
+    """Округ района: по центру, а если центр вне всех округов — по большинству точек контура района."""
+    for o in okrugs:
+        if o["rings"] and inside(c[0], c[1], o["rings"]):
+            return o["abbr"] or o["name"]
+    votes: dict[str, int] = {}
+    for line in rings:
+        for i in range(0, len(line) - 1, 2):
+            for o in okrugs:
+                if o["rings"] and inside(line[i], line[i + 1], o["rings"]):
+                    key = o["abbr"] or o["name"]
+                    votes[key] = votes.get(key, 0) + 1
+                    break
+    return max(votes, key=votes.get) if votes else None
+
 
 def clean_name(name: str) -> str:
     """«район Хамовники» -> «Хамовники», «Вахитовский район» -> «Вахитовский» (как в выдаче Циана)."""
@@ -210,6 +243,33 @@ def city_area(cfg: dict, fetch=None) -> tuple[int, tuple[float, float]]:
     return area_id, center
 
 
+def fetch_roads(name: str, area: str, fetch=None, log=print) -> dict:
+    """Крупные дороги и ж/д города (для «тихо»)."""
+    roads = {"major": [], "rail": []}
+    for e in overpass(f'[out:json][timeout:240];{area}way(area.c)["highway"~"^(motorway|trunk|primary)$"];out geom qt;', 240, fetch):
+        if e.get("geometry"):
+            roads["major"].append(thin([(p["lat"], p["lon"]) for p in e["geometry"] if p], ROAD_STEP))
+    for e in overpass(f'[out:json][timeout:240];{area}way(area.c)["railway"="rail"]["service"!~"."];out geom qt;', 240, fetch):
+        if e.get("geometry"):
+            roads["rail"].append(thin([(p["lat"], p["lon"]) for p in e["geometry"] if p], ROAD_STEP))
+    log(f"  {name}: крупных дорог {len(roads['major'])}, ж/д {len(roads['rail'])}")
+    if not roads["rail"] or len(roads["major"]) < 500:
+        log(f"  {name}: подозрительно мало дорог или нет ж/д — проверьте: --cities {name} --roads")
+    return roads
+
+
+def refresh_roads(cfg: dict, fetch=None, log=print) -> dict:
+    """Пересобрать только дороги и ж/д у готового города; остальное не трогаем."""
+    path = OUT_DIR / f"{slug(cfg['name'])}.poi.json.gz"
+    with gzip.open(path, "rt", encoding="utf-8") as f:
+        extra = json.load(f)
+    area_id, _ = city_area(cfg, fetch)
+    extra["roads"] = fetch_roads(cfg["name"], f"area({area_id})->.c;", fetch, log)
+    with gzip.open(path, "wt", encoding="utf-8") as f:
+        json.dump(extra, f, ensure_ascii=False, separators=(",", ":"))
+    return extra
+
+
 def build_city(cfg: dict, fetch=None, log=print) -> tuple[dict, dict]:
     """-> (справочник города, данные POI/дорог). fetch — подмена Overpass в тестах."""
     name = cfg["name"]
@@ -247,9 +307,8 @@ def build_city(cfg: dict, fetch=None, log=print) -> tuple[dict, dict]:
         lats = [v for line in rings for v in line[0::2]] or [c[0]]
         lngs = [v for line in rings for v in line[1::2]] or [c[1]]
         d["bbox"] = [min(lats), min(lngs), max(lats), max(lngs)]
-        for o in okrugs:
-            if o["rings"] and inside(c[0], c[1], o["rings"]):
-                d["okrug"] = o["abbr"] or o["name"]
+        if okrugs:
+            d["okrug"] = okrug_of(c, rings, okrugs) or MOSCOW_OKRUG_FALLBACK.get(d["name"])
         if rings and inside(center[0], center[1], rings):
             d["has_center"] = True
         districts.append(d)
@@ -303,14 +362,7 @@ def build_city(cfg: dict, fetch=None, log=print) -> tuple[dict, dict]:
         d["features"] = {"business_per_km2": round((c["office"] + c["shop"]) / a, 1),
                          "family_per_km2": round(c["family"] / a, 2), "parks": c["park"]}
 
-    roads = {"major": [], "rail": []}
-    for e in overpass(f'[out:json][timeout:240];{area}way(area.c)["highway"~"^(motorway|trunk|primary)$"];out geom qt;', 240, fetch):
-        if e.get("geometry"):
-            roads["major"].append(thin([(p["lat"], p["lon"]) for p in e["geometry"] if p], ROAD_STEP))
-    for e in overpass(f'[out:json][timeout:240];{area}way(area.c)["railway"="rail"]["service"!~"."];out geom qt;', 240, fetch):
-        if e.get("geometry"):
-            roads["rail"].append(thin([(p["lat"], p["lon"]) for p in e["geometry"] if p], ROAD_STEP))
-    log(f"  {name}: крупных дорог {len(roads['major'])}, ж/д {len(roads['rail'])}")
+    roads = fetch_roads(name, area, fetch, log)
 
     radius = max([d["dist_km"] for d in districts] + [3.0])
     city = {"version": 1, "city": name, "slug": slug(name), "built_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -336,6 +388,7 @@ def main() -> int:
     ap.add_argument("--force", action="store_true", help="пересобрать уже готовые")
     ap.add_argument("--mirror", help="свой сервер Overpass (…/api/interpreter) — первым в списке")
     ap.add_argument("--jobs", type=int, default=3, help="сколько городов собирать одновременно (по умолчанию 3)")
+    ap.add_argument("--roads", action="store_true", help="у готовых городов пересобрать только дороги и ж/д (несколько минут)")
     args = ap.parse_args()
     if args.mirror:
         MIRRORS.insert(0, args.mirror)
@@ -345,6 +398,18 @@ def main() -> int:
         print("Нет в списке backend.geodata.CITIES:", ", ".join(sorted(unknown)))
         return 2
     failed = []
+    if args.roads:
+        for cfg in todo:
+            if not (OUT_DIR / f"{slug(cfg['name'])}.poi.json.gz").exists():
+                print(f"{cfg['name']}: город ещё не собран — сначала без --roads")
+                failed.append(cfg["name"])
+                continue
+            try:
+                refresh_roads(cfg, log=lambda msg: print(msg, flush=True))
+            except Exception as exc:  # noqa: BLE001
+                print(f"  {cfg['name']}: ОШИБКА: {exc}", flush=True)
+                failed.append(cfg["name"])
+        return 1 if failed else 0
     todo = [c for c in todo if args.force or not (OUT_DIR / f"{slug(c['name'])}.json.gz").exists() or print(
         f"{c['name']}: уже собран, пропускаю")]
 

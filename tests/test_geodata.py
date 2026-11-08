@@ -203,6 +203,69 @@ class CityAreaFallbackTest(unittest.TestCase):
         self.assertEqual((area_id, center), (3600000077, (58.01, 56.23)))
 
 
+class OverpassHardeningTest(unittest.TestCase):
+    def test_partial_answer_is_retried(self):
+        """200 с remark «runtime error» — данные неполные (так у Перми пропала ж/д): идём к следующему зеркалу."""
+        class Resp:
+            status_code = 200
+            def __init__(self, body): self.body = body
+            def json(self): return self.body
+        answers = [Resp({"remark": "runtime error: Query timed out in \"query\" at line 1 after 241 seconds.", "elements": []}),
+                   Resp({"elements": [{"id": 1}]})]
+        with patch.object(B.httpx, "post", side_effect=lambda *a, **k: answers.pop(0)), patch.object(B, "PAUSE_S", 0):
+            self.assertEqual(B.overpass("q"), [{"id": 1}])
+        self.assertFalse(B.partial(""))
+        self.assertTrue(B.partial("runtime error: out of memory"))
+
+    def test_okrug_by_ring_when_center_outside(self):
+        square = lambda a, b, c, d: [[a, b, a, d, c, d, c, b, a, b]]
+        okrugs = [{"name": "Западный", "abbr": "ЗАО", "rings": square(0, 0, 10, 10)},
+                  {"name": "Центральный", "abbr": "ЦАО", "rings": square(0, 10, 10, 20)}]
+        rings = square(1, 1, 3, 3) + square(20, 20, 21, 21)  # район с эксклавом, центр посередине — вне округов
+        self.assertEqual(B.okrug_of((11.0, 11.0), rings, okrugs), "ЗАО")
+        self.assertEqual(B.okrug_of((5.0, 15.0), rings, okrugs), "ЦАО")
+        self.assertIsNone(B.okrug_of((50.0, 50.0), square(40, 40, 41, 41), okrugs))
+
+    def test_refresh_roads_only(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(B, "OUT_DIR", Path(tmp)):
+            city, extra = B.build_city({"name": "Казань"}, fetch=fake_overpass, log=lambda *_: None)
+            extra["roads"] = {"major": [], "rail": []}
+            B.write(city, extra, Path(tmp))
+            got = B.refresh_roads({"name": "Казань"}, fetch=fake_overpass, log=lambda *_: None)
+            self.assertTrue(got["roads"]["major"])
+            self.assertEqual(got["poi"], extra["poi"])
+
+
+class RealDataTest(unittest.TestCase):
+    """Проверки на собранных файлах 18 городов (пропускаются, если файлов нет)."""
+    def setUp(self):
+        self.dir_patch = patch.object(geodata, "OUT_DIR", geodata.DEFAULT_DIR)
+        self.dir_patch.start()
+        self.addCleanup(self.dir_patch.stop)
+        geodata.reset()
+        if len(geodata.covered()) < len(geodata.CITIES):
+            self.skipTest("геоданные собраны не полностью")
+
+    def tearDown(self):
+        geodata.reset()
+
+    def test_moscow_okrugs(self):
+        c = geodata.city("Москва")
+        self.assertEqual(len({d.get("okrug") for d in c["districts"]} - {None}), 12)
+        self.assertTrue(all(d.get("okrug") for d in c["districts"]))
+
+    def test_every_city_has_districts_and_center(self):
+        for cfg in geodata.CITIES:
+            c = geodata.city(cfg["name"])
+            self.assertGreaterEqual(len(c["districts"]), 4, cfg["name"])
+            self.assertTrue(any(d.get("has_center") for d in c["districts"]), cfg["name"])
+
+    def test_lookup_real_places(self):
+        self.assertIn("Санкт-Петербург", {e["city"] for e in geodata.lookup("Петроградский")})
+        self.assertIn("Уфа", {e["city"] for e in geodata.lookup("Сипайлово")})
+        self.assertEqual({e["city"] for e in geodata.lookup("Хамовники")}, {"Москва"})
+
+
 class LocalPoiTest(GeoTestCase):
     def test_nearby_without_2gis(self):
         db.configure("sqlite://")
