@@ -23,6 +23,8 @@ body { min-height: 100vh; flex-direction: column; -webkit-font-smoothing: antial
 .voice-toggle[aria-pressed="false"] .wave { opacity: 0; }
 .workspace { flex: 1; display: grid; grid-template-columns: minmax(340px, 420px) 1fr; gap: 20px; padding: 20px 28px; min-height: 0; }
 .chat-log { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
+/* Элементы ленты не сжимаются: виджет звонка с overflow:hidden иначе схлопывался в пустую рамку */
+.chat-log > * { flex-shrink: 0; }
 .composer { gap: 10px; }
 .composer textarea { resize: none; border: 1px solid var(--line); padding: 12px 14px; outline: none; }
 .composer textarea:focus { border-color: var(--green); background: var(--surface); }
