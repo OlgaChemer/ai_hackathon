@@ -403,8 +403,6 @@ function packageBlock(p) {
 }
 
 export function summary(s) {
-  const lines = s.sber.lines.filter((l) => l.value > 0).map((l) => html`<dt>${l.name}</dt><dd class="num">${rub(l.value)}</dd>`).join("");
-  const fin = s.sber.finance.map((l) => html`<dt>${l.name} (${rub(l.amount)})</dt><dd class="num">${rub(l.value)} / год</dd>`).join("");
   return html`
   <section class="panel">
     <div class="receipt">
@@ -422,11 +420,7 @@ export function summary(s) {
         </dl>
       </div>
       <div class="sber-box">
-        <h3>Что получает Сбер</h3>
-        <p class="hint" style="margin-top:0">С этой сделки, ₽ — по допущениям бизнес-модели</p>
-        <dl class="ledger">${html.raw(lines)}<dt class="total">Итого со сделки</dt><dd class="total num">${rub(s.sber.revenue)}</dd></dl>
-        ${html.raw(fin ? html`<h3 style="margin-top:18px">Финансовый помощник</h3><dl class="ledger">${html.raw(fin)}</dl>` : "")}
-        <h3 style="margin-top:20px">Следующие события клиента</h3>
+        <h3>Что дальше</h3>
         <div class="next">${html.raw(s.next_events.map((e) => html`<span>${e}</span>`).join(""))}</div>
       </div>
     </div>
