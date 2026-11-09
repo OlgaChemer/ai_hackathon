@@ -69,6 +69,18 @@ class PhotoTests(unittest.IsolatedAsyncioTestCase):
             result=(await photos.Inspector({'listings':[row]},'deepseek',lambda t:None).inspect(['a']))[0]
             self.assertEqual(result['status'],'analyzed');self.assertEqual(model.analyze_images.await_count,2)
 
+    def test_extra_fields_and_bad_issues_do_not_discard_the_whole_photo_review(self):
+        from backend.workshop.photos import normalize,SCHEMA
+        from backend.agent import validation
+        value=normalize({'visible_state':'cosmetic','image_kind':'interior','summary':'лишнее поле модели',
+                         'observations':['Потёртые обои',''],'issues':[{'photo':'2','observation':'Скол плитки','certainty':'точно','note':1},
+                         {'photo':7,'observation':'Фото с таким номером нет','certainty':'visible'}]},4)
+        validation.validate(value,SCHEMA)
+        self.assertEqual(value['issues'],[{'photo':2,'observation':'Скол плитки','certainty':'uncertain'}])
+        self.assertEqual(value['observations'],['Потёртые обои']);self.assertEqual(value['limitations'],[])
+        for missing in ({'image_kind':'interior'},{'visible_state':'good'},{'bad':'schema'}):
+            with self.assertRaises(ValueError):validation.validate(normalize(missing,4),SCHEMA)
+
     async def test_bridge_limits_photo_payload_and_checks_known_ids(self):
         inspector=photos.Inspector({'listings':[{'id':'a'}]},'deepseek',lambda t:None)
         bridge=sandbox.Bridge(None,'Оценка квартиры',lambda t:None,inspector)

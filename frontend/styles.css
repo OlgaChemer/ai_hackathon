@@ -1462,3 +1462,8 @@ body[data-page="agent"]:has(.chat.expanded) :is(.site-header,.stage,.footnote) {
 .next-block { margin-top: 28px; padding: 18px 20px; background: var(--canvas); border-radius: var(--radius-m); border-left: 4px solid var(--green); }
 .next-block h3 { margin: 0; font-size: 17px; font-weight: 700; color: var(--ink); }
 .next-block .next { margin-top: 12px; }
+.workshop-liked{margin:14px 0 4px;padding:14px 18px;border:2px solid #209c3c;border-radius:14px;background:#f3faf5;color:#12382a}
+.workshop-liked strong{display:block;font-size:22px;font-weight:800;line-height:1.25;text-transform:uppercase;letter-spacing:.01em}
+.workshop-liked small{display:block;margin-top:6px;font-size:15px;font-weight:600;color:#2e5a43}
+.workshop-liked.is-empty{border-color:#e0892b;background:#fff6ea}.workshop-liked.is-empty small{color:#8a4b0f}
+@media(max-width:600px){.workshop-liked strong{font-size:18px}}
