@@ -392,8 +392,8 @@ export function deal(d) {
 
 function packageBlock(p) {
   if (!p || !p.rows?.length) return "";
-  return html`<div class="package">
-    <h3 class="sub">Ваши условия в Сбере</h3>
+  return html`<div class="package next-block">
+    <h3>Ваши условия в Сбере</h3>
     ${html.raw(p.headline ? html`<p class="package__headline">${p.headline}</p>` : "")}
     <details><summary>Из чего складывается</summary>
       <dl class="costs">${html.raw(p.rows.map((r) => html`<dt>${r.title}</dt><dd>${r.text}</dd>`).join(""))}</dl>
@@ -418,8 +418,10 @@ export function summary(s) {
           ${html.raw(s.monthly_saved ? html`<dt>Платёж по ипотеке ниже на</dt><dd class="num">${rub(s.monthly_saved)} / мес</dd>` : "")}
           <dt>Сэкономлено времени</dt><dd>${s.hours_saved}</dd>
         </dl>
-        <h3 class="sub next-title">Следующие события клиента</h3>
-        <div class="next">${html.raw(s.next_events.map((e) => html`<span>${e}</span>`).join(""))}</div>
+        <div class="next-block">
+          <h3>Следующие события клиента</h3>
+          <div class="next">${html.raw(s.next_events.map((e) => html`<span>${e}</span>`).join(""))}</div>
+        </div>
       </div>
     </div>
   </section>`;
