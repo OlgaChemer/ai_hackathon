@@ -237,7 +237,9 @@ async def market_prices(s) -> dict:
     guidance.record_market(s)
     emit_profile(s)
     m = s.market
-    centre=' До 5 км по прямой от опорной точки центра.' if (m.get('scope') or {}).get('center_radius_km') else ''
+    radius=(m.get('scope') or {}).get('center_radius_km')
+    centre=f' До {radius:g} км по прямой от опорной точки центра.' if radius is not None else (
+        ' Близость к центру учтена как пожелание, без отсечения остальных районов.' if s.profile.get('prefer_center') else '')
     if any(r.get('city')=='Москва' and r.get('query_okrug')=='ЦАО' for r in m.get('reports') or []):
         centre+=' Для этой выборки просмотрены объявления ЦАО.'
     markets='; '.join(('новостройки' if row['new'] else 'вторичка')+f": {row['count']}" for row in m.get('markets') or [])
@@ -262,7 +264,8 @@ async def market_prices(s) -> dict:
                 f"средняя половина предложений — {fmt(m['p25'])}–{fmt(m['p75'])}. "
                 f"Проверено {m['count']} объявлений, {markets}.{centre} "
                 +('Часть данных из кэша или охват неполный. ' if m.get('reasons') else '')
-                +budget_note+findings+"\nЭто результат по полученной выборке, а не полный рынок. Условия и согласия не изменены.")
+                +budget_note+findings+"\nЦены посчитаны по отдельной выборке, а не только по лучшим карточкам на экране. "
+                "Это не полный рынок. Условия и согласия не изменены.")
     return {"typical_from": m["p25"], "median": m["median"], "typical_to": m["p75"], "min": m["min"],
             "mean":m.get('mean'),"per_m2": round(m["ppm2"], -3) if m.get('ppm2') is not None else None, "listings": m["count"],
             'scope':m.get('scope'),'analysis':analysis,'coverage':{'reports':m.get('reports'),'reasons':m.get('reasons')}}
@@ -304,7 +307,7 @@ async def confirm_red_lines(s) -> dict:
          if selected else "Проверьте город, комнаты и диапазон цены. В этих границах я ищу, звоню и торгуюсь сам: "
         "выше верхней границы не пойду, ниже нижней квартиры не предложу. Ползунком можно сдвинуть обе границы. "
         "Итоговую цену всё равно подтверждаете вы."),
-        payload={"budget_max": basis, "budget_min": 0 if selected else p.get("budget_min"),
+        payload={"budget_max": basis, "budget_min": default_budget_min(basis) if selected else p.get("budget_min"),
                  "default_low_share": 0.3, "step": 500_000, "floor": 1_000_000,
                  "rooms": p["rooms"], "city": p["city"],
                  "rooms_options": p.get("rooms_options"), "cities": p.get("cities"),
@@ -316,7 +319,7 @@ async def confirm_red_lines(s) -> dict:
         s.request_intent = "hold"
         return {"approved": False, "note": "клиент хочет поменять запрос — спроси, что именно"}
     data = r["data"] or {}
-    new_max, new_min = data.get("budget_max",basis if selected else None), data.get("budget_min",0 if selected else None)
+    new_max, new_min = data.get("budget_max",basis if selected else None), data.get("budget_min",default_budget_min(basis) if selected else None)
     try:
         new_max = int(new_max) if new_max not in (None, "") else None
         new_min = int(new_min) if new_min not in (None, "") else None
@@ -324,6 +327,8 @@ async def confirm_red_lines(s) -> dict:
         new_max = new_min = None
     if new_min is not None and new_max is not None and new_min > new_max:
         new_min = default_budget_min(new_max)
+    effective_max=new_max or p.get('budget_max') or basis
+    new_min=max(default_budget_min(effective_max),new_min if new_min is not None else p.get('budget_min') or 0)
     if (new_max and new_max != p["budget_max"]) or (new_min is not None and new_min != p.get("budget_min")):
         preserve_selected=selected and new_max and new_max>=selected['price'] and (new_min or 0)<=selected['price']
         if preserve_selected:

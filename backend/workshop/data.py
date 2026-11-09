@@ -176,16 +176,16 @@ def facts(snapshot):
                 'repair':repair,'repair_with_reserve':total_repair,
                 'total':round(price+total_repair) if valid_price and total_repair is not None else None})
         return {'kind':kind,'assumptions':a,'rows':result,'count':len(result)}
-    valid=[x for x in rows if isinstance(x.get('price'),(int,float)) and x['price']>0]
-    prices=[x['price'] for x in valid]
-    meters=[x['price']/x['area'] for x in valid if x.get('area') and x['area']>0]
+    from ..market_statistics import prices,valid_number
+    valid=[x for x in rows if valid_number(x.get('price'))]
+    totals=prices(valid)
     groups=[]
     for room in sorted({x.get('rooms') for x in valid},key=lambda r: -1 if r is None else r):
         group=[x for x in valid if x.get('rooms')==room]
         groups.append({'rooms':room,'count':len(group),'median_price':round(statistics.median(x['price'] for x in group))})
-    return {'kind':kind,'count':len(valid),'min_price':min(prices) if prices else None,
-        'median_price':round(statistics.median(prices)) if prices else None,
-        'median_price_per_m2':round(statistics.median(meters)) if meters else None,'groups':groups,
+    return {'kind':kind,'count':totals['count'],'min_price':totals['min'],
+        'median_price':totals['median'],
+        'median_price_per_m2':totals['ppm2'],'groups':groups,
         'rows':[{'id':x['id'],'address':x.get('address'),'rooms':x.get('rooms'),'price':x['price'],
                  'area':x.get('area'),'price_per_m2':round(x['price']/x['area']) if x.get('area') and x['area']>0 else None}
                 for x in valid],

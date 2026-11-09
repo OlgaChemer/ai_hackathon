@@ -38,7 +38,11 @@ def build_context(s) -> dict:
     from .understanding import dialogue_context
     ctx['последние реплики']=dialogue_context(s)
     ctx['ожидаемые решения']=[{'kind':t['kind'],'text':t['text']} for t in s.pending_decisions.values() if t['status']=='waiting']
-    if s.market:ctx['рыночные ориентиры']=s.market
+    if s.market:
+        from ..sources.market_estimate import current
+        from .research import profile as research_profile
+        ctx['рыночные ориентиры']=s.market if current(s.market,research_profile(s)) else {
+            'status':'outdated','note':'Прежние цифры относятся к другому или устаревшему срезу. Для актуальных цен нужен market_prices; не выдавай старый срез за текущую подборку.'}
     if s.mortgage:
         chosen = next(c for c in s.mortgage["programs"] if c["key"] == s.mortgage["chosen"])
         ctx["ипотека"] = {"считаем по": chosen["title"], "ставка": f"{chosen['rate'] * 100:.1f}%".replace(".", ","),

@@ -175,10 +175,10 @@ class PR10RegressionTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual({x['id'] for x in s.search['pool']},{'flat','apartment'})
         self.assertEqual(s.search['shown_ids'],set())
 
-    async def test_zero_lower_bound_stays_zero_when_confirmed_or_changed_in_chat(self):
+    async def test_confirmation_normalizes_legacy_zero_to_the_thirty_percent_corridor(self):
         s=self.agent(budget_min=0)
         s.ask=AsyncMock(return_value={'approved':True,'data':{'budget_min':0,'budget_max':15_000_000}})
         await request.confirm_red_lines(s)
-        self.assertEqual(s.profile['budget_min'],0)
+        self.assertEqual(s.profile['budget_min'],10_500_000)
         request.apply_request(s,{'budget_max':20_000_000,'budget_min':0})
         self.assertEqual(s.profile['budget_min'],0)

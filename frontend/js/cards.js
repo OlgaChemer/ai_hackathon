@@ -201,13 +201,13 @@ export function confirmCard(ev) {
           <input type="range" data-min-range aria-label="Нижняя граница цены">
           <input type="range" data-max-range aria-label="Верхняя граница цены">
         </div>
-        <p class="hint">По умолчанию нижняя граница на 30% ниже верхней — квартиры дешевле в подборку не попадут.</p>
+        <p class="hint" data-range-hint></p>
       </div>`;
     const step = Number(p.step) || 500000;
-    const initialMin = p.budget_min != null ? Number(p.budget_min) : Math.round(p.budget_max * 0.7);
+    const initialMin = Number(p.budget_min) > 0 ? Number(p.budget_min) : Math.round(p.budget_max * 0.7);
     const floor = Math.min(Number(p.floor) || 1000000, initialMin, p.budget_max);
     const top = Math.max(Math.round((p.budget_max * 1.5) / step) * step, p.budget_max + step);
-    const lo0 = Math.max(floor, Math.min(initialMin, p.budget_max));
+    const lo0 = Math.max(floor, Math.ceil(p.budget_max*7/10), Math.min(initialMin, p.budget_max));
     const rangeMin = extra.querySelector("[data-min-range]");
     const rangeMax = extra.querySelector("[data-max-range]");
     const fill = extra.querySelector("[data-fill]");
@@ -219,16 +219,24 @@ export function confirmCard(ev) {
     }
     rangeMin.value = String(lo0);
     rangeMax.value = String(p.budget_max);
+    let proportion=lo0/p.budget_max;
     const draw = (changed) => {
       let lo = Number(rangeMin.value), hi = Number(rangeMax.value);
       if (changed === 'min') lo = Math.max(floor, Math.min(hi, Math.round(lo / step) * step));
-      if (changed === 'max') hi = Math.max(lo, Math.min(top, Math.round(hi / step) * step));
+      if (changed === 'max') {
+        hi = Math.max(floor, Math.min(top, Math.round(hi / step) * step));
+        lo = Math.round(hi*proportion);
+      }
+      lo=Math.max(Math.ceil(hi*7/10),Math.min(lo,hi));
+      proportion=lo/hi;
       rangeMin.value = String(lo); rangeMax.value = String(hi);
       const span = top - floor || 1;
       fill.style.left = `${((lo - floor) / span) * 100}%`;
       fill.style.width = `${((hi - lo) / span) * 100}%`;
       minLabel.textContent = rub(lo);
       maxLabel.textContent = rub(hi);
+      const discount=new Intl.NumberFormat('ru-RU',{maximumFractionDigits:1}).format(100*(1-lo/hi));
+      extra.querySelector('[data-range-hint]').textContent=`Нижняя граница на ${discount}% ниже верхней — квартиры дешевле ${rub(lo)} в подборку не попадут.`;
     };
     rangeMin.addEventListener("input", () => draw("min"));
     rangeMax.addEventListener("input", () => draw("max"));

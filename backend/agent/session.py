@@ -485,6 +485,10 @@ def restore_session(chat_id: str, text: str, llm: LLMClient) -> Session:
         s.messages=close_dangling_calls(s.messages,completed=s.operations,
                                        active_id=(s.active_operation or {}).get('id'))
         restore_approval(s)
+        if s.market and s.market.get('profile_key'):
+            from ..sources.market_estimate import current
+            from .research import profile as research_profile
+            if not current(s.market,research_profile(s)):s.market=None
         if s.programs_result is not None and s.programs_key!=F.programs_key(s.profile):
             s.programs_key=s.programs_result=None
             s.mortgage=s.finance=None
