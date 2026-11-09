@@ -385,9 +385,21 @@ export function deal(d) {
       <ol class="timeline">
         ${html.raw(d.timeline.map((t) => html`<li><time>${shortDate(t.date)}</time><span class="pt"></span><div><strong>${t.title}</strong><span>${t.note}</span></div></li>`).join(""))}
       </ol>
-      <div><h3 class="sub">Расходы на сделку</h3><dl class="costs">${html.raw(costs)}</dl></div>
+      <div><h3 class="sub">Расходы на сделку</h3><dl class="costs">${html.raw(costs)}</dl>${html.raw(packageBlock(d.package))}</div>
     </div>
   </section>`;
+}
+
+function packageBlock(p) {
+  if (!p || !p.rows?.length) return "";
+  return html`<div class="package">
+    <h3 class="sub">Ваши условия в Сбере</h3>
+    ${html.raw(p.headline ? html`<p class="package__headline">${p.headline}</p>` : "")}
+    <details><summary>Из чего складывается</summary>
+      <dl class="costs">${html.raw(p.rows.map((r) => html`<dt>${r.title}</dt><dd>${r.text}</dd>`).join(""))}</dl>
+      <p class="hint">${p.note}</p>
+    </details>
+  </div>`;
 }
 
 export function summary(s) {

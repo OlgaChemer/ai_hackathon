@@ -67,6 +67,8 @@ CONFIRMATIONS = {
              'phone_grant_id':{'type':'string','maxLength':40},
              "questions":{"type":"array","maxItems":15,"items":{"type":"string","maxLength":300}}},
     "payment": {"payment": choice("cash", "mortgage_ready", "mortgage_saving")},
+    "financing": {"choice": choice("now", "save")},
+    "products": {key: {"type": "boolean"} for key in ("life", "property", "parking", "title", "salary")},
     "housing": {"housing": choice("secondary", "new", "both")},
     "family": {"children": number(0, 30), "youngest_age": {"type": ["number", "null"], "minimum": 0, "maximum": 100}, "matcap": number()},
     "finance": {"monthly_income": number(), "monthly_expenses": number(), "savings": number(),

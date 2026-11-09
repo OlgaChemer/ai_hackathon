@@ -93,6 +93,7 @@ class Session:
     current: dict | None = None         # квартира, по которой идёт звонок: {"listing", "fair"}
     journal: dict = field(default_factory=dict)
     opened: dict[str, int] = field(default_factory=dict)
+    products: dict = field(default_factory=dict)   # развилка «покупать/копить», пакет к квартире и выбор клиента
     map_warned: bool = False
     stage: str | None = None
 
@@ -195,17 +196,21 @@ class Session:
         """Смена условий отзывает прежний выбор/план, но сохраняет историю процесса."""
         had_purchase=bool(self.calls or self.agreed or self.chosen or self.current or self.journal or self.status.get(8)=='done')
         had_finance=bool(self.programs_result or self.mortgage or self.finance or self.status.get(2)=='done')
+        if financial or purchase:
+            self.products.pop('offer',None);self.products.pop('choice',None)
         if financial:
+            self.products.pop('fork',None)
             self.programs_key = self.programs_result = None
             self.profile.pop('_programs_cache',None)
             self.mortgage = self.finance = None
             self.status.pop(2,None)
         if purchase:
+            self.products.clear()
             self.calls.clear();self.agreed.clear();self.chosen=self.current=None
             self.call_targets=[];self.journal.clear()
         first=3 if purchase else 8
         self.status={k:v for k,v in self.status.items() if k<first}
-        kinds=('call','price','object','sign') if purchase else ('sign',)
+        kinds=('financing','call','price','object','products','sign') if purchase else ('financing','products','sign')
         self.pending_decisions={k:t for k,t in self.pending_decisions.items() if k not in kinds}
         self.stage='Запрос' if purchase else 'Финансы'
         if had_purchase or (financial and had_finance):

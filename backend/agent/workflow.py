@@ -38,6 +38,7 @@ def next_search_action(s):
             if available(s,name):return name
         finance_action=next_finance_action(s)
         if finance_action:return finance_action
+        if available(s,'financing_choice'):return 'financing_choice'
         if available(s,'call_seller') and pending_calls(s):return 'call_seller'
         return None
     if s.request_intent=='selection' and s.selection_operation in ('compare','analyze'):

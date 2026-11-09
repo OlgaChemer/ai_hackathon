@@ -70,6 +70,9 @@ class FlexibleSearchTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(actions.available(s, 'prepare_deal'))
         s.profile['payment'] = 'cash'
         self.assertTrue(actions.available(s, 'search_listings'))
+        self.assertTrue(actions.available(s, 'offer_products'))
+        self.assertFalse(actions.available(s, 'prepare_deal'))
+        s.products['choice'] = {'listing_id': 'cian-1'}
         self.assertTrue(actions.available(s, 'prepare_deal'))
 
     async def test_knowledge_answer_does_not_start_a_new_search(self):
