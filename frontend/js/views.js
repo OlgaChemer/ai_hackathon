@@ -418,8 +418,10 @@ export function summary(s) {
           ${html.raw(s.monthly_saved ? html`<dt>Платёж по ипотеке ниже на</dt><dd class="num">${rub(s.monthly_saved)} / мес</dd>` : "")}
           <dt>Сэкономлено времени</dt><dd>${s.hours_saved}</dd>
         </dl>
-        <h3 class="sub next-title">Следующие события клиента</h3>
-        <div class="next">${html.raw(s.next_events.map((e) => html`<span>${e}</span>`).join(""))}</div>
+        <div class="next-block">
+          <h3>Следующие события клиента</h3>
+          <div class="next">${html.raw(s.next_events.map((e) => html`<span>${e}</span>`).join(""))}</div>
+        </div>
       </div>
     </div>
   </section>`;

@@ -1460,4 +1460,6 @@ body[data-page="agent"]:has(.chat.expanded) :is(.site-header,.stage,.footnote) {
 .package summary { cursor:pointer; font-size:14px; color:var(--ink-2); margin-bottom:8px; }
 .package .costs dd { text-align:left; }
 .receipt--single { grid-template-columns: 1fr; max-width: 640px; }
-.next-title { margin-top: 28px; }
+.next-block { margin-top: 28px; padding: 18px 20px; background: var(--canvas); border-radius: var(--radius-m); border-left: 4px solid var(--green); }
+.next-block h3 { margin: 0; font-size: 17px; font-weight: 700; color: var(--ink); }
+.next-block .next { margin-top: 12px; }
