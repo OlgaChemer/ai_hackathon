@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from .. import finance as F
 from .. import mortgage as M
+from .. import products as PR
 from ..workflow import programs_current
 from ..numbers import fmt
 from ..profile import profile_summary
@@ -239,3 +240,40 @@ async def affordable_budget(s) -> dict:
     if s.market and aff["budget"] < s.market["p25"]:
         out["note"] = f"ниже большинства предложений: такие квартиры обычно от {fmt(s.market['p25'])}"
     return out
+
+
+@action("financing_choice", None,
+        "Развилка перед звонками для клиента, который копит на взнос: по отмеченным квартирам не хватает денег. "
+        "Карточка: покупать сейчас (звоним продавцам) или сначала накопить (не звоним, открываем вклад, подборка сохраняется). "
+        "Вызывай, когда клиент просит звонить, а call_seller недоступен из-за нехватки взноса.")
+async def financing_choice(s) -> dict:
+    data = PR.fork(s)
+    if data is None:
+        return {"needed": False, "note": "на взнос по этим квартирам хватает — можно звонить"}
+    gap = (fmt(data["gap_max"]) if data["gap_min"] == data["gap_max"]
+           else f"{fmt(data['gap_min'])} – {fmt(data['gap_max'])}")
+    now, save = data["now"], data["save"]
+    text = f"По отмеченным квартирам до взноса и расходов на сделку не хватает {gap}. "
+    text += ("Можно покупать сейчас из подушки безопасности — или сначала накопить."
+             if now["ok"] else "Сейчас взнос не собрать даже из подушки — разумнее сначала накопить.")
+    r = await s.ask("financing", "Покупать сейчас или копить?", text, **data)
+    if r["approved"] is None:
+        return {"client_said": r["data"].get("text", "")}
+    choice = r["data"].get("choice") or ("now" if r["approved"] else "save")
+    s.products["fork"] = {"choice": choice, "targets": data["targets"]}
+    if choice == "now":
+        if now["ok"]:
+            await s.say(f"Хорошо, звоню. Взнос — из накоплений, на подушку останется {fmt(now['cushion_left'])}; "
+                        f"ставка {PR.pct(now['rate'])}, платёж около {fmt(now['monthly'])} в месяц.")
+        else:
+            await s.say(f"Хорошо, звоню. Учтите: к сделке нужно найти ещё {fmt(now['short'])} на взнос.")
+        return {"choice": "now", "calls_allowed": True}
+    s.call_targets = []
+    when = (f"за {save['months']} мес." if save["months"] else "— срок зависит от пополнений")
+    await s.say(f"Тогда не звоню продавцам: квартиру за это время могут продать, а торговаться без взноса рано. "
+                f"Откладывая {fmt(save['monthly'])} в месяц, соберёте нужное {when}. "
+                "Подборка сохранится в истории — когда сумма будет, вернитесь в этот подбор, обновлю объявления и цены.")
+    if save["available"] > 0:
+        await s.open_product("deposit", save["available"])
+    return {"choice": "save", "calls_allowed": False, "months_to_goal": save["months"],
+            "monthly_saving": save["monthly"], "note": "не звонить, пока клиент сам не вернётся к покупке"}

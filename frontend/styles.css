@@ -1447,3 +1447,17 @@ body[data-page="agent"]:has(.chat.expanded) :is(.site-header,.stage,.footnote) {
 .offer-choose:disabled { opacity: .5; cursor: default; }
 .sel-actions { position: sticky; bottom: 0; z-index: 5; background: var(--surface); border-top: 1px solid var(--line);
   box-shadow: 0 -6px 18px rgba(15, 42, 28, .06); padding: 12px 0 6px; margin-top: 18px; }
+
+/* Деньги к сделке: развилка «покупать или копить» и пакет Сбера */
+.fork { display:grid; gap:8px; margin-top:10px; }
+.fork__option { border:1px solid var(--line); border-radius:var(--radius-m); padding:10px 12px; display:grid; gap:2px; font-size:14px; }
+.fork__option.is-on { border-color:var(--green); }
+.fork__option small, .products .check small { display:block; color:var(--ink-2); font-size:13px; }
+.products { display:grid; gap:10px; margin-top:10px; }
+.products__total { margin:4px 0 0; font-weight:600; font-size:14px; }
+.package { margin-top:20px; }
+.package__headline { margin:0 0 8px; font-weight:600; color:var(--green); }
+.package summary { cursor:pointer; font-size:14px; color:var(--ink-2); margin-bottom:8px; }
+.package .costs dd { text-align:left; }
+.receipt--single { grid-template-columns: 1fr; max-width: 640px; }
+.next-title { margin-top: 28px; }

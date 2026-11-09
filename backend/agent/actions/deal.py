@@ -9,6 +9,7 @@ from .. import criteria as C
 from .. import finance as F
 from .. import mortgage as M
 from .. import negotiation as N
+from .. import products as PR
 from .. import seller_sim
 from ..deal import client_slots, deal_plan, legal_check, viewing_checklist
 from ..features import FEATURES, missing_info
@@ -237,6 +238,55 @@ async def plan_viewing(s, listing_id: str) -> dict:
     return {"chosen": True, "viewing": slot}
 
 
+def _offer_text(o: dict) -> str:
+    by = {item["key"]: item for item in o["items"]}
+    if o["chain"] == "cash":
+        text = f"Пока идёт сделка, деньги могут лежать на накопительном счёте — около {fmt(by['parking']['value'])} дохода."
+        if "title" in by:
+            text += f" Для вторички советую подумать о титульном страховании — {fmt(by['title']['value'])} в год."
+        return text
+    if o["preferential"]:
+        text = (f"Для льготной ставки нужно страхование жизни — около {fmt(o['life_cost'])} в год, "
+                "плюс обязательная страховка квартиры в залоге.")
+    else:
+        extra = o["variants"]["00"]["monthly"] - o["variants"]["10"]["monthly"]
+        text = (f"Страхование жизни стоит около {fmt(o['life_cost'])} в год, а без него платёж был бы "
+                f"на {fmt(extra)} в месяц выше. Если зарплата приходит на карту Сбера — отметьте, ставка станет ниже.")
+    if "parking" in by:
+        text += f" Взнос до выдачи кредита принесёт около {fmt(by['parking']['value'])} на накопительном счёте."
+    return text
+
+
+@action("offer_products", 8,
+        "Карточка «Деньги к сделке» для квартиры, которую клиент выбрал (plan_viewing): 1–3 продукта Сбера "
+        "под способ оплаты — накопительный счёт до расчётов, страхование жизни (против надбавки к ставке), "
+        "зарплатная скидка, титульное страхование для вторички. Предлагается один раз; отказ не мешает сделке.", **ID)
+async def offer_products(s, listing_id: str) -> dict:
+    if s.chosen != listing_id:
+        raise ActionError("Клиент ещё не выбрал эту квартиру — сначала plan_viewing.")
+    x = _listing(s, listing_id)
+    price = s.agreed.get(listing_id, x["price"])
+    o = PR.offer(x, price, s.profile)
+    if o is None:
+        raise ActionError("Для ипотеки нужна сумма взноса — сначала ask_deposit.")
+    s.products["offer"] = o
+    await s.say(_offer_text(o))
+    r = await s.ask("products", "Деньги к сделке",
+                    "Отметьте, что подключить. Это необязательно: сделка пройдёт и без продуктов.", **o)
+    if r["approved"] is None:  # клиент ответил текстом — решение принимает разбор ввода, выбор не записываем
+        return {"client_said": r["data"].get("text", "")}
+    choice = PR.choose(o, bool(r["approved"]), r["data"])
+    s.products["choice"] = choice
+    picked = [item["title"] for item in o["items"] if choice["picked"].get(item["key"]) and not item.get("locked")]
+    note = ("Записал: " + ", ".join(picked).lower() + (", зарплатная скидка" if choice["salary"] else "") + "."
+            if picked or choice["salary"] else "Хорошо, без дополнительных продуктов.")
+    if o["chain"] == "mortgage":
+        note += f" Ставка {PR.pct(choice['rate'])}, платёж {fmt(choice['monthly'])} в месяц."
+    await s.say(note)
+    return {"picked": picked, "salary_discount": choice["salary"], "rate": choice.get("rate"),
+            "monthly": choice.get("monthly"), "next": "prepare_deal"}
+
+
 @action("prepare_deal", 8,
         "Демонстрационный план покупки по датам, финансирование, затраты и экономия. "
         "Покупатель подтверждает только демо-план; юридическое подписание и банковские операции не выполняются. "
@@ -252,7 +302,12 @@ async def prepare_deal(s, listing_id: str) -> dict:
     if p.get('payment')!='cash' and pay is None:
         raise ActionError('Для плана с ипотекой нужна сумма взноса — сначала ask_deposit и mortgage_programs.')
     down = pay['down'] if pay else None
-    plan = deal_plan(x, price, down, rate=pay["rate"] if pay else None, program=pay["title"] if pay else None)
+    offer = s.products.get("offer") if (s.products.get("offer") or {}).get("listing_id") == listing_id else None
+    choice = s.products.get("choice") if offer else None
+    rate = choice["rate"] if pay and choice and choice.get("rate") is not None else (pay["rate"] if pay else None)
+    plan = deal_plan(x, price, down, rate=rate, program=pay["title"] if pay else None)
+    plan["costs"] = PR.adjust_costs(plan["costs"], offer, choice)
+    plan["package"] = PR.package(offer, choice) if offer and choice else None
     s.push("result", step=8, kind="deal", data=plan)
     contract = ("договор уступки прав по ДДУ" if plan["assignment"]
                 else "договор участия в долевом строительстве (ДДУ)" if plan["new"] else "договор купли-продажи")
@@ -262,6 +317,8 @@ async def prepare_deal(s, listing_id: str) -> dict:
     else:
         await s.say(f"Собрал план сделки: {plan['program'].lower()} {fmt(plan['loan'])}, платёж {fmt(plan['monthly'])} в месяц "
                     f"(на {fmt(plan['monthly_saved'])} меньше благодаря торгу).")
+    if plan["package"] and plan["package"]["headline"]:
+        await s.say(plan["package"]["headline"] + ".")
     r = await s.ask("sign", "Демонстрационный план покупки", "Подтвердить демонстрационный план покупки? Юридическое подписание и банковские операции здесь не выполняются.")
     if not r["approved"]:
         return {"signed": False, "client_said": r["data"].get("text")}

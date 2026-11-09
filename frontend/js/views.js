@@ -385,17 +385,27 @@ export function deal(d) {
       <ol class="timeline">
         ${html.raw(d.timeline.map((t) => html`<li><time>${shortDate(t.date)}</time><span class="pt"></span><div><strong>${t.title}</strong><span>${t.note}</span></div></li>`).join(""))}
       </ol>
-      <div><h3 class="sub">Расходы на сделку</h3><dl class="costs">${html.raw(costs)}</dl></div>
+      <div><h3 class="sub">Расходы на сделку</h3><dl class="costs">${html.raw(costs)}</dl>${html.raw(packageBlock(d.package))}</div>
     </div>
   </section>`;
 }
 
+function packageBlock(p) {
+  if (!p || !p.rows?.length) return "";
+  return html`<div class="package">
+    <h3 class="sub">Ваши условия в Сбере</h3>
+    ${html.raw(p.headline ? html`<p class="package__headline">${p.headline}</p>` : "")}
+    <details><summary>Из чего складывается</summary>
+      <dl class="costs">${html.raw(p.rows.map((r) => html`<dt>${r.title}</dt><dd>${r.text}</dd>`).join(""))}</dl>
+      <p class="hint">${p.note}</p>
+    </details>
+  </div>`;
+}
+
 export function summary(s) {
-  const lines = s.sber.lines.filter((l) => l.value > 0).map((l) => html`<dt>${l.name}</dt><dd class="num">${rub(l.value)}</dd>`).join("");
-  const fin = s.sber.finance.map((l) => html`<dt>${l.name} (${rub(l.amount)})</dt><dd class="num">${rub(l.value)} / год</dd>`).join("");
   return html`
   <section class="panel">
-    <div class="receipt">
+    <div class="receipt receipt--single">
       <div>
         <h2 class="panel-title">Сделка проведена</h2>
         <p class="panel-lead">${s.listing.address}, ${s.listing.district || s.listing.city}${s.listing.url ? "" : ""}</p>
@@ -408,13 +418,7 @@ export function summary(s) {
           ${html.raw(s.monthly_saved ? html`<dt>Платёж по ипотеке ниже на</dt><dd class="num">${rub(s.monthly_saved)} / мес</dd>` : "")}
           <dt>Сэкономлено времени</dt><dd>${s.hours_saved}</dd>
         </dl>
-      </div>
-      <div class="sber-box">
-        <h3>Что получает Сбер</h3>
-        <p class="hint" style="margin-top:0">С этой сделки, ₽ — по допущениям бизнес-модели</p>
-        <dl class="ledger">${html.raw(lines)}<dt class="total">Итого со сделки</dt><dd class="total num">${rub(s.sber.revenue)}</dd></dl>
-        ${html.raw(fin ? html`<h3 style="margin-top:18px">Финансовый помощник</h3><dl class="ledger">${html.raw(fin)}</dl>` : "")}
-        <h3 style="margin-top:20px">Следующие события клиента</h3>
+        <h3 class="sub next-title">Следующие события клиента</h3>
         <div class="next">${html.raw(s.next_events.map((e) => html`<span>${e}</span>`).join(""))}</div>
       </div>
     </div>

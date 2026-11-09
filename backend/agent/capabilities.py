@@ -1,7 +1,7 @@
 """Исполняемые правила возможностей; общий источник для модели, кода и FAQ."""
 from dataclasses import dataclass
 
-from . import finance
+from . import finance, products
 from .profile import missing_required,missing_search
 
 CORE_FIELDS=frozenset(('city','rooms','budget_max','budget_min','okrug','housing','rooms_options','cities','districts','prefer_center','center_required'))
@@ -35,10 +35,12 @@ POLICIES={
     'show_selection':Policy(('selection_source',)),
     'offer_search_alternatives':Policy(('search',)),
     'probe_budget':Policy(('search','budget_known'),units=(('budget_max','RUB'),)),
-    'call_seller':Policy(('search','search_scope','shown','call_consent','fresh_selection','budget_known','limit','payment','financing_reviewed'),units=(('listing_id','listing_id'),)),
+    'financing_choice':Policy(('fork_needed',)),
+    'call_seller':Policy(('search','search_scope','shown','call_consent','fresh_selection','budget_known','limit','payment','financing_reviewed','fork_resolved'),units=(('listing_id','listing_id'),)),
     'confirm_price':Policy(('calls','limit'),units=(('listing_id','listing_id'),)),
     'plan_viewing':Policy(('agreed','limit'),units=(('listing_id','listing_id'),)),
-    'prepare_deal':Policy(('chosen','limit','finance_ready','deal_not_done'),units=(('listing_id','listing_id'),)),
+    'offer_products':Policy(('chosen','limit','finance_ready','deal_money_known','products_needed'),units=(('listing_id','listing_id'),)),
+    'prepare_deal':Policy(('chosen','limit','finance_ready','deal_not_done','products_reviewed'),units=(('listing_id','listing_id'),)),
 }
 
 REASONS={
@@ -63,6 +65,11 @@ REASONS={
     'finance_ready':'Сначала подготовьте финансовый расчёт.', 'deal_not_done':'План уже подтверждён.',
     'financing_reviewed':'Для ипотеки сначала уточните семью, маткапитал и взнос; при накоплении подготовьте план накоплений.',
     'affordability_requested':'Расчёт по личным доходам нужен по явной просьбе клиента. Для средней цены квартир используйте market_prices.',
+    'fork_needed':'Развилка «покупать сейчас или копить» нужна, только когда клиент копит на взнос, просит звонить и на взнос не хватает.',
+    'fork_resolved':'На взнос по этим квартирам не хватает — сначала financing_choice: покупать сейчас или копить.',
+    'deal_money_known':'Для ипотеки нужна сумма взноса — сначала ask_deposit.',
+    'products_needed':'Финансовые продукты к этой квартире уже предложены.',
+    'products_reviewed':'Сначала offer_products — карточка «Деньги к сделке» для выбранной квартиры.',
 }
 
 
@@ -83,7 +90,7 @@ def decision(s,name):
     if s.request_intent=='hold' and name!='update_request' and not policy.information:return False,'Клиент приостановил действия.'
     if (s.request_intent=='call' and s.call_targets and not s.calls and not s.selection_profile_stale
             and name not in ('update_request','call_seller','confirm_red_lines','ask_client','ask_payment',
-                             'ask_family','ask_deposit','mortgage_programs','savings_plan')):
+                             'ask_family','ask_deposit','mortgage_programs','savings_plan','financing_choice')):
         return False,'Сначала выполните явную просьбу о звонке по выбранному объекту.'
     p=s.profile;ready=not missing_required(p)
     selected=selected_listing(s)
@@ -112,7 +119,7 @@ def decision(s,name):
         'housing_needed':not p.get('housing') or s.requested_action=='ask_housing',
         'extras_needed':s.red_lines_ok and not p.get('_extras_asked'),
         'deposit_needed':(p.get('payment') in ('mortgage_ready','mortgage_saving') and p.get('deposit') is None
-                          and not p.get('_deposit_skipped')) or s.requested_action=='ask_deposit',
+                          and (not p.get('_deposit_skipped') or bool(s.chosen))) or s.requested_action=='ask_deposit',
         'deposit_answered':p.get('payment')=='cash' or p.get('deposit') is not None or bool(p.get('_deposit_skipped')),
         'matcap_known':p.get('payment')=='cash' or p.get('children')==0 or p.get('matcap') is not None,
         'programs_needed':not programs_current(s),'payment':bool(p.get('payment')),
@@ -131,6 +138,13 @@ def decision(s,name):
         'financing_reviewed':p.get('payment')=='cash' or (programs_current(s) and
             (p.get('payment')!='mortgage_saving' or s.finance is not None)),
         'affordability_requested':s.requested_action=='affordable_budget',
+        'fork_needed':(p.get('payment')=='mortgage_saving' and bool(s.call_targets)
+                       and s.finance is not None and not products.fork_resolved(s)),
+        'fork_resolved':products.fork_resolved(s),
+        'deal_money_known':p.get('payment')=='cash' or p.get('deposit') is not None,
+        'products_needed':bool(s.chosen) and (s.products.get('choice') or {}).get('listing_id')!=s.chosen
+                          and s.status.get(8)!='done',
+        'products_reviewed':bool(s.chosen) and (s.products.get('choice') or {}).get('listing_id')==s.chosen,
     }
     for requirement in policy.requires:
         if not tests.get(requirement,False):return False,REASONS.get(requirement,'Условие исполнения не выполнено.')

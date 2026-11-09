@@ -95,6 +95,7 @@ class PR10RegressionTest(unittest.IsolatedAsyncioTestCase):
         s=self.agent(deposit=6_000_000);await self.calculate(s)
         x=listing(city='Казань',price=15_000_000,is_new=False)
         s.search={'listings':[x]};s.chosen=x['id'];s.agreed[x['id']]=14_000_000;s.red_lines_ok=True
+        s.products={'choice':{'listing_id':x['id']}}
         s.ask=AsyncMock(return_value={'approved':False,'data':{}})
         result=await actions.execute(s,ToolCall('prepare_deal',{'listing_id':x['id']},'deal'))
         self.assertNotIn('error',result)
