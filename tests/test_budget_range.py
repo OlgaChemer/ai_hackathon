@@ -12,8 +12,10 @@ class BudgetRangeTest(unittest.TestCase):
         self.assertEqual(default_budget_min(1_000_000), 700_000)
         self.assertIsNone(default_budget_min(None))
 
-    def test_default_rounds_to_hundred_thousands(self):
-        self.assertEqual(default_budget_min(8_760_000) % 100_000, 0)
+    def test_rounding_does_not_expand_the_thirty_percent_corridor(self):
+        self.assertEqual(default_budget_min(8_760_000),6_132_000)
+        self.assertEqual(default_budget_min(27_000_000),18_900_000)
+        self.assertEqual(default_budget_min(101),71)
 
     def test_price_below_low_bound_is_rejected(self):
         p = merge_profile({"city": "Казань", "rooms": 2, "budget_max": 30_000_000,

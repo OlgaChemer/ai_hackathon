@@ -4,7 +4,6 @@ from copy import deepcopy
 from datetime import datetime,timezone
 import hashlib
 import json
-import statistics
 import time
 
 from ..config import settings
@@ -14,20 +13,20 @@ from . import cian,store
 def scope(profile):
     from ..agent.conditions import compile_profile
     p=deepcopy(profile)
-    # Для ориентира «ближе к центру» используем тот же явно названный радиус,
-    # не изменяя приоритет пожелания в авторитетном профиле.
-    if p.get('prefer_center'):p['center_required']=True
     conditions=[c for c in compile_profile(p) if c['priority']=='required' and c['field'] not in ('price','price_per_m2')]
+    center=next((c['values'][0] for c in conditions if c['field']=='center_km' and c['op'] in ('lt','lte')),None)
     from ..agent.research import query
     research=query(p.get('_research_query'))[0]
-    return {'cities':list(dict.fromkeys([p.get('city'),*(p.get('cities') or [])])),
+    return {'sample_policy':2,'cities':list(dict.fromkeys([p.get('city'),*(p.get('cities') or [])])),
             'rooms':p.get('rooms_options') or [p.get('rooms')],
             'markets':[False,True] if p.get('housing') in (None,'both') else [p['housing']=='new'],
             'okrug':p.get('okrug'),'districts':p.get('districts') or [],'avoid_districts':p.get('avoid_districts') or [],
             'conditions':[{k:c[k] for k in ('field','op','values','label')} for c in conditions],
             'research':research,'budget_max':p.get('budget_max') if research['respect_budget'] else None,
+            'budget_min':p.get('budget_min') if research['respect_budget'] else None,
+            'apartments':p.get('apartments'),
             'budget_applied':research['respect_budget'] and p.get('budget_max') is not None,
-            'whole_market':False,'center_radius_km':5 if p.get('prefer_center') or p.get('center_required') else None}
+            'whole_market':False,'center_radius_km':center}
 
 
 def key(profile):
@@ -53,6 +52,9 @@ def matches(item,definition):
     if item.get('city') not in definition['cities']:return False
     if None not in definition['rooms'] and item.get('rooms') not in definition['rooms']:return False
     if definition.get('budget_max') is not None and item['price']>definition['budget_max']:return False
+    if definition.get('budget_min') is not None and item['price']<definition['budget_min']:return False
+    if definition.get('apartments')=='hide' and item.get('is_apartments'):return False
+    if definition.get('apartments')=='only' and not item.get('is_apartments'):return False
     if bool(item.get('is_new')) not in definition['markets']:return False
     if definition['okrug'] and item.get('okrug')!=definition['okrug']:return None if not item.get('okrug') else False
     if definition['districts'] and not in_districts(item,definition['districts']):return None if not item.get('district') else False
@@ -66,11 +68,24 @@ def matches(item,definition):
 async def estimate(profile,on_progress=None):
     definition=scope(profile);deadline=time.monotonic()+settings.search_budget_s
     rows={};reports=[];reasons=set();accepted=[];unknown=0
+    # Подбор использует недавние реальные объявления из общей базы. Они нужны
+    # и здесь, чтобы несколько первых страниц источника не подменяли весь срез.
+    from . import stored
+    saved_profile=deepcopy(profile)
+    if not definition['budget_applied']:
+        saved_profile['budget_max']=saved_profile['budget_min']=None
+    known=stored(saved_profile)
+    rows.update({x['id']:x for x in known})
+    if known:
+        reasons.add('recent_saved_listings')
+        for new in definition['markets']:
+            count=sum(bool(x.get('is_new'))==new for x in known)
+            if count:reports.append({'source':'saved_listings','status':'db','new':new,'page':0,'count':count,'max_age_days':store.SEEN_DAYS})
     for page in range(1,4):
         for city in definition['cities']:
             for rooms in definition['rooms']:
                 for new in definition['markets']:
-                    query_okrug=definition['okrug'] or ('ЦАО' if city=='Москва' and definition['center_radius_km'] else None)
+                    query_okrug=definition['okrug']  # округ ограничивает источник только по явному выбору клиента
                     report={'city':city,'rooms':rooms,'new':new,'page':page,'query_okrug':query_okrug}
                     try:
                         remaining=deadline-time.monotonic()
@@ -111,7 +126,5 @@ async def estimate(profile,on_progress=None):
     from ..agent.research import execute
     result['analysis']=execute(accepted,definition['research'])
     if len(accepted)<6:return {**result,'error_kind':'insufficient_market_sample' if rows else 'market_source_unavailable'}
-    prices=sorted(x['price'] for x in accepted);q1,median,q3=statistics.quantiles(prices,n=4)
-    meters=[x['price']/x['area'] for x in accepted if x.get('area') and x['area']>0]
-    return {**result,'p25':int(q1),'median':int(median),'p75':int(q3),'min':prices[0],'max':prices[-1],
-            'mean':int(statistics.mean(prices)),'ppm2':int(statistics.median(meters)) if meters else None}
+    from ..market_statistics import prices
+    return {**result,**prices(accepted)}

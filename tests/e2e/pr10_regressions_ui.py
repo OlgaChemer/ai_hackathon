@@ -36,22 +36,32 @@ async def card_regressions(browser,base,width):
     assert await family.locator('[data-cap-choice=yes]').evaluate("b=>b.classList.contains('is-on')")
     await family.locator('.actions button').first.click()
     assert (await page.evaluate('window.reviewPosts.at(-1)'))['data']['matcap']==500000
-    for maximum,minimum in [(8760000,6100000),(800000,500000),(15000000,0)]:
+    for maximum,minimum in [(8760000,6100000),(800000,500000),(15000000,0),(27000000,0)]:
         await page.evaluate('''([maximum,minimum])=>window.showReviewCard({kind:'red_lines',title:'Границы',
             text:'Проверка',replay:false,decision_id:'budget-'+maximum,
             payload:{city:'Казань',rooms:2,budget_max:maximum,budget_min:minimum,step:500000,floor:1000000}})''',
             [maximum,minimum])
         budget=page.locator('.confirm-red_lines:not(.is-done)')
         assert int(await budget.locator('[data-max-range]').input_value())==maximum
+        if maximum==27000000:
+            assert int(await budget.locator('[data-min-range]').input_value())==18900000
+            assert '30%' in await budget.locator('[data-range-hint]').inner_text()
         await budget.locator('.actions button').first.click()
         values=(await page.evaluate('window.reviewPosts.at(-1)'))['data']
-        assert (values['budget_max'],values['budget_min'])==(maximum,minimum)
+        assert (values['budget_max'],values['budget_min'])==(maximum,max(minimum,(maximum*7+9)//10))
     await page.evaluate('''()=>window.showReviewCard({kind:'red_lines',title:'Границы',text:'Проверка',replay:false,
         payload:{city:'Казань',rooms:2,budget_max:8760000,budget_min:6100000,step:500000,floor:1000000}})''')
     budget=page.locator('.confirm-red_lines:not(.is-done)');upper=budget.locator('[data-max-range]')
     await upper.focus();await upper.press('ArrowRight')
     assert int(await upper.input_value())==9000000
+    assert int(await budget.locator('[data-min-range]').input_value())==6300000
     await upper.press('ArrowRight');assert int(await upper.input_value())==9500000
+    assert int(await budget.locator('[data-min-range]').input_value())==6650000
+    await page.evaluate('''()=>{
+        const input=document.querySelector('.confirm-red_lines:not(.is-done) [data-min-range]');
+        input.value='0';input.dispatchEvent(new Event('input',{bubbles:true}));
+    }''')
+    assert int(await budget.locator('[data-min-range]').input_value())==6650000
     await page.evaluate('''()=>{
         const input=document.querySelector('.confirm-red_lines:not(.is-done) [data-min-range]');
         input.value='12000000';input.dispatchEvent(new Event('input',{bubbles:true}));
