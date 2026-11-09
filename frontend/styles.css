@@ -1459,3 +1459,5 @@ body[data-page="agent"]:has(.chat.expanded) :is(.site-header,.stage,.footnote) {
 .package__headline { margin:0 0 8px; font-weight:600; color:var(--green); }
 .package summary { cursor:pointer; font-size:14px; color:var(--ink-2); margin-bottom:8px; }
 .package .costs dd { text-align:left; }
+.receipt--single { grid-template-columns: 1fr; max-width: 640px; }
+.next-title { margin-top: 28px; }

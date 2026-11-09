@@ -405,7 +405,7 @@ function packageBlock(p) {
 export function summary(s) {
   return html`
   <section class="panel">
-    <div class="receipt">
+    <div class="receipt receipt--single">
       <div>
         <h2 class="panel-title">Сделка проведена</h2>
         <p class="panel-lead">${s.listing.address}, ${s.listing.district || s.listing.city}${s.listing.url ? "" : ""}</p>
@@ -418,9 +418,7 @@ export function summary(s) {
           ${html.raw(s.monthly_saved ? html`<dt>Платёж по ипотеке ниже на</dt><dd class="num">${rub(s.monthly_saved)} / мес</dd>` : "")}
           <dt>Сэкономлено времени</dt><dd>${s.hours_saved}</dd>
         </dl>
-      </div>
-      <div class="sber-box">
-        <h3>Что дальше</h3>
+        <h3 class="sub next-title">Следующие события клиента</h3>
         <div class="next">${html.raw(s.next_events.map((e) => html`<span>${e}</span>`).join(""))}</div>
       </div>
     </div>
