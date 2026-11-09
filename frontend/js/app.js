@@ -1,7 +1,7 @@
 // Контроллер: события агента, результаты в чате, подборка и жизнь диалога.
 import { initAccount } from "./account.js";
 import { api } from "./api.js";
-import { addGuard, addLine, createCall, renderCall, setPhase, setStatus, setTyping, showLearned, showSellerInput, updatePrices } from "./call.js";
+import { addGuard, addLine, createCall, setPhase, setStatus, setTyping, showLearned, showSellerInput, updatePrices } from "./call.js";
 import { confirmCard, initCards, resolved, staleCards, refreshPhoneAccess } from "./cards.js";
 import { savingsChart } from "./chart.js";
 import { initChats, refreshChats } from "./chats.js";
@@ -149,10 +149,9 @@ async function handle(ev, myGen) {
       api.decisions[ev.kind] = ev.decision_id;
       if (ev.kind !== "selection") setChatExpanded(true);
       if (ev.kind === "call") {
+        // Виджет звонка в чате не показываем: итог — в сообщении агента и карточке цены.
+        // Поле ответа продавца появляется отдельной карточкой, только когда агент его ждёт.
         state.call = createCall(ev);
-        const callNode = renderCall(state.call, submitSeller);
-        callNode.classList.add("chat-call");
-        chatLog.append(callNode);
         if (!quiet) renderStage();
       }
       if (ev.kind !== "clarify") state.awaiting = ev.kind === "selection" ? "selection" : null;
