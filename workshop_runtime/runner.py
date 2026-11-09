@@ -13,7 +13,7 @@ from nanobot.agent.tools.base import Tool
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.providers.base import LLMProvider,LLMResponse,ToolCallRequest
 from nanobot.utils.llm_runtime import LLMRuntime
-from history import summary,context_messages
+from history import summary,context_messages,initial_task
 
 logger.remove();logger.add(sys.stderr,level='ERROR')
 ROOT=Path('/workspace')
@@ -56,9 +56,11 @@ class RunPython(Tool):
         except asyncio.TimeoutError:
             process.kill();await process.wait();return json.dumps({'error':'Расчёт превысил 20 секунд. Упростите программу.'},ensure_ascii=False)
         output=output[0].decode(errors='replace')
+        log_path=ROOT/f'calculation-{self.calls}.log'
+        log_path.write_text(output[:1_000_000])
         if process.returncode==0:self.successful+=1;self.last_error=False
         else:logger.error('Python failure {}: {}',process.returncode,output[-1200:])
-        return json.dumps({'exit_code':process.returncode,'stdout':output[:4000],
+        return json.dumps({'exit_code':process.returncode,'stdout':output[:4000],'output_file':str(log_path),
             'truncated':len(output)>4000},ensure_ascii=False)
 
 
@@ -197,8 +199,8 @@ async def main():
     try:
         result=await AgentRunner().run(AgentRunSpec(initial_messages=[{'role':'system','content':instructions},
             *context_messages(data),
-            {'role':'user','content':data['prompt']+'\nЗадание и все данные находятся в /input/data.json.\nПроверенные факты:\n'+json.dumps(data['facts'],ensure_ascii=False)}],
-            tools=tools,runtime=LLMRuntime.capture(provider,'workshop',context_window_tokens=32000),
+            {'role':'user','content':initial_task(data)}],
+            tools=tools,runtime=LLMRuntime.capture(provider,'workshop',context_window_tokens=32000).with_generation_overrides(max_tokens=2400),
             max_iterations=8,max_tool_result_chars=5000,workspace=ROOT,session_key='task',provider_retry_mode='none',
             consolidate_history=bounded_history,continuation_callback=ensure_analysis))
         if result.error or not result.final_content or python.successful<1 or (data.get('analysis_version')==2 and data['kind']=='compare' and python.last_error):
@@ -220,4 +222,7 @@ async def main():
 if __name__=='__main__':
     try:asyncio.run(main())
     except Exception as exc:
-        event('failed',text=f'{type(exc).__name__}: {str(exc)[:250]}');raise SystemExit(1)
+        logger.error('{}: {}',type(exc).__name__,str(exc)[:500])
+        text=('История анализа оказалась слишком большой. Данные сохранены; запустите исследование повторно.'
+              if type(exc).__name__=='ContextWindowExceededError' else f'{type(exc).__name__}: {str(exc)[:250]}')
+        event('failed',text=text);raise SystemExit(1)

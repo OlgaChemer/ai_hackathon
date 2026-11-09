@@ -50,6 +50,7 @@ export function profile(p) {
 // ------------------------------------------------------------------ финансы
 
 export function finance(d, opened = {}, selected) {
+  if (d.mode === 'needs_deposit') return waiting('Расчёт ипотеки отложен', d.note);
   if (d.mode === "cash") {
     const preview = d.savings_preview;
     return html`

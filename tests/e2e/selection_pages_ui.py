@@ -21,6 +21,7 @@ async def scenario(browser,base,width):
     await page.fill('#welcomeQuery','Казань, двухкомнатную до 9 млн рублей, наличными, только вторичка')
     await page.locator('#welcomeQuery').press('Enter')
     await page.get_by_role('button',name='Подтвердить рамки',exact=True).click(timeout=20000)
+    await page.locator('.confirm-extras .actions').get_by_role('button',name='Пропустить',exact=True).click()
     await page.wait_for_function("document.querySelector('[data-pagination=top]')?.textContent.includes('из 30')")
     assert await page.locator('.offer').count()==10
     first=await page.locator('.offer').evaluate_all('(nodes)=>nodes.map(n=>n.dataset.id)')

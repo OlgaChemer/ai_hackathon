@@ -40,7 +40,7 @@ class DepositTest(unittest.IsolatedAsyncioTestCase):
 
     async def test_deposit_is_saved_from_card(self):
         s = self.agent()
-        s.profile.update(city="Казань", rooms=2, budget_max=15_000_000, payment="mortgage_ready")
+        s.profile.update(city="Казань", rooms=2, budget_max=15_000_000, payment="mortgage_ready",children=0)
         s.ask = AsyncMock(return_value={"approved": True, "data": {"deposit": 3_000_000}})
         result = await actions.execute(s, ToolCall('ask_deposit', {}))
         self.assertEqual(s.profile["deposit"], 3_000_000)
@@ -122,7 +122,8 @@ class ProgramsTest(unittest.TestCase):
         r = M.programs(7_000_000, "Казань", {"children": 1, "youngest_age": 4}, housing="new", is_secondary=False)
         self.assertEqual(r["chosen"], "family")
         self.assertIn("Считаю для новостройки", r["explanation"])
-        pay = M.listing_payment({"price": 7_000_000, "city": "Казань", "is_new": True}, {"children": 1, "youngest_age": 4})
+        pay = M.listing_payment({"price": 7_000_000, "city": "Казань", "is_new": True},
+                                {"children": 1, "youngest_age": 4,"deposit":1_400_000})
         self.assertEqual((pay["program"], pay["rate"]), ("семейная", 0.10))
 
     def test_market_rate_depends_on_down_payment(self):

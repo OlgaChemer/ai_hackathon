@@ -38,11 +38,18 @@ def get_chat(db: Session, chat_id: str) -> Chat | None:
     return db.get(Chat, chat_id)
 
 
+def owns(chat_visitor: str | None, chat_user: int | None, vid: str | None, user_id: int | None) -> bool:
+    """Чей диалог. Пока он анонимный — браузера, где начат (cookie vid). Как только перешёл в аккаунт — только
+    вошедшего владельца с любого устройства: после выхода браузер его уже не видит (общий компьютер, чужой аккаунт)."""
+    if chat_user is not None:
+        return user_id is not None and chat_user == user_id
+    return bool(vid and chat_visitor == vid)
+
+
 def can_open(chat: Chat | None, vid: str | None, user_id: int | None) -> bool:
-    """Диалог открывает браузер, где он начат, и пользователь, к которому он привязан (с любого устройства)."""
     if chat is None:
         return False
-    return bool((vid and chat.visitor_id == vid) or (user_id is not None and chat.user_id == user_id))
+    return owns(chat.visitor_id, chat.user_id, vid, user_id)
 
 
 def save_event(db: Session, chat_id: str, seq: int, type_: str, payload: dict) -> None:
@@ -128,16 +135,24 @@ def last_nonempty_selection(db: Session, chat_id: str) -> dict | None:
 
 
 def list_chats(db: Session, vid: str | None, user_id: int | None, limit: int = 50) -> list[dict]:
-    """Диалоги этого браузера и пользователя — новые сверху."""
+    """Анонимные диалоги этого браузера и диалоги вошедшего пользователя — новые сверху."""
     owners = []
     if vid:
-        owners.append(Chat.visitor_id == vid)
+        owners.append((Chat.visitor_id == vid) & Chat.user_id.is_(None))  # анонимные диалоги этого браузера
     if user_id is not None:
         owners.append(Chat.user_id == user_id)
     if not owners:
         return []
     rows = db.scalars(select(Chat).where(or_(*owners)).order_by(Chat.updated_at.desc()).limit(limit))
     return [{"id": c.id, "title": c.title, "status": c.status, "updated_at": _iso(c.updated_at)} for c in rows]
+
+
+def listing_prices(db: Session, city: str, days: int = 120, limit: int = 30000) -> list[tuple[str | None, int, float | None]]:
+    """(район, цена, площадь) живых объявлений города за days дней — для медианы цены м² по районам."""
+    since = utcnow() - timedelta(days=days)
+    rows = db.execute(select(Listing.data, Listing.price).where(Listing.city == city, Listing.status == "active",
+                                                                Listing.last_seen_at >= since).limit(limit))
+    return [((d or {}).get("district"), price, (d or {}).get("area")) for d, price in rows]
 
 
 def _iso(t: datetime | None) -> str | None:

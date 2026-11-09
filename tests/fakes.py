@@ -130,7 +130,9 @@ async def drive(s, answers: dict | None = None, until: Callable[[dict], bool] = 
                 continue
             events.append(ev)
             if ev["type"] == "confirm":
-                approved, data = answers.get(ev["kind"], (True, {}))
+                defaults={'payment':(True,{'payment':'cash'}),
+                          'family':(True,{'children':0,'matcap':0}), 'deposit':(False,{})}
+                approved, data = answers.get(ev["kind"], defaults.get(ev['kind'],(True, {})))
                 s.resolve(ev["kind"], approved, data)
             if until(ev) or ev["type"] == "error":
                 break

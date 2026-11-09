@@ -25,12 +25,36 @@ def analysis_assumptions(kind):
 def clean_listing(x):
     keys=('id','url','source','source_name','city','district','address','rooms','area','price','kitchen','floor',
           'floors','condition','material','year','is_new','deadline','delivery_year','nearby','nearby_evidence',
-          'metro','lat','lng','features','match','description','provenance','photo','photos')
+          'metro','lat','lng','features','match','description','provenance','photo','photos',
+          'is_apartments','cian_districts')
     row={k:deepcopy(x[k]) for k in keys if k in x}
     row['description']=str(row.get('description') or '')[:1200]
     if isinstance(row.get('nearby'),list):
         row['nearby']={p['kind']:p if p.get('dist') is not None else None for p in row['nearby']}
     return row
+
+
+def context_conditions(profile):
+    """Полный видимый запрос: предметные условия и финансовые решения отдельно."""
+    from ..agent.conditions import compile_profile
+    from ..agent.numbers import fmt
+    details=[('Обязательно: ' if c['priority']=='required' else 'Желательно: ')+c['label']
+             for c in compile_profile(profile)]
+    payment=profile.get('payment')
+    if payment:
+        details.append('Оплата: '+{'cash':'свои средства','mortgage_ready':'ипотека — взнос есть',
+            'mortgage_saving':'ипотека — взнос ещё копим'}[payment])
+    if payment in ('mortgage_ready','mortgage_saving'):
+        details.append('Собственные деньги на взнос: '+(fmt(profile['deposit']) if profile.get('deposit') is not None else 'сумма ещё не указана'))
+        details.append('Маткапитал: '+(fmt(profile['matcap']) if profile.get('matcap') else
+            'нет' if profile.get('matcap') is not None else 'ещё не уточнён'))
+    if profile.get('apartments'):
+        details.append({'hide':'Апартаменты исключены','only':'Только апартаменты','any':'Квартиры и апартаменты'}[profile['apartments']])
+    if profile.get('housing'):
+        details.append('Рынок жилья: '+{'both':'новостройки и вторичка — без предпочтения',
+            'new':'только новостройки','secondary':'только вторичка'}[profile['housing']])
+    details.extend('Пожелание: '+w for w in profile.get('wishes') or [])
+    return list(dict.fromkeys(details))
 
 
 def context(connection,uid,chat_id=None,liked=None):
@@ -60,6 +84,7 @@ def context(connection,uid,chat_id=None,liked=None):
     if set(ids)-set(rows):raise HTTPException(422,'Часть понравившихся квартир не удалось восстановить. Откройте подбор и обновите отметки.')
     selected=[clean_listing(rows[i]) for i in ids if i in rows]
     return {'chats':choices,'chat_id':c.id,'profile':deepcopy(profile),'liked':selected,
+            'conditions':context_conditions(profile),
             'repair_assumptions':analysis_assumptions('repair'),
             'revision':state.get('profile_revision',0),'selection_revision':state.get('selection_revision',0),
             'updating':any(i['seq']>state.get('request_review_seq',0) for i in state.get('request_inputs') or [])}
@@ -151,16 +176,16 @@ def facts(snapshot):
                 'repair':repair,'repair_with_reserve':total_repair,
                 'total':round(price+total_repair) if valid_price and total_repair is not None else None})
         return {'kind':kind,'assumptions':a,'rows':result,'count':len(result)}
-    valid=[x for x in rows if isinstance(x.get('price'),(int,float)) and x['price']>0]
-    prices=[x['price'] for x in valid]
-    meters=[x['price']/x['area'] for x in valid if x.get('area') and x['area']>0]
+    from ..market_statistics import prices,valid_number
+    valid=[x for x in rows if valid_number(x.get('price'))]
+    totals=prices(valid)
     groups=[]
     for room in sorted({x.get('rooms') for x in valid},key=lambda r: -1 if r is None else r):
         group=[x for x in valid if x.get('rooms')==room]
         groups.append({'rooms':room,'count':len(group),'median_price':round(statistics.median(x['price'] for x in group))})
-    return {'kind':kind,'count':len(valid),'min_price':min(prices) if prices else None,
-        'median_price':round(statistics.median(prices)) if prices else None,
-        'median_price_per_m2':round(statistics.median(meters)) if meters else None,'groups':groups,
+    return {'kind':kind,'count':totals['count'],'min_price':totals['min'],
+        'median_price':totals['median'],
+        'median_price_per_m2':totals['ppm2'],'groups':groups,
         'rows':[{'id':x['id'],'address':x.get('address'),'rooms':x.get('rooms'),'price':x['price'],
                  'area':x.get('area'),'price_per_m2':round(x['price']/x['area']) if x.get('area') and x['area']>0 else None}
                 for x in valid],

@@ -94,9 +94,7 @@ async def check_map(s, listings: list[dict], announce: bool = False, kinds=None)
 def score_into(pool: list[dict], comps: list[dict], profile: dict, meta: dict) -> None:
     """Справедливая цена, оценка и платёж по подходящей программе — для каждой новой квартиры."""
     for x in pool:
-        if x["id"] in meta:
-            continue
-        fp = fair_price(x, comps)
+        fp = meta[x['id']]['fair'] if x['id'] in meta else fair_price(x, comps)
         score = score_listing(x, profile, fp)
         pay = M.listing_payment(x, profile) if profile.get("payment") not in (None, "cash") else None
         if pay and pay["program"] == "семейная":
@@ -142,7 +140,8 @@ async def _more_pages(s, until) -> None:
             break
         st["pages"] += 1
         seen = {x["id"] for x in st["listings"]}
-        batch=await sources.more({**profile,**({'_source_deadline':deadline} if deadline is not None else {})},st['pages'])
+        batch=await sources.more({**profile,'_search_districts':st.get('search_districts') or (),
+                                  **({'_source_deadline':deadline} if deadline is not None else {})},st['pages'])
         reports=getattr(batch,'reports',None)
         st.setdefault('page_reports',[]).extend(reports or [{'source':'cian','page':st['pages'],
             'status':'unknown','count':len(batch),'note':'Источник не сообщил исход страницы'}])
@@ -163,6 +162,27 @@ async def _more_pages(s, until) -> None:
 # ------------------------------------------------------------------ действия
 
 
+async def _search_area(s, p) -> tuple[str, ...]:
+    """В запрос источнику попадают только районы, выбранные клиентом.
+
+    Метки застройки — ориентир ранжирования, а радиус центра проверяется
+    по координатам квартиры: центроид района не задаёт границы этого радиуса.
+    """
+    from .. import districts as D
+    if p.get('districts'):
+        return tuple(p['districts'])
+    kind=p.get('district_type')
+    if kind in ('sleeping','prestige','business'):
+        names=D.for_type(p['city'],kind)
+        if names:
+            await s.say(D.describe(p['city'],kind,names))
+        else:
+            await s.say('Для оценки этого типа района пока недостаточно данных. Это пожелание сохранено; не буду считать его подтверждённым.')
+    if p.get('center_required'):
+        await s.say('Проверяю центр по координатам: до 5 км по прямой от опорной точки города.')
+    return ()
+
+
 @action("search_listings", 3,
         "Найти объявления по запросу: Циан (вторичка и/или новостройки) + база агента; названный район; удобства "
         "и «что рядом» — только подтверждённые. Показывает клиенту экран поиска со справедливой ценой. "
@@ -181,7 +201,8 @@ async def search_listings(s) -> dict:
         observed.update({x['id']:x for x in items})
         report_progress(s,list(observed.values()),'collect')
     deadline=time.monotonic()+settings.search_budget_s
-    listings, report = await sources.collect({**p,'_source_deadline':deadline},on_batch=batch)
+    area=await _search_area(s,p)
+    listings, report = await sources.collect({**p,'_source_deadline':deadline,'_search_districts':area},on_batch=batch)
     known = sources.stored(p, exclude={x["id"] for x in listings})
     if known:
         listings += known
@@ -191,7 +212,7 @@ async def search_listings(s) -> dict:
     pool = [x for x in listings if passes_hard_filters(x, p)]
     comps = list({x["id"]: x for x in [*sources.comparables(p), *listings]}.values())
     st = s.search = {"listings": listings, "pool": pool, "comps": comps, "report": report, "meta": {}, "pages": 1,
-                     "named": p.get("districts") or [], "strict": False, "map_ok": True,
+                     "named": p.get("districts") or list(area), "strict": False, "map_ok": True, "search_districts": area,
                      "shown_ids": set(p.get('_seen_listing_ids') or [x['id'] for x in s.shown]),
                      "map_deadline": time.monotonic() + settings.places_budget_s, "map_revision": s.client_revision,
                      'page_reports':[{**r,'page':1} for r in report if r.get('status')!='db'],'coverage_reasons':[],
@@ -406,8 +427,11 @@ async def wait_selection(s,effective,result):
         s.request_intent='selection'
         s.selection_operation='rank'
     elif d.get('action')=='proceed':
-        s.call_targets=list(prefs.liked)
-        if not prefs.liked and batch:
+        selected=d.get('listing_id')
+        if selected and not any(x['id']==selected and selectable(x,prefs) for x in batch):
+            raise ActionError('Выберите квартиру из актуальной подборки для звонка.')
+        s.call_targets=[selected] if selected else list(prefs.liked)
+        if not selected and not prefs.liked and batch:
             # Кнопка без отметок отдельно спрашивает согласие на три текущих лучших.
             s.call_targets=[x['id'] for x in batch[:3]]
         s.request_intent='call'

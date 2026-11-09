@@ -95,7 +95,7 @@ def input_reply(text, changes=None, *, intent="refine", profile=None):
                     (
                         token
                         for token in tokens
-                        if token.casefold().startswith(word[:3].casefold())
+                        if token.casefold().startswith(word[:3 if len(word) > 3 else 2].casefold())
                     ),
                     word,
                 ),

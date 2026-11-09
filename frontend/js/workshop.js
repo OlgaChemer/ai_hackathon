@@ -9,7 +9,7 @@ let dialog=null,context=null,kind='repair',timer=null,current=null;
 let threadJobs=[],viewSeq=0,contextSeq=0;
 
 async function request(path,options={}) {
-  const response=await fetch('/api/workshop'+path,{headers:{'Content-Type':'application/json'},...options});
+  const response=await fetch('/api/workshop'+path,{cache:'no-store',headers:{'Content-Type':'application/json'},...options});
   if(!response.ok){let message='Мастерская недоступна.';try{const r=await response.json();message=typeof r.detail==='string'?r.detail:'Проверьте параметры задания.';}catch{}throw new Error(message);}
   return response.json();
 }
@@ -34,6 +34,7 @@ async function open(){
     <p>Работаем с вашим подбором и реальными объявлениями. Загружать файлы не нужно.</p>
     <label>Подбор<select data-chat aria-label="Выбранный подбор"></select></label>
     <p data-context class="muted" role="status">Получаю ваши подборы…</p>
+    <ul data-conditions aria-label="Текущие условия подбора"></ul>
     <div class="workshop-kinds" role="group" aria-label="Задача"><button class="btn" data-kind="repair">Оценить ремонт</button><button class="btn btn-ghost" data-kind="compare">Сравнить квартиры</button><button class="btn btn-ghost" data-kind="market">Исследовать рынок</button></div>
     <form data-form><p data-mode-note></p><div class="workshop-assumptions" data-repair-scenarios></div>
       <p class="small muted" data-assumption-note></p>
@@ -94,6 +95,10 @@ function renderContext(){
   dialog.querySelector('[data-context]').textContent=context.chat_id
     ? `${wide ? context.profile.city+' · весь город без фильтров комнат, бюджета и пожеланий.' : context.profile.summary||context.profile.city||'Город пока не указан'} · понравившихся квартир: ${count}.${context.updating?' Применяются новые пожелания — дождитесь обновления.':''}`
     : 'Сначала начните подбор квартир с агентом.';
+  const conditions=dialog.querySelector('[data-conditions]');conditions.replaceChildren();
+  for(const text of wide?['Фильтры подбора не применяются; исследуем весь выбранный город.']:context.conditions||[]){
+    const item=document.createElement('li');item.textContent=text;conditions.append(item);
+  }
   const assumptions=context.repair_assumptions;
   const scenarios=dialog.querySelector('[data-repair-scenarios]');scenarios.replaceChildren();
   for(const s of assumptions?.scenarios||[]){const block=document.createElement('div');const title=document.createElement('strong');title.textContent=s.label;const text=document.createElement('p');text.textContent=`${s.rate_min.toLocaleString('ru-RU')}–${s.rate_max.toLocaleString('ru-RU')} ₽/м² · ${s.scope}`;block.append(title,text);scenarios.append(block);}

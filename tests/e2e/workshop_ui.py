@@ -39,9 +39,14 @@ async def main(base):
                 if kind=='compare':
                     assert not await page.locator('[data-repair-scenarios]').is_visible()
                 if kind=='market':
-                    await page.request.post(base+'/_test/profile',data={'rooms':3,'market_sample':True})
+                    await page.request.post(base+'/_test/profile',data={'rooms':3,'market_sample':True,
+                        'payment':'mortgage_saving','housing':'both','apartments':'any'})
                     await page.evaluate("document.dispatchEvent(new CustomEvent('profilechange',{detail:{chat_id:'ui-workshop'}}))")
                     await page.locator('[data-context]').filter(has_text='3-комнат').wait_for()
+                    assert 'взнос ещё копим' in await page.locator('[data-conditions]').inner_text()
+                    assert 'Маткапитал: ещё не уточнён' in await page.locator('[data-conditions]').inner_text()
+                    assert 'Квартиры и апартаменты' in await page.locator('[data-conditions]').inner_text()
+                    assert 'новостройки и вторичка — без предпочтения' in await page.locator('[data-conditions]').inner_text()
                     await page.locator('[data-wide]').check()
                     checkbox=await page.locator('[data-wide]').bounding_box()
                     label=await page.locator('[data-wide-wrap] span').bounding_box()
