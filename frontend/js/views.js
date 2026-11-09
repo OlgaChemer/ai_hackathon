@@ -149,16 +149,25 @@ function programs(p) {
 }
 
 
+function signed(value, format) {
+  return value > 0 ? `+${format(value)}` : value < 0 ? `−${format(-value)}` : format(0);
+}
+
 function mortgage(m) {
+  const own = m.scenarios.some((s) => s.own);
   const cards = m.scenarios.map((s) => {
-    const best = s.title === m.recommended;
+    const best = !own && s.title === m.recommended;
+    const label = s.own ? '<span class="tag tag-green">Ваш вариант</span>'
+      : best ? '<span class="tag tag-green">✓ Подходит по доходу</span>'
+      : `<span class="tag">${own ? "Для сравнения" : "Расчётный вариант"}</span>`;
+    const delta = s.vs_own ? html`<p class="loan-delta">${s.vs_own.down > 0 ? `Нужно ещё ${rub(s.vs_own.down)} к взносу. ` : ""}Платёж ${signed(s.vs_own.monthly, rub)} в месяц, переплата ${signed(s.vs_own.overpay, mln)}.</p>` : "";
     const status = s.savings_gap
       ? html`<span class="tag tag-amber">на взнос не хватает ${rub(s.savings_gap)}</span>`
       : s.fits_income ? html`<span class="tag tag-green">по силам</span>` : html`<span class="tag tag-red">высокий платёж</span>`;
     return html`
-      <article class="scenario loan-option ${best ? "is-best" : ""}">
-        <div class="loan-label">${html.raw(best ? '<span class="tag tag-green">✓ Рекомендованный расчёт</span>' : '<span class="tag">Расчётный вариант</span>')}</div>
-        <h3>${s.title}</h3>
+      <article class="scenario loan-option ${best || s.own ? "is-best" : ""}">
+        <div class="loan-label">${html.raw(label)}</div>
+        <h3>${s.title.replace(/^Для сравнения: /, "")}</h3>
         <div class="big num">${rub(s.monthly)}<small style="font-size:14px;font-weight:500"> / мес</small></div>
         <dl>
           <dt>Ставка</dt><dd class="num">${pct(s.rate)}</dd>
@@ -167,6 +176,7 @@ function mortgage(m) {
           <dt>Переплата</dt><dd class="num">${mln(s.overpay)}</dd>
           <dt>Нужен доход</dt><dd class="num">${rub(s.income_needed)}</dd>
         </dl>
+        ${html.raw(delta)}
         <p style="margin:12px 0 0">${html.raw(status)}</p>
       </article>`;
   });
@@ -174,7 +184,7 @@ function mortgage(m) {
   <section class="panel">
     <div class="eyebrow">Ипотечные сценарии</div>
     <h2 class="panel-title">Ипотека</h2>
-    <p class="panel-lead">${m.program || "Ипотека"}: три сценария${m.scenarios.every((s) => s.rate === m.rate) ? ` по ставке ${pct(m.rate)}` : ", ставка зависит от взноса"}. Каждые 100 000 ₽, которые агент сторгует, — это минус ${rub(m.per_100k_discount)} в месяц.</p>
+    <p class="panel-lead">${m.program || "Ипотека"}: ${own ? "расчёт по вашему взносу и варианты для сравнения" : "три сценария"}${m.scenarios.every((s) => s.rate === m.rate) ? ` по ставке ${pct(m.rate)}` : ", ставка зависит от взноса"}. Каждые 100 000 ₽, которые агент сторгует, — это минус ${rub(m.per_100k_discount)} в месяц.</p>
     <div class="scenarios">${html.raw(cards.join(""))}</div>
   </section>`;
 }

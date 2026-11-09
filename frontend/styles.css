@@ -1467,3 +1467,4 @@ body[data-page="agent"]:has(.chat.expanded) :is(.site-header,.stage,.footnote) {
 .workshop-liked small{display:block;margin-top:6px;font-size:15px;font-weight:600;color:#2e5a43}
 .workshop-liked.is-empty{border-color:#e0892b;background:#fff6ea}.workshop-liked.is-empty small{color:#8a4b0f}
 @media(max-width:600px){.workshop-liked strong{font-size:18px}}
+.loan-delta{margin:12px 0 0;font-size:13px;line-height:1.45;color:var(--ink-2)}
