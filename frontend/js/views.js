@@ -392,8 +392,8 @@ export function deal(d) {
 
 function packageBlock(p) {
   if (!p || !p.rows?.length) return "";
-  return html`<div class="package">
-    <h3 class="sub">Ваши условия в Сбере</h3>
+  return html`<div class="package next-block">
+    <h3>Ваши условия в Сбере</h3>
     ${html.raw(p.headline ? html`<p class="package__headline">${p.headline}</p>` : "")}
     <details><summary>Из чего складывается</summary>
       <dl class="costs">${html.raw(p.rows.map((r) => html`<dt>${r.title}</dt><dd>${r.text}</dd>`).join(""))}</dl>

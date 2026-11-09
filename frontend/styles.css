@@ -1455,8 +1455,7 @@ body[data-page="agent"]:has(.chat.expanded) :is(.site-header,.stage,.footnote) {
 .fork__option small, .products .check small { display:block; color:var(--ink-2); font-size:13px; }
 .products { display:grid; gap:10px; margin-top:10px; }
 .products__total { margin:4px 0 0; font-weight:600; font-size:14px; }
-.package { margin-top:20px; }
-.package__headline { margin:0 0 8px; font-weight:600; color:var(--green); }
+.package__headline { margin:10px 0 8px; font-weight:600; color:var(--green); }
 .package summary { cursor:pointer; font-size:14px; color:var(--ink-2); margin-bottom:8px; }
 .package .costs dd { text-align:left; }
 .receipt--single { grid-template-columns: 1fr; max-width: 640px; }
