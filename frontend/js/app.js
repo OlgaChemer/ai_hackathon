@@ -8,7 +8,7 @@ import { initChats, refreshChats } from "./chats.js";
 import { el, html, sleep } from "./format.js";
 import { initShell, navigate, showAgent, showPage, syncShell, refreshContext, setChatExpanded } from "./shell.js";
 import { mountMap, unmountMap, focusMap } from "./map.js";
-import { $, addMsg, chatLog, config, resetState, stage, state } from "./state.js";
+import { $, addMsg, chatLog, config, resetState, revealInChat, scrollChatToEnd, stage, startTurn, state } from "./state.js";
 import * as V from "./views.js";
 import { SELECTION_PROMPT, initVoiceChat, phoneActive, sayPrompt, talk } from "./voicechat.js";
 import { bindMic, recorder, voice } from "./voice.js";
@@ -61,7 +61,7 @@ function renderChatResult(step) {
   node.innerHTML = markup;
   const chart = node.querySelector("[data-chart]");
   if (chart && state.results[2]?.finance) savingsChart(chart, state.results[2].finance, chart.dataset.selected);
-  chatLog.scrollTop = chatLog.scrollHeight;
+  revealInChat(node);
 }
 
 /** Кнопки подборки активны, только пока агент ждёт выбора. */
@@ -170,6 +170,7 @@ async function handle(ev, myGen) {
       if (ev.decision_id && api.decisions[ev.kind] && ev.decision_id !== api.decisions[ev.kind]) break;
       delete api.decisions[ev.kind];
       resolved(ev);
+      startTurn(); // решение клиента — дальше начинается новый ответ агента
       break;
     case 'purchase_reset':
       for (const step of ev.clear_steps || []) delete state.results[step];
@@ -277,6 +278,7 @@ async function handle(ev, myGen) {
       state.running = ev.live;
       state.lastSeq = Math.max(state.lastSeq, ev.seq || 0);
       renderStage(); // экран этапа — один раз, по итогам истории
+      scrollChatToEnd();
       if (!ev.live) {
         staleCards();
         state.es?.close();
@@ -335,10 +337,11 @@ function finish() {
 function showThinking(on, text = "") {
   chatLog.querySelector(".msg-thinking")?.remove();
   if (!on) return;
-  chatLog.append(el(text
+  const node = el(text
     ? html`<div class="msg msg-thinking" role="status">${text}</div>`
-    : html`<div class="msg msg-thinking" aria-label="Агент думает"><span></span><span></span><span></span></div>`));
-  chatLog.scrollTop = chatLog.scrollHeight;
+    : html`<div class="msg msg-thinking" aria-label="Агент думает"><span></span><span></span><span></span></div>`);
+  chatLog.append(node);
+  revealInChat(node);
 }
 
 // ------------------------------------------------------------------ запуск и сообщения

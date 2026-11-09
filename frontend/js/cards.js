@@ -3,7 +3,7 @@
 import { api } from "./api.js";
 import { el, html, pct, rub } from "./format.js";
 import { PhoneCall, formatPhone, normalizePhone } from "./phone.js";
-import { $, addMsg, chatLog, config, stage, state } from "./state.js";
+import { $, addMsg, chatLog, config, revealInChat, stage, state } from "./state.js";
 import { sayPrompt, voiceHint } from "./voicechat.js";
 import { voice } from "./voice.js";
 import { roomDescription } from "./speech.js";
@@ -132,7 +132,7 @@ function updateDecisionLayout() {
 function presentDecision(card, live) {
   $("chatLog").append(card);
   updateDecisionLayout();
-  if (live) { setChatExpanded(true); chatLog.scrollTop = chatLog.scrollHeight; }
+  if (live) { setChatExpanded(true); revealInChat(card); }
 }
 
 function archiveDecision(card) {
@@ -177,7 +177,6 @@ export function confirmCard(ev) {
     });
     extra.querySelectorAll("[data-quick]").forEach((b) => b.addEventListener("click", () => sendText(b.dataset.quick)));
     presentDecision(card, live);
-    chatLog.scrollTop = chatLog.scrollHeight;
     if (live) card.querySelector("[data-quick]")?.focus({ preventScroll: true });
     return;
   }
@@ -421,7 +420,6 @@ export function confirmCard(ev) {
     actions.append(b);
   });
   presentDecision(card, live);
-  chatLog.scrollTop = chatLog.scrollHeight;
   if (!live) return;
   actions.querySelector("button")?.focus({ preventScroll: true });
 }

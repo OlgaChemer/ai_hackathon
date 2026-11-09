@@ -73,7 +73,6 @@ export function renderCall(c, onSellerSubmit) {
   <section class="panel call">
     <div class="call-head">
       <div class="call-who">
-        <span class="avatar" aria-hidden="true">${seller.trim()[0]}</span>
         <div><strong>${seller}</strong><span>${c.sellerRole} · ${c.listing.address}</span></div>
       </div>
       <div class="call-status ${c.ended ? "is-ended" : ""}"><span class="rec"></span><span data-status>${statusText}</span></div>
