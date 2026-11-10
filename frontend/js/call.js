@@ -1,5 +1,6 @@
 // Экран звонка: счётчик цены, «линейка» коридора и расшифровка разговора.
 import { el, html, rub } from "./format.js";
+import { chatLog, revealInChat } from "./state.js";
 import { bindMic, mic, recorder } from "./voice.js";
 
 const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -73,7 +74,6 @@ export function renderCall(c, onSellerSubmit) {
   <section class="panel call">
     <div class="call-head">
       <div class="call-who">
-        <span class="avatar" aria-hidden="true">${seller.trim()[0]}</span>
         <div><strong>${seller}</strong><span>${c.sellerRole} · ${c.listing.address}</span></div>
       </div>
       <div class="call-status ${c.ended ? "is-ended" : ""}"><span class="rec"></span><span data-status>${statusText}</span></div>
@@ -224,8 +224,14 @@ function tweenPrice(c, to) {
 export function showSellerInput(c, onSubmit) {
   c.awaitingSeller = true;
   setTyping(c, null);
-  const slot = q(c, "[data-seller-slot]");
-  if (!slot) return;
+  let slot = q(c, "[data-seller-slot]");
+  let holder = null; // без виджета звонка — отдельная маленькая карточка в чате
+  if (!slot) {
+    chatLog.querySelector(".chat-seller")?.remove();
+    holder = el(html`<div class="chat-seller"><strong>Вы — продавец</strong><span>Агент ждёт ответа продавца${c.listing?.address ? ` · ${c.listing.address}` : ""}.</span><div data-seller-slot></div></div>`);
+    chatLog.append(holder);
+    slot = holder.querySelector("[data-seller-slot]");
+  }
   slot.innerHTML = "";
   const form = el(html`
     <form class="seller-input">
@@ -239,7 +245,7 @@ export function showSellerInput(c, onSubmit) {
     const text = input.value.trim();
     if (!text) return;
     c.awaitingSeller = false;
-    slot.innerHTML = "";
+    if (holder) holder.remove(); else slot.innerHTML = "";
     onSubmit(text);
   });
   const micBtn = form.querySelector(".mic");
@@ -253,5 +259,6 @@ export function showSellerInput(c, onSubmit) {
     });
   }
   slot.append(form);
-  input.focus();
+  if (holder) revealInChat(holder);
+  input.focus({ preventScroll: true });
 }

@@ -119,8 +119,8 @@ async def main(base):
             await context.close()
             context=await browser.new_context(viewport={'width':width,'height':1000});page=await context.new_page()
             await page.goto(base);await login(page,'other@example.ru')
-            assert not await page.locator('#workshopButton').is_visible()
-            assert (await page.request.get(base+'/api/workshop/context')).status==403
+            await page.locator('#workshopButton').wait_for()
+            assert (await page.request.get(base+'/api/workshop/context')).status==200
             await context.close()
             print(f'PASS {width}px: premium, Markdown, followups, phone visibility on login/logout, no calls placed',flush=True)
         await browser.close()

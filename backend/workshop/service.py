@@ -26,16 +26,15 @@ SCOPE={'type':'object','additionalProperties':False,'properties':{
     'message':{'type':'string'}},'required':['decision','message']}
 
 
-def premium(request):
+def member(request):
+    """Мастерская доступна любому вошедшему пользователю; анониму — нет."""
     user=auth.current_user(request)
-    if not user:raise HTTPException(401,'Войдите в аккаунт.')
-    if not user.get('premium'):raise HTTPException(403,'ИИ-мастерская пока доступна только участнику премиум-пилота.')
+    if not user:raise HTTPException(401,'Войдите в аккаунт, чтобы открыть ИИ-мастерскую.')
     return user['id']
 
 
-def still_premium(connection,uid):
-    user=connection.get(User,uid)
-    return bool(user and user.premium and user.email.casefold()==settings.workshop_email)
+def still_member(connection,uid):
+    return connection.get(User,uid) is not None
 
 
 async def scope(llm,text,*,output=False):
@@ -129,7 +128,7 @@ async def execute(job_id):
             with db.session() as connection:
                 row=connection.get(WorkshopJob,job_id)
                 if row.status!='queued':return
-                if not still_premium(connection,row.user_id):raise RuntimeError('Доступ к мастерской отозван.')
+                if not still_member(connection,row.user_id):raise RuntimeError('Доступ к мастерской отозван.')
                 snapshot=deepcopy(row.snapshot);provider=row.provider
             db.required(update,job_id,'running')
             record('workshop_started',job=job_id,provider=provider)

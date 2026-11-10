@@ -24,6 +24,36 @@ export function resetState() {
   Object.assign(state, freshState());
 }
 
+// Начало текущего ответа агента. Экран встаёт на него, а не на конец длинного ответа (расчёт ипотеки и т. п.).
+// Началом может стать только элемент, появившийся ПОСЛЕ границы хода (сообщения или решения клиента):
+// старые блоки, обновлённые на месте (профиль в начале диалога), прокрутку не двигают.
+let turnAnchor = null;
+let turnBoundary = null;
+
+function lastItem() {
+  return [...chatLog.children].reverse().find((n) => !n.classList.contains("msg-thinking")) || null;
+}
+
+/** Пользователь написал или принял решение — следующий новый элемент агента станет началом нового ответа. */
+export function startTurn() { turnAnchor = null; turnBoundary = lastItem(); }
+
+function isNew(node) {
+  if (!turnBoundary?.isConnected) return true;
+  return node !== turnBoundary && Boolean(turnBoundary.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING);
+}
+
+/** Показать новый элемент ответа: начало ответа — у верхнего края, короткий ответ — целиком внизу, как раньше. */
+export function revealInChat(node) {
+  if (!node?.isConnected) return;
+  if (!turnAnchor?.isConnected) turnAnchor = isNew(node) ? node : null;
+  if (!turnAnchor) return; // обновился старый блок выше — место чтения не меняем
+  const top = chatLog.scrollTop + turnAnchor.getBoundingClientRect().top - chatLog.getBoundingClientRect().top - 12;
+  chatLog.scrollTop = Math.min(chatLog.scrollHeight - chatLog.clientHeight, Math.max(0, top));
+}
+
+/** История показана целиком — открываем её внизу, новый ответ начнётся с чистого якоря. */
+export function scrollChatToEnd() { startTurn(); chatLog.scrollTop = chatLog.scrollHeight; }
+
 export function addMsg(role, text) {
   const previous=chatLog.lastElementChild;
   if (role === "agent" && previous?.classList.contains("msg-agent") && previous.dataset.text === text) return previous;
@@ -34,6 +64,7 @@ export function addMsg(role, text) {
   if (peek) peek.textContent = text;
   const thinking = chatLog.querySelector(".msg-thinking"); // «агент думает» — всегда последним
   if (thinking) chatLog.append(thinking);
-  chatLog.scrollTop = chatLog.scrollHeight;
+  if (role === "user") scrollChatToEnd();
+  else revealInChat(node);
   return node;
 }
