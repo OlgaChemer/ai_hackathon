@@ -17,7 +17,7 @@ async function request(path,options={}) {
 export function initWorkshop(){
   const button=document.getElementById('workshopButton');
   document.addEventListener('accountchange',event=>{
-    button.hidden=!event.detail.user?.premium;
+    button.hidden=!event.detail.user?.workshop;
     if(button.hidden&&dialog)dialog.close();
   });
   button.addEventListener('click',open);
@@ -36,7 +36,7 @@ async function open(){
     <p data-context class="muted" role="status">Получаю ваши подборы…</p>
     <ul data-conditions aria-label="Текущие условия подбора"></ul>
     <div class="workshop-kinds" role="group" aria-label="Задача"><button class="btn" data-kind="repair">Оценить ремонт</button><button class="btn btn-ghost" data-kind="compare">Сравнить квартиры</button><button class="btn btn-ghost" data-kind="market">Исследовать рынок</button></div>
-    <form data-form><p data-mode-note></p><div class="workshop-assumptions" data-repair-scenarios></div>
+    <form data-form><div class="workshop-liked" data-liked-notice role="note" hidden><strong data-liked-title></strong><small data-liked-count></small></div><p data-mode-note></p><div class="workshop-assumptions" data-repair-scenarios></div>
       <p class="small muted" data-assumption-note></p>
       <label class="workshop-checkbox" data-wide-wrap hidden><input data-wide type="checkbox"><span>Исследовать весь город без фильтров подбора<small>Условия покупки в основном диалоге сохранятся.</small></span></label>
       <label>Что ещё учесть?<textarea data-prompt maxlength="1000" rows="3"></textarea></label>
@@ -88,9 +88,25 @@ async function loadContext(id){
   dialog.querySelector('[data-start]').disabled=!context.chat_id||context.updating||Boolean(current&&!TERMINAL.has(current.status));
 }
 
+function likedCount(){
+  if(!context)return 0;
+  return context.chat_id===state.sid?state.marks.liked.size:context.liked.length;
+}
+
+function renderLikedNotice(count){
+  const notice=dialog.querySelector('[data-liked-notice]');
+  notice.hidden=kind==='market';if(notice.hidden)return;
+  notice.classList.toggle('is-empty',!count);
+  notice.querySelector('[data-liked-title]').textContent='Нужны квартиры с лайком «Нравится»';
+  notice.querySelector('[data-liked-count]').textContent=count
+    ? `${kind==='repair'?'Оценю ремонт':'Сравню'} только отмеченные квартиры. Сейчас отмечено: ${count}.`
+    : 'Пока не отмечено ни одной. Вернитесь к подборке и поставьте лайк квартирам, которые хотите разобрать.';
+}
+
 function renderContext(){
   if(!dialog||!context)return;
-  const count=context.chat_id===state.sid?state.marks.liked.size:context.liked.length;
+  const count=likedCount();
+  renderLikedNotice(count);
   const wide=kind==='market'&&dialog.querySelector('[data-wide]').checked;
   dialog.querySelector('[data-context]').textContent=context.chat_id
     ? `${wide ? context.profile.city+' · весь город без фильтров комнат, бюджета и пожеланий.' : context.profile.summary||context.profile.city||'Город пока не указан'} · понравившихся квартир: ${count}.${context.updating?' Применяются новые пожелания — дождитесь обновления.':''}`
@@ -110,7 +126,8 @@ async function start(event){
   const button=dialog.querySelector('[data-start]');button.disabled=true;
   try{await loadContext(dialog.querySelector('[data-chat]').value||context.chat_id);}catch(e){error(e.message);button.disabled=false;return;}
   if(!dialog||!context?.chat_id)return;
-  if(context.updating){error('Дождитесь применения последних пожеланий, затем запустите исследование.');return;}
+  if(context.updating){error('Дождитесь применения последних пожеланий, затем запустите исследование.');button.disabled=false;return;}
+  if(kind!=='market'&&!likedCount()){error('Сначала отметьте квартиры лайком «Нравится» в подборке.');button.disabled=false;return;}
   button.disabled=true;
   const payload={command_id:crypto.randomUUID(),chat_id:context.chat_id,kind,
     prompt:dialog.querySelector('[data-prompt]').value.trim(),whole_city:kind==='market'&&dialog.querySelector('[data-wide]').checked,

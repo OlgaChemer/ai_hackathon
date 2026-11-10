@@ -71,16 +71,22 @@ class WorkshopAPI(unittest.TestCase):
             time.sleep(.01)
         self.fail('Задание не завершилось')
 
-    def test_only_granted_account_gets_premium_and_anonymous_has_no_access(self):
+    def test_every_signed_in_user_gets_workshop_but_premium_stays_with_operator(self):
         self.assertTrue(self.client.get('/api/me').json()['user']['premium'])
+        job=self.wait(self.client.post('/api/workshop/jobs',json=self.payload()).json()['id'])
         self.client.post('/api/auth/logout')
         self.assertEqual(self.client.get('/api/workshop/context').status_code,401)
         r=self.client.post('/api/auth/register',json={'email':'other@example.ru','password':'workshop-test-123'})
         other=r.json()['user']['id']
         with db.session() as s:s.get(User,other).premium=True
-        self.assertFalse(self.client.get('/api/me').json()['user']['premium'])
-        self.assertEqual(self.client.get('/api/workshop/context').status_code,403)
-        self.assertEqual(self.client.post('/api/workshop/jobs',json=self.payload()).status_code,403)
+        me=self.client.get('/api/me').json()['user']
+        self.assertFalse(me['premium'],'Премиум (телефон оператора) — только у выданного аккаунта')
+        self.assertTrue(me['workshop'])
+        response=self.client.get('/api/workshop/context')
+        self.assertEqual(response.status_code,200,response.text)
+        self.assertNotIn('own',[c['id'] for c in response.json()['chats']],'Чужие подборы не видны')
+        self.assertEqual(self.client.get('/api/workshop/jobs').json()['jobs'],[])
+        self.assertIn(self.client.get('/api/workshop/jobs/'+job['id']).status_code,(403,404))
 
     def test_operator_health_enables_phone_without_opening_public_access(self):
         from backend import phone
@@ -371,12 +377,12 @@ class WorkshopAPI(unittest.TestCase):
         r=self.client.post('/api/workshop/jobs',json=self.payload(liked=[]))
         self.assertEqual(r.status_code,422,r.text);self.assertEqual(self.calls,[])
 
-    def test_provider_cannot_be_selected_from_browser_and_entitlement_can_be_revoked(self):
+    def test_provider_cannot_be_selected_from_browser_and_premium_is_not_required(self):
         self.assertEqual(self.client.post('/api/workshop/jobs',json=self.payload(provider='gigachat')).status_code,422)
         r=self.client.post('/api/workshop/jobs',json=self.payload());job=self.wait(r.json()['id'])
         with db.session() as s:s.get(User,self.uid).premium=False
-        self.assertEqual(self.client.get('/api/workshop/jobs/'+job['id']).status_code,403)
-        self.assertEqual(self.client.get('/api/workshop/jobs/'+job['id']+'/files/analysis.csv').status_code,403)
+        self.assertEqual(self.client.get('/api/workshop/jobs/'+job['id']).status_code,200)
+        self.assertEqual(self.client.get('/api/workshop/jobs/'+job['id']+'/files/analysis.csv').status_code,200)
 
 
 class WorkshopContracts(unittest.IsolatedAsyncioTestCase):

@@ -371,14 +371,23 @@ def mortgage_scenarios(price: int, monthly_income: int | None = None, down_avail
             "cash_needed": max(0, down - matcap) + costs,
             "savings_gap": 0 if down_available is None else max(0, down - matcap + costs - down_available),
         })
-    best = rows[0] if down_payment is not None else next((r for r in rows if r["fits_income"] is not False), rows[0])
+    own = rows[0] if down_payment is not None else None
+    if own:
+        # Варианты для сравнения требуют других денег: показываем разницу с вашим, а не «лучший» вариант.
+        own["own"] = True
+        for r in rows[1:]:
+            r["vs_own"] = {"down": r["down_payment"] - own["down_payment"], "monthly": r["monthly"] - own["monthly"],
+                           "overpay": r["overpay"] - own["overpay"]}
+    best = own or next((r for r in rows if r["fits_income"] is not False), rows[0])
+    # Рекомендуем только то, что подтверждено доходом клиента; свой взнос — это расчёт, а не рекомендация.
+    fitting = None if own else next((r for r in rows if r["fits_income"] is True), None)
     return {
         "rate": best["rate"],
         "program": program or "Рыночная ипотека Сбера",
         "matcap": matcap,
         "deal_costs": sum(deal_costs(price,best['loan']).values()),
         "scenarios": rows,
-        "recommended": best["title"],
+        "recommended": fitting["title"] if fitting else None,
         "approved": best['loan'],
         "per_100k_discount": int(round(annuity(100_000, best["rate"], best["years"]))),
     }

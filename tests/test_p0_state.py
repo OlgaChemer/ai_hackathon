@@ -35,7 +35,7 @@ class DurableStateTest(unittest.IsolatedAsyncioTestCase):
         s.search={'listings':[x],'pool':[x],'shown_ids':{x['id']},'meta':{},'comps':[x]}
         s.shown=[x];s.call_targets=[x['id']]
         s.calls={x['id']:{'status':'agreed','price':7_000_000,'viewing':'завтра','slots':['завтра'],'learned':{}}}
-        s.agreed={x['id']:7_000_000};s.chosen=x['id']
+        s.agreed={x['id']:7_000_000};s.chosen=x['id'];s.products={'choice':{'listing_id':x['id']}}
         s.remember()
         return s,x
 
@@ -88,6 +88,7 @@ class DurableStateTest(unittest.IsolatedAsyncioTestCase):
                ('ask_client','clarify',{'question':'Что уточнить?'}),
                ('confirm_price','price',{'listing_id':'cian-1'}),
                ('plan_viewing','object',{'listing_id':'cian-1'}),
+               ('offer_products','products',{'listing_id':'cian-1'}),
                ('prepare_deal','sign',{'listing_id':'cian-1'})]
         for name,kind,args in cases:
             with self.subTest(name=name):
@@ -95,6 +96,7 @@ class DurableStateTest(unittest.IsolatedAsyncioTestCase):
                 if kind=='red_lines':s.red_lines_ok=False;s.profile.pop('_approved_budget_max',None)
                 if kind=='payment':s.profile['payment']=None
                 if kind=='family':s.profile['payment']='mortgage_ready';s.profile['children']=None
+                if kind=='products':s.products={}
                 s.remember()
                 call=ToolCall(name,args,'restore-'+name)
                 task=asyncio.create_task(actions.execute(s,call));await self.wait_card(s,kind,task)

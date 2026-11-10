@@ -1,9 +1,9 @@
 // Карточки решений в основной области; принятые решения остаются в истории чата.
 // Решение уходит на сервер; карточку закрывает событие resolved из ленты — так же она выглядит и в истории.
 import { api } from "./api.js";
-import { el, html, rub } from "./format.js";
+import { el, html, pct, rub } from "./format.js";
 import { PhoneCall, formatPhone, normalizePhone } from "./phone.js";
-import { $, addMsg, chatLog, config, stage, state } from "./state.js";
+import { $, addMsg, chatLog, config, revealInChat, stage, state } from "./state.js";
 import { sayPrompt, voiceHint } from "./voicechat.js";
 import { voice } from "./voice.js";
 import { roomDescription } from "./speech.js";
@@ -132,7 +132,7 @@ function updateDecisionLayout() {
 function presentDecision(card, live) {
   $("chatLog").append(card);
   updateDecisionLayout();
-  if (live) { setChatExpanded(true); chatLog.scrollTop = chatLog.scrollHeight; }
+  if (live) { setChatExpanded(true); revealInChat(card); }
 }
 
 function archiveDecision(card) {
@@ -177,7 +177,6 @@ export function confirmCard(ev) {
     });
     extra.querySelectorAll("[data-quick]").forEach((b) => b.addEventListener("click", () => sendText(b.dataset.quick)));
     presentDecision(card, live);
-    chatLog.scrollTop = chatLog.scrollHeight;
     if (live) card.querySelector("[data-quick]")?.focus({ preventScroll: true });
     return;
   }
@@ -339,6 +338,41 @@ export function confirmCard(ev) {
     collect = () => ({questions: collectQuestions(card)});
   }
 
+  if (ev.kind === "financing") {
+    const now = ev.now || {}, save = ev.save || {};
+    const nowText = now.ok
+      ? `взнос ${rub(now.down)} из накоплений, ставка ${pct(now.rate, 2)}, платёж ${rub(now.monthly)} в месяц; на подушку останется ${rub(now.cushion_left)}`
+      : `к сделке нужно найти ещё ${rub(now.short)} — иначе банк не выдаст кредит`;
+    const saveText = `${save.product}, ${pct(save.rate)}: откладывая ${rub(save.monthly)} в месяц${save.months ? `, соберёте за ${save.months} мес.` : ""}. Продавцам не звоню, подборка сохранится`;
+    extra.innerHTML = html`<div class="fork">
+      <div class="fork__option ${ev.recommended === "now" ? "is-on" : ""}"><b>Покупать сейчас</b><small>${nowText}</small></div>
+      <div class="fork__option ${ev.recommended === "save" ? "is-on" : ""}"><b>Сначала накопить</b><small>${saveText}</small></div>
+    </div>`;
+  }
+  if (ev.kind === "products") {
+    const items = ev.items || [];
+    const picked = Object.fromEntries(items.map((i) => [i.key, !!i.on]));
+    if (ev.salary_available) picked.salary = false;
+    const total = () => {
+      if (ev.chain !== "mortgage") return "";
+      const v = ev.variants[`${picked.life ? 1 : 0}${picked.salary ? 1 : 0}`];
+      return `Ставка ${pct(v.rate, 2)}, платёж ${rub(v.monthly)} в месяц`;
+    };
+    const amount = (i) => (i.unit === "доход" ? `+${rub(i.value)}` : `${rub(i.value)} в год`);
+    extra.innerHTML = html`<div class="products">
+      ${html.raw(items.map((i) => html`<label class="check"><input type="checkbox" data-product="${i.key}" ${i.on ? "checked" : ""} ${i.locked ? "disabled" : ""}>
+        <span><b>${i.title}</b> · ${amount(i)}<small>${i.why}</small></span></label>`).join(""))}
+      ${html.raw(ev.salary_available ? html`<label class="check"><input type="checkbox" data-product="salary">
+        <span><b>Получаю зарплату на карту Сбера</b><small>скидка ${pct(ev.salary_discount)} к ставке</small></span></label>` : "")}
+      <p class="products__total" data-products-total>${total()}</p>
+    </div>`;
+    extra.querySelectorAll("[data-product]").forEach((box) => box.addEventListener("change", () => {
+      picked[box.dataset.product] = box.checked;
+      extra.querySelector("[data-products-total]").textContent = total();
+    }));
+    collect = () => ({ ...picked });
+  }
+
   const buttons = {
     red_lines: [["Подтвердить рамки", true, {}], ["Изменить запрос", false, {}]],
     extras: [["Применить", true, {}], ["Пропустить", false, {}]],
@@ -354,6 +388,10 @@ export function confirmCard(ev) {
     price: [[`Подтвердить ${rub(ev.price)}`, true, {}], ["Отклонить, звонить дальше", false, {}]],
     object: [["Выбираю эту квартиру", true, {}], ["Ищем дальше", false, {}]],
     sign: [["Подтвердить демо-план", true, {}], ["Отложить", false, {}]],
+    financing: ev.now?.ok
+      ? [["Звонить — покупаю сейчас", true, { choice: "now" }], ["Сначала накопить", true, { choice: "save" }]]
+      : [["Сначала накопить", true, { choice: "save" }], ["Звонить всё равно", true, { choice: "now" }]],
+    products: [["Подключить выбранное", true, {}], ["Не нужно", false, {}]],
   }[ev.kind] || [["Подтвердить", true, {}], ["Отклонить", false, {}]];
 
   // голосом: что сказать вслух и как ответить
@@ -367,6 +405,8 @@ export function confirmCard(ev) {
     payment: () => `${ev.title}`,
     family: () => "Есть ли у вас дети? Возраст и маткапитал можно указать на карточке.",
     housing: () => "Посмотреть вторичку, новостройки или оба варианта?",
+    financing: () => `${ev.text}`,
+    products: () => "Деньги к сделке: отметьте на карточке, что подключить.",
   }[ev.kind]?.() ?? `${ev.title}. ${ev.text}`;
   if (live) sayPrompt(`${spoken} ${hint}`);
 
@@ -380,7 +420,6 @@ export function confirmCard(ev) {
     actions.append(b);
   });
   presentDecision(card, live);
-  chatLog.scrollTop = chatLog.scrollHeight;
   if (!live) return;
   actions.querySelector("button")?.focus({ preventScroll: true });
 }

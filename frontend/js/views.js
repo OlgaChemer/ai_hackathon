@@ -149,16 +149,25 @@ function programs(p) {
 }
 
 
+function signed(value, format) {
+  return value > 0 ? `+${format(value)}` : value < 0 ? `−${format(-value)}` : format(0);
+}
+
 function mortgage(m) {
+  const own = m.scenarios.some((s) => s.own);
   const cards = m.scenarios.map((s) => {
-    const best = s.title === m.recommended;
+    const best = !own && s.title === m.recommended;
+    const label = s.own ? '<span class="tag tag-green">Ваш вариант</span>'
+      : best ? '<span class="tag tag-green">✓ Подходит по доходу</span>'
+      : `<span class="tag">${own ? "Для сравнения" : "Расчётный вариант"}</span>`;
+    const delta = s.vs_own ? html`<p class="loan-delta">${s.vs_own.down > 0 ? `Нужно ещё ${rub(s.vs_own.down)} к взносу. ` : ""}Платёж ${signed(s.vs_own.monthly, rub)} в месяц, переплата ${signed(s.vs_own.overpay, mln)}.</p>` : "";
     const status = s.savings_gap
       ? html`<span class="tag tag-amber">на взнос не хватает ${rub(s.savings_gap)}</span>`
       : s.fits_income ? html`<span class="tag tag-green">по силам</span>` : html`<span class="tag tag-red">высокий платёж</span>`;
     return html`
-      <article class="scenario loan-option ${best ? "is-best" : ""}">
-        <div class="loan-label">${html.raw(best ? '<span class="tag tag-green">✓ Рекомендованный расчёт</span>' : '<span class="tag">Расчётный вариант</span>')}</div>
-        <h3>${s.title}</h3>
+      <article class="scenario loan-option ${best || s.own ? "is-best" : ""}">
+        <div class="loan-label">${html.raw(label)}</div>
+        <h3>${s.title.replace(/^Для сравнения: /, "")}</h3>
         <div class="big num">${rub(s.monthly)}<small style="font-size:14px;font-weight:500"> / мес</small></div>
         <dl>
           <dt>Ставка</dt><dd class="num">${pct(s.rate)}</dd>
@@ -167,6 +176,7 @@ function mortgage(m) {
           <dt>Переплата</dt><dd class="num">${mln(s.overpay)}</dd>
           <dt>Нужен доход</dt><dd class="num">${rub(s.income_needed)}</dd>
         </dl>
+        ${html.raw(delta)}
         <p style="margin:12px 0 0">${html.raw(status)}</p>
       </article>`;
   });
@@ -174,7 +184,7 @@ function mortgage(m) {
   <section class="panel">
     <div class="eyebrow">Ипотечные сценарии</div>
     <h2 class="panel-title">Ипотека</h2>
-    <p class="panel-lead">${m.program || "Ипотека"}: три сценария${m.scenarios.every((s) => s.rate === m.rate) ? ` по ставке ${pct(m.rate)}` : ", ставка зависит от взноса"}. Каждые 100 000 ₽, которые агент сторгует, — это минус ${rub(m.per_100k_discount)} в месяц.</p>
+    <p class="panel-lead">${m.program || "Ипотека"}: ${own ? "расчёт по вашему взносу и варианты для сравнения" : "три сценария"}${m.scenarios.every((s) => s.rate === m.rate) ? ` по ставке ${pct(m.rate)}` : ", ставка зависит от взноса"}. Каждые 100 000 ₽, которые агент сторгует, — это минус ${rub(m.per_100k_discount)} в месяц.</p>
     <div class="scenarios">${html.raw(cards.join(""))}</div>
   </section>`;
 }
@@ -385,17 +395,27 @@ export function deal(d) {
       <ol class="timeline">
         ${html.raw(d.timeline.map((t) => html`<li><time>${shortDate(t.date)}</time><span class="pt"></span><div><strong>${t.title}</strong><span>${t.note}</span></div></li>`).join(""))}
       </ol>
-      <div><h3 class="sub">Расходы на сделку</h3><dl class="costs">${html.raw(costs)}</dl></div>
+      <div><h3 class="sub">Расходы на сделку</h3><dl class="costs">${html.raw(costs)}</dl>${html.raw(packageBlock(d.package))}</div>
     </div>
   </section>`;
 }
 
+function packageBlock(p) {
+  if (!p || !p.rows?.length) return "";
+  return html`<div class="package next-block">
+    <h3>Ваши условия в Сбере</h3>
+    ${html.raw(p.headline ? html`<p class="package__headline">${p.headline}</p>` : "")}
+    <details><summary>Из чего складывается</summary>
+      <dl class="costs">${html.raw(p.rows.map((r) => html`<dt>${r.title}</dt><dd>${r.text}</dd>`).join(""))}</dl>
+      <p class="hint">${p.note}</p>
+    </details>
+  </div>`;
+}
+
 export function summary(s) {
-  const lines = s.sber.lines.filter((l) => l.value > 0).map((l) => html`<dt>${l.name}</dt><dd class="num">${rub(l.value)}</dd>`).join("");
-  const fin = s.sber.finance.map((l) => html`<dt>${l.name} (${rub(l.amount)})</dt><dd class="num">${rub(l.value)} / год</dd>`).join("");
   return html`
   <section class="panel">
-    <div class="receipt">
+    <div class="receipt receipt--single">
       <div>
         <h2 class="panel-title">Сделка проведена</h2>
         <p class="panel-lead">${s.listing.address}, ${s.listing.district || s.listing.city}${s.listing.url ? "" : ""}</p>
@@ -408,14 +428,10 @@ export function summary(s) {
           ${html.raw(s.monthly_saved ? html`<dt>Платёж по ипотеке ниже на</dt><dd class="num">${rub(s.monthly_saved)} / мес</dd>` : "")}
           <dt>Сэкономлено времени</dt><dd>${s.hours_saved}</dd>
         </dl>
-      </div>
-      <div class="sber-box">
-        <h3>Что получает Сбер</h3>
-        <p class="hint" style="margin-top:0">С этой сделки, ₽ — по допущениям бизнес-модели</p>
-        <dl class="ledger">${html.raw(lines)}<dt class="total">Итого со сделки</dt><dd class="total num">${rub(s.sber.revenue)}</dd></dl>
-        ${html.raw(fin ? html`<h3 style="margin-top:18px">Финансовый помощник</h3><dl class="ledger">${html.raw(fin)}</dl>` : "")}
-        <h3 style="margin-top:20px">Следующие события клиента</h3>
-        <div class="next">${html.raw(s.next_events.map((e) => html`<span>${e}</span>`).join(""))}</div>
+        <div class="next-block">
+          <h3>Следующие события клиента</h3>
+          <div class="next">${html.raw(s.next_events.map((e) => html`<span>${e}</span>`).join(""))}</div>
+        </div>
       </div>
     </div>
   </section>`;

@@ -23,6 +23,8 @@ body { min-height: 100vh; flex-direction: column; -webkit-font-smoothing: antial
 .voice-toggle[aria-pressed="false"] .wave { opacity: 0; }
 .workspace { flex: 1; display: grid; grid-template-columns: minmax(340px, 420px) 1fr; gap: 20px; padding: 20px 28px; min-height: 0; }
 .chat-log { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
+/* Элементы ленты не сжимаются: виджет звонка с overflow:hidden иначе схлопывался в пустую рамку */
+.chat-log > * { flex-shrink: 0; }
 .composer { gap: 10px; }
 .composer textarea { resize: none; border: 1px solid var(--line); padding: 12px 14px; outline: none; }
 .composer textarea:focus { border-color: var(--green); background: var(--surface); }
@@ -1447,3 +1449,26 @@ body[data-page="agent"]:has(.chat.expanded) :is(.site-header,.stage,.footnote) {
 .offer-choose:disabled { opacity: .5; cursor: default; }
 .sel-actions { position: sticky; bottom: 0; z-index: 5; background: var(--surface); border-top: 1px solid var(--line);
   box-shadow: 0 -6px 18px rgba(15, 42, 28, .06); padding: 12px 0 6px; margin-top: 18px; }
+
+/* Деньги к сделке: развилка «покупать или копить» и пакет Сбера */
+.fork { display:grid; gap:8px; margin-top:10px; }
+.fork__option { border:1px solid var(--line); border-radius:var(--radius-m); padding:10px 12px; display:grid; gap:2px; font-size:14px; }
+.fork__option.is-on { border-color:var(--green); }
+.fork__option small, .products .check small { display:block; color:var(--ink-2); font-size:13px; }
+.products { display:grid; gap:10px; margin-top:10px; }
+.products__total { margin:4px 0 0; font-weight:600; font-size:14px; }
+.package__headline { margin:10px 0 8px; font-weight:600; color:var(--green); }
+.package summary { cursor:pointer; font-size:14px; color:var(--ink-2); margin-bottom:8px; }
+.package .costs dd { text-align:left; }
+.receipt--single { grid-template-columns: 1fr; max-width: 640px; }
+.next-block { margin-top: 28px; padding: 18px 20px; background: var(--canvas); border-radius: var(--radius-m); border-left: 4px solid var(--green); }
+.next-block h3 { margin: 0; font-size: 17px; font-weight: 700; color: var(--ink); }
+.next-block .next { margin-top: 12px; }
+.workshop-liked{margin:14px 0 4px;padding:14px 18px;border:2px solid #209c3c;border-radius:14px;background:#f3faf5;color:#12382a}
+.workshop-liked strong{display:block;font-size:22px;font-weight:800;line-height:1.25;text-transform:uppercase;letter-spacing:.01em}
+.workshop-liked small{display:block;margin-top:6px;font-size:15px;font-weight:600;color:#2e5a43}
+.workshop-liked.is-empty{border-color:#e0892b;background:#fff6ea}.workshop-liked.is-empty small{color:#8a4b0f}
+@media(max-width:600px){.workshop-liked strong{font-size:18px}}
+.loan-delta{margin:12px 0 0;font-size:13px;line-height:1.45;color:var(--ink-2)}
+.chat-seller{display:grid;gap:4px;padding:14px 16px;border:1px solid var(--line);border-radius:var(--radius-m);background:var(--surface)}
+.chat-seller strong{font-size:15px}.chat-seller span{font-size:13px;color:var(--ink-2)}.chat-seller .seller-input{margin-top:8px}

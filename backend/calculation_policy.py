@@ -96,9 +96,33 @@ def validate(policy):
         raise ValueError("Неверный диапазон площади аналогов")
 
 
+def validate_products(policy):
+    """Предложение Сбера держится у рынка: скидки малы, тарифы и сроки правдоподобны."""
+    p = policy["products"]
+    if not p.get("as_of") or not p.get("sources"):
+        raise ValueError("Продукты: нужны дата и источники цифр")
+    for key in ("life_insurance_rate", "property_insurance_rate", "title_insurance_rate"):
+        if not 0 < p[key] <= 0.02:
+            raise ValueError(f"Продукты: тариф {key} вне 0…2%")
+    for key in ("life_refusal_surcharge", "salary_discount"):
+        if not 0 <= p[key] <= 0.03:
+            raise ValueError(f"Продукты: {key} вне 0…3 п.п.")
+    account = p["welcome_account"]
+    if not (0 < account["rate"] < 0.5 and 1 <= account["days"] <= 366 and account["name"]):
+        raise ValueError("Продукты: неверный накопительный счёт")
+    if not 0 < p["market_deposit_rate"] < 0.5:
+        raise ValueError("Продукты: неверная рыночная ставка вкладов")
+    if not 0 < p["min_down_share"] < 1 or not 0 <= p["min_cushion_months"] <= policy["savings"]["cushion_months"]:
+        raise ValueError("Продукты: неверный минимальный взнос или подушка")
+    if set(p["days_to_settlement"]) != {"cash", "mortgage", "new"} or not all(
+            1 <= v <= 90 for v in p["days_to_settlement"].values()):
+        raise ValueError("Продукты: неверные сроки до расчётов")
+
+
 _raw = Path(__file__).with_suffix(".json").read_bytes()
 POLICY = json.loads(_raw)
 validate(POLICY)
+validate_products(POLICY)
 FINGERPRINT = hashlib.sha256(_raw).hexdigest()[:12]
 
 

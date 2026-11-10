@@ -175,6 +175,9 @@ class BudgetDialogue(unittest.IsolatedAsyncioTestCase):
                 restored.search={'listings':[new],'pool':[new],'shown_ids':{'new'},'meta':{},'comps':[new]}
                 restored.red_lines_ok=True;restored.profile['_approved_budget_max']=12_000_000
                 restored.shown=[new];restored.calls={'new':{'price':9_000_000}};restored.agreed={'new':9_000_000};restored.chosen='new'
+                self.assertEqual(restored.products,{})
+                self.assertTrue(decision(restored,'offer_products')[0])
+                restored.products['choice']={'listing_id':'new'}
                 self.assertTrue(decision(restored,'prepare_deal')[0])
 
     def test_changed_financing_keeps_chosen_property_but_revokes_completed_plan(self):
